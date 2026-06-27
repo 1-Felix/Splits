@@ -1,0 +1,5 @@
+# SPLITS — Garmin sync backend dependencies
+# Install:  pip install -r requirements.txt
+
+garminconnect>=0.3.6   # unofficial Garmin Connect client (curl_cffi-based auth)
+python-dotenv>=1.0     # loads GARMIN_* credentials from .env

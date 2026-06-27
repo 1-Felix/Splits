@@ -1,0 +1,31 @@
+# Secrets — never commit
+.env
+.garmin_tokens
+.garmin_tokens/
+
+# Raw Garmin API response cache (telemetry; regenerated each day)
+.garmin_cache/
+
+# Real telemetry written by sync_garmin.py — personal health data, kept local.
+# A fresh clone without this file renders the dashboard's built-in demo data
+# until `python sync_garmin.py` regenerates it.
+garmin-data.js
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Tooling artifacts
+.playwright-mcp/
+splits-*-render.png

@@ -1,0 +1,11 @@
+{
+  "name": "splits",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SPLITS — a high-contrast running training dashboard fed by Garmin data.",
+  "scripts": {
+    "dev": "node serve.mjs",
+    "start": "node serve.mjs"
+  }
+}

@@ -57,6 +57,12 @@ RECENT_RUNS = 6
 RUN_KEYS = ("running", "treadmill_running", "trail_running", "track_running",
             "indoor_running", "obstacle_run", "ultra_run")
 
+# Garmin's personal-record typeIds. 1–6 are best *times* (seconds) at standard
+# run distances; 7 is the longest single run (metres). The rest (cycling, steps)
+# aren't running PRs, so we skip them.
+PR_TIME_LABELS = {1: "oneK", 2: "oneMile", 3: "fiveK", 4: "tenK",
+                  5: "half", 6: "marathon"}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # small helpers
@@ -488,6 +494,27 @@ def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict
     ]
 
 
+def fetch_personal_bests(client) -> dict:
+    """Lifetime running PRs from Garmin (best time at each standard distance,
+    plus the longest single run). Time values arrive in seconds; the longest run
+    in metres. This is real PB data — the plan's `race.pb` is set from it."""
+    prs = safe(lambda: client.get_personal_record(), [], "get_personal_record") or []
+    out: dict[str, object] = {}
+    for pr in prs:
+        if not isinstance(pr, dict):
+            continue
+        tid, val = pr.get("typeId"), pr.get("value")
+        if not val:
+            continue
+        date = (pr.get("activityStartDateTimeLocalFormatted")
+                or pr.get("prStartTimeGmtFormatted") or "")[:10]
+        if tid in PR_TIME_LABELS:
+            out[PR_TIME_LABELS[tid]] = {"time": fmt_hms(val), "date": date}
+        elif tid == 7:
+            out["longestRunKm"] = round(val / 1000.0, 1)
+    return out
+
+
 def fetch_predictions(client, planned_goal: str = "1:59:59") -> dict:
     doc = safe(lambda: client.get_race_predictions(), {}, "get_race_predictions") or {}
     if isinstance(doc, list):
@@ -522,6 +549,7 @@ def build_data(client) -> dict:
         "readiness": fetch_readiness(client, sleep, max_hr),
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
+        "personalBests": fetch_personal_bests(client),
         "recentRuns": fetch_recent_runs(acts),
         "history": {
             "vo2maxStartMonth": monthly["vo2maxStartMonth"],

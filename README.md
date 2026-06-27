@@ -1,7 +1,8 @@
 # SPLITS — Running Training Dashboard
 
 A high-contrast performance dashboard for tracking years of Garmin data and
-planning toward a goal race (currently: sub-2:00 half marathon, Aug 9 2026).
+planning toward a goal race (currently: sub-2:00 at the Allgäu Panorama
+Halbmarathon, Sonthofen — Aug 9 2026).
 
 ![themes: Volt / Track / Sunset](screenshots/full.png)
 
@@ -13,7 +14,7 @@ planning toward a goal race (currently: sub-2:00 half marathon, Aug 9 2026).
 | `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads. |
 | `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) |
-| `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `coach`. The sync never touches it. (`EDITABLE`) |
+| `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
 | `serve.mjs` | Zero-dependency static server (`pnpm dev`). |
@@ -74,8 +75,9 @@ No live API runs in the page. The data layer **is** the interface:
 
 - **`sync_garmin.py`** owns `garmin-data.js` (history, heatmap, readiness, zones…).
 - The **AI coach** (you, in Claude Code) owns **`plan-data.js`** — `race`,
-  `weekPlan`, and `coach` (the headline, note, focus chips, and adjustment log
-  shown on the dashboard). Edit it, reload, done.
+  `weekPlan`, `block` (the week-by-week build → taper arc), and `coach` (the
+  headline, note, focus chips, and adjustment log shown on the dashboard). Edit
+  it, reload, done.
 
 ## Profile defaults
 

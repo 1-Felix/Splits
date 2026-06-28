@@ -199,7 +199,9 @@ def _downsample(series, n=30):
     if len(series) <= n:
         return series
     step = len(series) / n
-    return [series[int(i * step)] for i in range(n)]
+    result = [series[int(i * step)] for i in range(n)]
+    result[-1] = series[-1]
+    return result
 
 
 def _hr_drift(hr):
@@ -232,6 +234,7 @@ def _split_shape(splits):
 def _bin_splits(rows, idx):
     iD, iHR, iSpd = idx.get("sumDistance"), idx.get("directHeartRate"), idx.get("directSpeed")
     buckets = {}
+    max_dist = 0.0
     for row in rows:
         m = row.get("metrics") or []
         try:
@@ -242,6 +245,8 @@ def _bin_splits(rows, idx):
             continue
         if dist is None:
             continue
+        if dist > max_dist:
+            max_dist = dist
         buckets.setdefault(int(dist // 1000), []).append((hr, spd))
     out = []
     for km in sorted(buckets):
@@ -253,6 +258,14 @@ def _bin_splits(rows, idx):
             "pace": int(round(1000 / avg_spd)) if avg_spd else 0,
             "hr": int(round(sum(hrs) / len(hrs))) if hrs else 0,
         })
+    # Drop a trailing partial-km bucket that covers < 600 m — real GPS runs end
+    # mid-kilometre, so the final bucket often spans only a sliver of distance and
+    # would skew the splits sparkline and _split_shape.
+    if len(out) > 1:
+        last_bucket_index = sorted(buckets)[-1]
+        span = max_dist - (last_bucket_index * 1000)
+        if span < 600:
+            out = out[:-1]
     return out
 
 

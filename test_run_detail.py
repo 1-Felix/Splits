@@ -9,7 +9,8 @@ spec.loader.exec_module(sg)
 
 
 def test_downsample():
-    assert sg._downsample(list(range(100)), 10) == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+    # last element is forced to series[-1] (was 90, now 99)
+    assert sg._downsample(list(range(100)), 10) == [0, 10, 20, 30, 40, 50, 60, 70, 80, 99]
     assert sg._downsample([1, 2, 3], 10) == [1, 2, 3]
 
 
@@ -27,10 +28,20 @@ def test_split_shape():
 
 def test_bin_splits():
     idx = {"sumDistance": 0, "directHeartRate": 1, "directSpeed": 2}
-    rows = [{"metrics": [500, 150, 3.0]}, {"metrics": [900, 160, 3.0]}, {"metrics": [1500, 170, 2.5]}]
+    # km1 bucket (0–999 m): two rows → full km, retained
+    # km2 bucket (1000–1999 m): two rows → full km, retained
+    # km3 bucket (2000–2999 m): one row at 2300 m → span = 300 m < 600 → dropped
+    rows = [
+        {"metrics": [200,  150, 3.0]},
+        {"metrics": [800,  160, 3.0]},   # bucket 0: hr avg=155, pace=333
+        {"metrics": [1200, 165, 2.8]},
+        {"metrics": [1800, 175, 2.8]},   # bucket 1: hr avg=170, pace=357
+        {"metrics": [2300, 180, 2.5]},   # bucket 2: span=300 < 600 → dropped
+    ]
     out = sg._bin_splits(rows, idx)
+    assert len(out) == 2, f"trailing partial km should be dropped (got {len(out)} splits)"
     assert out[0]["km"] == 1 and out[0]["hr"] == 155 and out[0]["pace"] == 333
-    assert out[1]["km"] == 2 and out[1]["hr"] == 170
+    assert out[1]["km"] == 2 and out[1]["hr"] == 170 and out[1]["pace"] == 357
 
 
 class _FakeDetailClient:

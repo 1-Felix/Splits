@@ -90,12 +90,20 @@
     <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column">
       <div style="font-size:11px;letter-spacing:.18em;color:var(--sub);font-weight:700">TODAY · READINESS</div>
       <div style="display:flex;align-items:center;gap:8px;margin:10px 0 4px">
-        <svg viewBox="0 0 120 120" style="width:108px;height:108px;flex:none">
+        <div style="position:relative;flex:none">
+        <svg viewBox="0 0 120 120" style="width:108px;height:108px;display:block" onMouseLeave="{{ ringHover.onLeave }}">
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--line)" stroke-width="11"></circle>
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="{{ ring.c }}" stroke-dashoffset="{{ ring.off }}" transform="rotate(-90 60 60)"></circle>
           <text x="60" y="58" text-anchor="middle" fill="var(--ink)" style="font:900 30px 'JetBrains Mono'">{{ readiness.score }}</text>
           <text x="60" y="76" text-anchor="middle" fill="var(--accent)" style="font:700 11px 'Archivo';letter-spacing:.12em">{{ readiness.status }}</text>
+          <sc-for list="{{ ringHover.bands }}" as="b" hint-placeholder-count="1"><circle data-hb="ring" cx="60" cy="60" r="58" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></circle></sc-for>
         </svg>
+        <sc-for list="{{ ringHover.card }}" as="cd" hint-placeholder-count="0">
+          <div data-card="ring" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+            <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+          </div>
+        </sc-for>
+        </div>
         <div style="flex:1;display:flex;flex-direction:column;gap:9px">
           <div><div style="font-size:10.5px;color:var(--sub);font-weight:600">HRV</div><div style="font-family:'JetBrains Mono';font-weight:700;font-size:16px">{{ readiness.hrv }}<span style="font-size:10px;color:var(--sub)"> ms</span></div></div>
           <div><div style="font-size:10.5px;color:var(--sub);font-weight:600">RESTING HR</div><div style="font-family:'JetBrains Mono';font-weight:700;font-size:16px">{{ readiness.restingHR }}<span style="font-size:10px;color:var(--sub)"> bpm</span></div></div>
@@ -377,10 +385,18 @@
       </div>
     </div>
     <div style="overflow-x:auto;padding-bottom:4px">
-      <svg width="{{ heat.w }}" height="{{ heat.h }}" style="display:block">
+      <div style="position:relative;width:{{ heat.w }}px">
+      <svg width="{{ heat.w }}" height="{{ heat.h }}" style="display:block" onMouseLeave="{{ heat.onLeave }}">
         <sc-for list="{{ heat.months }}" as="m" hint-placeholder-count="12"><text x="{{ m.x }}" y="9" fill="var(--sub)" style="font:600 9px 'Archivo'">{{ m.label }}</text></sc-for>
-        <sc-for list="{{ heat.cells }}" as="c" hint-placeholder-count="200"><rect x="{{ c.x }}" y="{{ c.y }}" width="11" height="11" rx="2.5" style="fill:{{ c.fill }}"></rect></sc-for>
+        <sc-for list="{{ heat.cells }}" as="c" hint-placeholder-count="200"><rect data-hb="heat" x="{{ c.x }}" y="{{ c.y }}" width="11" height="11" rx="2.5" style="fill:{{ c.fill }};cursor:pointer" onMouseEnter="{{ c.onEnter }}" onClick="{{ c.onClick }}" aria-label="{{ c.aria }}"></rect></sc-for>
+        <sc-for list="{{ heat.outline }}" as="o" hint-placeholder-count="0"><rect x="{{ o.x }}" y="{{ o.y }}" width="13" height="13" rx="3" fill="none" style="stroke:var(--ink);pointer-events:none" stroke-width="1.5"></rect></sc-for>
       </svg>
+      <sc-for list="{{ heat.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="heat" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
   </div>
 
@@ -653,6 +669,18 @@ class Component extends DCLogic {
     // readiness ring
     const c = 2*Math.PI*50;
     const ring = { c:+c.toFixed(1), off:+(c*(1-D.readiness.score/100)).toFixed(1) };
+    const rd = D.readiness;
+    const ringPts = [{
+      x: 60, y: 60, dots: [],
+      aria: 'Readiness ' + rd.score + ', ' + rd.status,
+      lines: [
+        { t: 'Readiness ' + rd.score + ' · ' + rd.status, em: true },
+        { t: 'HRV ' + rd.hrv + ' · RHR ' + rd.restingHR, em: false },
+        { t: 'Sleep ' + rd.sleepHours + ' h · Load ' + rd.trainingLoad, em: false }
+      ]
+    }];
+    const ringHL = this.hoverLayer('ring', ringPts, { vbW: 120, vbH: 120, crosshair: false });
+    const ringObj = {}; this.attachOverlay(ringObj, ringHL); ringObj.onLeave = () => this.leaveChart('ring');
 
     // KPI tiles
     const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
@@ -817,13 +845,33 @@ class Component extends DCLogic {
     const km = D.heatmapKm; const start = new Date(D.today); start.setDate(start.getDate()-(km.length-1));
     const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const cells=[]; const months=[]; let col=0, lastMonth=-1; const CELL=13, TOP=14;
+    const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     for(let i=0;i<km.length;i++){ const dt=new Date(start); dt.setDate(start.getDate()+i); const dow=dt.getDay(); const row=(dow+6)%7;
       if(i>0 && row===0) col++;
       const v=km[i]; const lvl = v===0?0 : v<6?1 : v<9?2 : v<14?3 : 4;
-      cells.push({ x:col*CELL, y:TOP+row*CELL, fill:'var(--hm'+lvl+')' });
+      const cx = col*CELL, cy = TOP+row*CELL;
+      cells.push({ x:cx, y:cy, fill:'var(--hm'+lvl+')',
+        onEnter: () => this.hoverPoint('heat', i),
+        onClick: (e) => this.pinPoint('heat', i, e),
+        aria: WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate()+', '+(v>0?v.toFixed(1)+' km':'rest') });
       if(dt.getMonth()!==lastMonth && row<=1){ lastMonth=dt.getMonth(); months.push({ x:col*CELL, label:M[dt.getMonth()] }); }
     }
-    const heat = { cells, months, w:(col+1)*CELL+4, h:TOP+7*CELL, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length };
+    const heatW=(col+1)*CELL+4, heatH=TOP+7*CELL;
+    const heat = { cells, months, w:heatW, h:heatH, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length };
+    const hh = this.state.hover;
+    if (this._ch && hh && hh.chart === 'heat' && hh.i >= 0 && hh.i < cells.length) {
+      const c = cells[hh.i]; const dt = new Date(start); dt.setDate(start.getDate()+hh.i); const v = km[hh.i];
+      const pl = this._ch.cardPlace(c.x + CELL/2, c.y + CELL/2, heatW, heatH);
+      const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
+      const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
+      heat.outline = [{ x:c.x-1, y:c.y-1 }];
+      heat.card = [{ left: pl.leftPct+'%', top: pl.topPct+'%', transform:'translate('+tx+', '+ty+')',
+        rows: [
+          { t: WD[dt.getDay()]+' '+M[dt.getMonth()]+' '+dt.getDate(), color:'var(--sub)', weight:'600' },
+          { t: v>0 ? v.toFixed(1)+' km' : 'rest', color:'var(--ink)', weight:'800' }
+        ] }];
+    } else { heat.outline = []; heat.card = []; }
+    heat.onLeave = () => this.leaveChart('heat');
 
     // recent runs
     const rdot = { 'Tempo Run':'var(--warn)','Long Run':'var(--accent)','Recovery':'var(--accent2)' };
@@ -846,7 +894,7 @@ class Component extends DCLogic {
     return {
       rootStyle, themes, initial:D.profile.name[0], syncedAgo:'2 min ago',
       onDismiss: () => this.dismissHover(),
-      race, ring, readiness:D.readiness, pred:D.predictions, kpis,
+      race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
       historyWindow:'30-month history · imported from Garmin', vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs
     };

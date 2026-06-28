@@ -374,7 +374,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1340,&quot;height&quot;:1900}}">
 class Component extends DCLogic {
-  state = { theme: 'volt', data: null };
+  state = { theme: 'volt', data: null, expandedRun: null };
 
   THEMES = {
     volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',z1:'#4DA3FF',z2:'#34D399',z3:'#C7F646',z4:'#FFB020',z5:'#FF6A4D'},
@@ -383,6 +383,22 @@ class Component extends DCLogic {
   };
 
   setTheme = (name) => { this.setState({ theme: name }); };
+  toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id }); };
+  runDetail = (r) => {
+    const d = r.detail;
+    const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
+    const sp = (d.splits && d.splits.length) ? d.splits.map(s => s.pace) : [0, 0];
+    const zsum = (d.zoneMin || []).reduce((a, b) => a + b, 0) || 1;
+    return {
+      read: r.read || (r.km + ' km'),
+      drift: (d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm',
+      hrStart: hs[0], hrEnd: hs[hs.length - 1],
+      hrPath: this.line(hs, 30).d,
+      spPath: this.line(sp, 30).d,
+      zones: (d.zoneMin || []).map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')' })),
+      te: d.te, temp: d.tempC
+    };
+  };
 
   componentDidMount() {
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});
@@ -589,7 +605,17 @@ class Component extends DCLogic {
 
     // recent runs
     const rdot = { 'Tempo Run':'var(--warn)','Long Run':'var(--accent)','Recovery':'var(--accent2)' };
-    const runs = D.recentRuns.map(r=>({ date:this.mDate(r.date), type:r.type, km:r.km.toFixed(1), time:r.time, pace:this.fmtPace(r.pace), hr:r.hr, cad:r.cad, dot:rdot[r.type]||'var(--accent)' }));
+    const expandedId = this.state.expandedRun;
+    const runs = D.recentRuns.map((r,i)=>{
+      const expandable = !!r.detail;
+      const expanded = expandedId === i;
+      return { id:i, date:this.mDate(r.date), type:r.type, km:r.km.toFixed(1), time:r.time,
+        pace:this.fmtPace(r.pace), hr:r.hr, cad:r.cad, dot:rdot[r.type]||'var(--accent)',
+        chevron: expandable ? (expanded ? '▾' : '▸') : '',
+        cursor: expandable ? 'pointer' : 'default',
+        toggle: expandable ? (() => this.toggleRun(i)) : (() => {}),
+        detailRows: (expanded && expandable) ? [this.runDetail(r)] : [] };
+    });
 
     return {
       rootStyle, themes, initial:D.profile.name[0], syncedAgo:'2 min ago',

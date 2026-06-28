@@ -333,7 +333,7 @@
       </div>
       <sc-for list="{{ runs }}" as="r" hint-placeholder-count="6">
         <div>
-          <div onClick="{{ r.toggle }}" style="display:grid;grid-template-columns:1fr 1.3fr .8fr .9fr .9fr .7fr .7fr;gap:6px;font-size:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:center;cursor:{{ r.cursor }}">
+          <div onClick="{{ r.toggle }}" role="{{ r.role }}" tabIndex="{{ r.tabIndex }}" aria-expanded="{{ r.ariaExpanded }}" onKeyDown="{{ r.onKey }}" style="display:grid;grid-template-columns:1fr 1.3fr .8fr .9fr .9fr .7fr .7fr;gap:6px;font-size:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:center;cursor:{{ r.cursor }}">
             <span style="color:var(--sub);font-weight:600">{{ r.date }}</span>
             <span style="display:flex;align-items:center;gap:7px;font-weight:700"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }}"></span>{{ r.type }}<span style="margin-left:auto;color:var(--sub);font-size:11px">{{ r.chevron }}</span></span>
             <span style="text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.km }}</span>
@@ -414,12 +414,12 @@ class Component extends DCLogic {
     const zsum = (d.zoneMin || []).reduce((a, b) => a + b, 0) || 1;
     return {
       read: r.read || (r.km + ' km'),
-      drift: (d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm',
+      drift: d.driftBpm != null ? ((d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm') : '—',
       hrStart: hs[0], hrEnd: hs[hs.length - 1],
-      hrPath: this.line(hs, 30).d,
-      spPath: this.line(sp, 30).d,
+      hrPath: this.line(hs, 30, { padT: 2, padB: 2 }).d,
+      spPath: this.line(sp, 30, { padT: 2, padB: 2 }).d,
       zones: (d.zoneMin || []).map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')' })),
-      te: d.te, temp: d.tempC
+      te: d.te != null ? (+d.te).toFixed(1) : '—', temp: d.tempC != null ? d.tempC : '—'
     };
   };
 
@@ -637,6 +637,10 @@ class Component extends DCLogic {
         chevron: expandable ? (expanded ? '▾' : '▸') : '',
         cursor: expandable ? 'pointer' : 'default',
         toggle: expandable ? (() => this.toggleRun(i)) : (() => {}),
+        role: expandable ? 'button' : '',
+        tabIndex: expandable ? '0' : '',
+        ariaExpanded: expandable ? String(expanded) : '',
+        onKey: expandable ? ((e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.toggleRun(i); } }) : (() => {}),
         detailRows: (expanded && expandable) ? [this.runDetail(r)] : [] };
     });
 

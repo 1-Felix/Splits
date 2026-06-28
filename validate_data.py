@@ -94,6 +94,20 @@ def validate(d: dict) -> list[str]:
     for r in d.get("recentRuns", []):
         check(isinstance(r.get("pace"), (int, float)), f"recentRuns pace must be int seconds (got {r.get('pace')!r})", e)
 
+    # per-run drill-down detail (present once the sync has run Task 2)
+    for r in d.get("recentRuns", []):
+        det = r.get("detail")
+        if det is None:
+            continue
+        check(isinstance(det.get("splits"), list) and len(det["splits"]) > 0,
+              "recentRuns detail.splits must be a non-empty list", e)
+        check(all(isinstance(s.get("pace"), int) for s in det.get("splits", [])),
+              "recentRuns detail.splits pace must be int seconds", e)
+        check(isinstance(det.get("zoneMin"), list) and len(det["zoneMin"]) == 5,
+              "recentRuns detail.zoneMin must have 5 entries", e)
+        check(isinstance(det.get("driftBpm"), (int, float)),
+              "recentRuns detail.driftBpm must be numeric", e)
+
     return e
 
 

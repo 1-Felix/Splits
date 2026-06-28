@@ -114,8 +114,8 @@ mirroring the `coach-read.js` / `test_coach_read.mjs` precedent:
 ```js
 // Hit-band spans: each band owns the territory nearest its point.
 // Boundaries sit at midpoints between neighbours; first & last bands
-// extend to the chart edges. n<=1 → one full-width band; n===0 → [].
-export function bandRects(points, chartH, padX) -> [{ x, y:0, w, h:chartH }]
+// extend to the chart edges [0, vbW]. n<=1 → one full-width band; n===0 → [].
+export function bandRects(points, vbW, chartH) -> [{ x, y:0, w, h:chartH }]
 
 // Placement descriptor for the HTML card, derived purely from the point's
 // viewBox coords (measurement-free). Chooses a horizontal anchor zone and a

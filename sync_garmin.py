@@ -300,9 +300,10 @@ def fetch_run_detail(client, activity) -> dict | None:
         return None
     CACHE_DIR.mkdir(exist_ok=True)
     cache = CACHE_DIR / f"detail-{aid}.json"
+    det = None
     if cache.exists():
-        det = json.loads(cache.read_text(encoding="utf-8"))
-    else:
+        det = safe(lambda: json.loads(cache.read_text(encoding="utf-8")), None, f"detail-cache {aid}")
+    if not det:                      # cache miss OR corrupt cache
         det = safe(lambda: client.get_activity_details(aid, maxchart=2000, maxpoly=0),
                    None, f"detail {aid}")
         if not det:

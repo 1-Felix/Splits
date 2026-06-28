@@ -12,7 +12,8 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 |------|------------|
 | `Running Dashboard.dc.html` | **The dashboard.** A Claude Design component rendered by `support.js`; imports `running-data.js`. |
 | `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
-| `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads. |
+| `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
+| `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
 | `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) |
 | `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |

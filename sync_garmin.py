@@ -193,6 +193,68 @@ def act_vo2(a: dict):
     return a.get("vO2MaxValue")
 
 
+def _downsample(series, n=30):
+    series = [v for v in series if v is not None]
+    if len(series) <= n:
+        return series
+    step = len(series) / n
+    return [series[int(i * step)] for i in range(n)]
+
+
+def _hr_drift(hr):
+    hr = [v for v in hr if v is not None]
+    if len(hr) < 4:
+        return 0
+    half = len(hr) // 2
+    first = sum(hr[:half]) / half
+    second = sum(hr[half:]) / (len(hr) - half)
+    return int(round(second - first))
+
+
+def _split_shape(splits):
+    paces = [s["pace"] for s in splits if s.get("pace")]
+    if len(paces) < 3:
+        return "even"
+    third = max(1, len(paces) // 3)
+    first = sum(paces[:third]) / third
+    last = sum(paces[-third:]) / third
+    if first <= 0:
+        return "even"
+    delta = (last - first) / first
+    if delta > 0.04:
+        return "positive"   # slowed (pace seconds increased)
+    if delta < -0.04:
+        return "negative"   # sped up
+    return "even"
+
+
+def _bin_splits(rows, idx):
+    iD, iHR, iSpd = idx.get("sumDistance"), idx.get("directHeartRate"), idx.get("directSpeed")
+    buckets = {}
+    for row in rows:
+        m = row.get("metrics") or []
+        try:
+            dist = m[iD]
+            hr = m[iHR] if iHR is not None else None
+            spd = m[iSpd] if iSpd is not None else None
+        except (TypeError, IndexError):
+            continue
+        if dist is None:
+            continue
+        buckets.setdefault(int(dist // 1000), []).append((hr, spd))
+    out = []
+    for km in sorted(buckets):
+        hrs = [h for h, s in buckets[km] if h is not None]
+        spds = [s for h, s in buckets[km] if s]
+        avg_spd = sum(spds) / len(spds) if spds else 0
+        out.append({
+            "km": km + 1,
+            "pace": int(round(1000 / avg_spd)) if avg_spd else 0,
+            "hr": int(round(sum(hrs) / len(hrs))) if hrs else 0,
+        })
+    return out
+
+
 def classify(a: dict) -> str:
     """Map an activity to one of the labels the dashboard colour-codes
     ('Tempo Run' / 'Long Run' / 'Recovery'), else a neutral 'Run'."""

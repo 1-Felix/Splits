@@ -22,6 +22,7 @@
 </helmet>
 
 <div style="{{ rootStyle }}" onClick="{{ onDismiss }}">
+<div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
 <div style="max-width:1340px;margin:0 auto">
 
   <!-- ===== TOP BAR ===== -->
@@ -91,7 +92,7 @@
       <div style="font-size:11px;letter-spacing:.18em;color:var(--sub);font-weight:700">TODAY · READINESS</div>
       <div style="display:flex;align-items:center;gap:8px;margin:10px 0 4px">
         <div style="position:relative;flex:none">
-        <svg viewBox="0 0 120 120" style="width:108px;height:108px;display:block" onMouseLeave="{{ ringHover.onLeave }}">
+        <svg viewBox="0 0 120 120" style="width:108px;height:108px;display:block" tabIndex="0" role="img" aria-label="{{ ringHover.navLabel }}" onKeyDown="{{ ringHover.onKey }}" onMouseLeave="{{ ringHover.onLeave }}">
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--line)" stroke-width="11"></circle>
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="{{ ring.c }}" stroke-dashoffset="{{ ring.off }}" transform="rotate(-90 60 60)"></circle>
           <text x="60" y="58" text-anchor="middle" fill="var(--ink)" style="font:900 30px 'JetBrains Mono'">{{ readiness.score }}</text>
@@ -214,7 +215,7 @@
       <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:12px;color:var(--sub)"> km</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">this week</div></div>
     </div>
     <div style="position:relative">
-    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" onMouseLeave="{{ vol.onLeave }}">
+    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" tabIndex="0" role="img" aria-label="{{ vol.navLabel }}" onKeyDown="{{ vol.onKey }}" onMouseLeave="{{ vol.onLeave }}">
       <sc-for list="{{ vol.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
       <sc-for list="{{ vol.bars }}" as="b" hint-placeholder-count="26"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:{{ b.fill }}"></rect></sc-for>
       <sc-for list="{{ vol.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="vol" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
@@ -239,7 +240,7 @@
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;color:var(--accent)">{{ vo2.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
       </div>
       <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ vo2.onLeave }}">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ vo2.navLabel }}" onKeyDown="{{ vo2.onKey }}" onMouseLeave="{{ vo2.onLeave }}">
         <sc-for list="{{ vo2.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ vo2.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ vo2.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
@@ -263,7 +264,7 @@
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ pace.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
       </div>
       <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ pace.onLeave }}">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ pace.navLabel }}" onKeyDown="{{ pace.onKey }}" onMouseLeave="{{ pace.onLeave }}">
         <sc-for list="{{ pace.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <line x1="0" y1="{{ pace.goalY }}" x2="600" y2="{{ pace.goalY }}" style="stroke:var(--accent)" stroke-width="1.4" stroke-dasharray="5 5"></line>
         <path d="{{ pace.area }}" style="fill:var(--accentFade)"></path>
@@ -290,7 +291,7 @@
         </div>
       </div>
       <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ fit.onLeave }}">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ fit.navLabel }}" onKeyDown="{{ fit.onKey }}" onMouseLeave="{{ fit.onLeave }}">
         <sc-for list="{{ fit.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ fit.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ fit.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
@@ -314,7 +315,7 @@
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ cad.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
       </div>
       <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ cad.onLeave }}">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cad.navLabel }}" onKeyDown="{{ cad.onKey }}" onMouseLeave="{{ cad.onLeave }}">
         <sc-for list="{{ cad.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ cad.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ cad.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
@@ -355,7 +356,7 @@
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ sleep.avgH }}<span style="font-size:12px;color:var(--sub)"> h</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">avg</div></div>
       </div>
       <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ sleep.onLeave }}">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ sleep.navLabel }}" onKeyDown="{{ sleep.onKey }}" onMouseLeave="{{ sleep.onLeave }}">
         <sc-for list="{{ sleep.bars }}" as="b" hint-placeholder-count="14"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:var(--accentFade)"></rect></sc-for>
         <path d="{{ sleep.hrvD }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.2" stroke-linejoin="round"></path>
         <sc-for list="{{ sleep.dots }}" as="p" hint-placeholder-count="14"><circle cx="{{ p.x }}" cy="{{ p.y }}" r="2.4" style="fill:var(--accent2)"></circle></sc-for>
@@ -386,7 +387,7 @@
     </div>
     <div style="overflow-x:auto;padding-bottom:4px">
       <div style="position:relative;width:{{ heat.w }}px">
-      <svg width="{{ heat.w }}" height="{{ heat.h }}" style="display:block" onMouseLeave="{{ heat.onLeave }}">
+      <svg width="{{ heat.w }}" height="{{ heat.h }}" style="display:block" tabIndex="0" role="img" aria-label="{{ heat.navLabel }}" onKeyDown="{{ heat.onKey }}" onMouseLeave="{{ heat.onLeave }}">
         <sc-for list="{{ heat.months }}" as="m" hint-placeholder-count="12"><text x="{{ m.x }}" y="9" fill="var(--sub)" style="font:600 9px 'Archivo'">{{ m.label }}</text></sc-for>
         <sc-for list="{{ heat.cells }}" as="c" hint-placeholder-count="200"><rect data-hb="heat" x="{{ c.x }}" y="{{ c.y }}" width="11" height="11" rx="2.5" style="fill:{{ c.fill }};cursor:pointer" onMouseEnter="{{ c.onEnter }}" onClick="{{ c.onClick }}" aria-label="{{ c.aria }}"></rect></sc-for>
         <sc-for list="{{ heat.outline }}" as="o" hint-placeholder-count="0"><rect x="{{ o.x }}" y="{{ o.y }}" width="13" height="13" rx="3" fill="none" style="stroke:var(--ink);pointer-events:none" stroke-width="1.5"></rect></sc-for>
@@ -513,6 +514,22 @@ class Component extends DCLogic {
   leaveChart = (chart) => { const h = this.state.hover; if (h && !h.pinned && h.chart === chart) this.setState({ hover: null }); };
   pinPoint = (chart, i, e) => { if (e && e.stopPropagation) e.stopPropagation(); const h = this.state.hover; if (h && h.pinned && h.chart === chart && h.i === i) { this.setState({ hover: null }); return; } this.setState({ hover: { chart, i, pinned: true } }); };
   dismissHover = () => { if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null }); };
+  chartKey = (chart, n, e) => {
+    const k = e.key; const h = this.state.hover;
+    const cur = (h && h.chart === chart) ? h.i : -1;
+    if (k === 'ArrowRight' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: Math.min(n - 1, cur + 1), pinned: true } }); }
+    else if (k === 'ArrowLeft' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur <= 0 ? 0 : cur - 1, pinned: true } }); }
+    else if (k === 'Escape') { this.setState({ hover: null }); }
+    else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur < 0 ? 0 : cur, pinned: true } }); }
+  };
+  heatKey = (n, e) => {
+    const k = e.key; const h = this.state.hover;
+    const cur = (h && h.chart === 'heat') ? h.i : -1;
+    const step = (k === 'ArrowUp' || k === 'ArrowDown') ? 7 : 1;
+    if (k === 'ArrowRight' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart: 'heat', i: Math.min(n - 1, (cur < 0 ? 0 : cur) + step), pinned: true } }); }
+    else if (k === 'ArrowLeft' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart: 'heat', i: Math.max(0, (cur < 0 ? 0 : cur) - step), pinned: true } }); }
+    else if (k === 'Escape') { this.setState({ hover: null }); }
+  };
   runDetail = (r) => {
     const d = r.detail;
     const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
@@ -720,6 +737,7 @@ class Component extends DCLogic {
     }];
     const ringHL = this.hoverLayer('ring', ringPts, { vbW: 120, vbH: 120, crosshair: false });
     const ringObj = {}; this.attachOverlay(ringObj, ringHL); ringObj.onLeave = () => this.leaveChart('ring');
+    ringObj.onKey = (e) => this.chartKey('ring', 1, e); ringObj.navLabel = 'Readiness ring. Enter to read the breakdown.';
 
     // KPI tiles
     const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
@@ -777,6 +795,7 @@ class Component extends DCLogic {
     }));
     this.attachOverlay(vol, this.hoverLayer('vol', volPts));
     vol.onLeave = () => this.leaveChart('vol');
+    vol.onKey = (e) => this.chartKey('vol', volPts.length, e); vol.navLabel = 'Weekly volume over 26 weeks. Arrow keys to inspect.';
 
     // vo2 line
     const vo2 = this.line(H.vo2max, 150); vo2.last = vo2Now.toFixed(1); vo2.delta = '+'+(vo2Now-vo2Prev).toFixed(1)+' / 3mo';
@@ -791,6 +810,7 @@ class Component extends DCLogic {
     }));
     this.attachOverlay(vo2, this.hoverLayer('vo2', vo2pts));
     vo2.onLeave = () => this.leaveChart('vo2');
+    vo2.onKey = (e) => this.chartKey('vo2', vo2pts.length, e); vo2.navLabel = 'VO2 max over 30 months, ' + vo2pts.length + ' points. Arrow keys to inspect.';
 
     // pace line (lower better)
     const goalP = D.race.goalPaceSecPerKm;
@@ -809,6 +829,7 @@ class Component extends DCLogic {
     }));
     this.attachOverlay(pace, this.hoverLayer('pace', pacePts));
     pace.onLeave = () => this.leaveChart('pace');
+    pace.onKey = (e) => this.chartKey('pace', pacePts.length, e); pace.navLabel = 'Average run pace over 30 months. Arrow keys to inspect.';
 
     // fitness ctl + atl
     const fall = H.ctl.concat(H.atl); const fmin=Math.min.apply(null,fall), fmax=Math.max.apply(null,fall);
@@ -834,6 +855,7 @@ class Component extends DCLogic {
     });
     this.attachOverlay(fit, this.hoverLayer('fit', fitPts));
     fit.onLeave = () => this.leaveChart('fit');
+    fit.onKey = (e) => this.chartKey('fit', fitPts.length, e); fit.navLabel = 'Fitness and fatigue over 26 weeks. Arrow keys to inspect.';
 
     // cadence
     const cad = this.line(H.cadenceSpm, 150); cad.last = H.cadenceSpm[H.cadenceSpm.length-1]; cad.delta = '+'+(H.cadenceSpm[H.cadenceSpm.length-1]-H.cadenceSpm[0])+' spm';
@@ -848,6 +870,7 @@ class Component extends DCLogic {
     }));
     this.attachOverlay(cad, this.hoverLayer('cad', cadPts));
     cad.onLeave = () => this.leaveChart('cad');
+    cad.onKey = (e) => this.chartKey('cad', cadPts.length, e); cad.navLabel = 'Cadence over 30 months. Arrow keys to inspect.';
 
     // zones
     const ztot = D.hrZones.reduce((a,b)=>a+b.min,0); const zmax = Math.max.apply(null, D.hrZones.map(z=>z.min));
@@ -879,6 +902,7 @@ class Component extends DCLogic {
     }));
     this.attachOverlay(sleepObj, this.hoverLayer('sleep', sleepPts));
     sleepObj.onLeave = () => this.leaveChart('sleep');
+    sleepObj.onKey = (e) => this.chartKey('sleep', sleepPts.length, e); sleepObj.navLabel = 'Sleep and HRV over 14 nights. Arrow keys to inspect.';
 
     // heatmap
     const km = D.heatmapKm; const start = new Date(D.today); start.setDate(start.getDate()-(km.length-1));
@@ -911,6 +935,7 @@ class Component extends DCLogic {
         ] }];
     } else { heat.outline = []; heat.card = []; }
     heat.onLeave = () => this.leaveChart('heat');
+    heat.onKey = (e) => this.heatKey(heat.cells.length, e); heat.navLabel = 'Running heatmap, 365 days. Arrow keys by day, up and down by week.';
 
     // recent runs
     const rdot = { 'Tempo Run':'var(--warn)','Long Run':'var(--accent)','Recovery':'var(--accent2)' };
@@ -930,12 +955,17 @@ class Component extends DCLogic {
         detailRows: (expanded && expandable) ? [this.runDetail(r)] : [] };
     });
 
+    let liveText = '';
+    { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, sleep:sleepObj, heat:heat, ring:ringObj };
+      if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
+
     return {
       rootStyle, themes, initial:D.profile.name[0], syncedAgo:'2 min ago',
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
-      historyWindow:'30-month history · imported from Garmin', vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs
+      historyWindow:'30-month history · imported from Garmin', vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
+      liveText
     };
   }
 }

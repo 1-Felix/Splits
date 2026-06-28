@@ -43,4 +43,12 @@ r = { date: "x", type: "Tempo Run", km: 10, pace: 320, hr: 170,
   detail: { zoneMin: [2, 8, 10, 15, 5], driftBpm: 3, tempC: 15, splitShape: "even" } };
 assert.match(coachRead(r, [], maxHR), /Quality threshold work/);
 
+// rule 5 gate — hard session with HIGH drift must skip rule 2 and reach rule 5
+// intentHard=true (Tempo Run) → intentEasy=false → rule 2 skipped despite driftBpm=14
+// z[3]+z[4]=20 >= 0.4*40=16 → rule 5 fires
+r = { date: "x", type: "Tempo Run", km: 7, pace: 330, hr: 170,
+  detail: { zoneMin: [2, 8, 10, 15, 5], driftBpm: 14, tempC: 20, splitShape: "even" } };
+assert.match(coachRead(r, [], maxHR), /Quality threshold work/);
+assert.doesNotMatch(coachRead(r, [], maxHR), /cardiac drift/);
+
 console.log("ALL PASS");

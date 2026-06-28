@@ -16,9 +16,9 @@ export function coachRead(run, weekPlan, maxHR) {
   const planDay = (weekPlan || []).find((w) => w.date === run.date && w.kind === "run");
   const load = planDay ? planDay.load : null;
   const type = run.type || "Run";
-  const intentEasy = load === "Easy" || load === "Moderate" ||
-    ["Recovery", "Long Run", "Run"].includes(type);
   const intentHard = load === "Hard" || type === "Tempo Run";
+  const intentEasy = !intentHard && (load === "Easy" || load === "Moderate" ||
+    ["Recovery", "Long Run", "Run"].includes(type));
 
   const hrPct = maxHR ? run.hr / maxHR : 0;
   const z = d.zoneMin || [0, 0, 0, 0, 0];
@@ -28,7 +28,7 @@ export function coachRead(run, weekPlan, maxHR) {
 
   if (intentEasy && hrPct >= 0.83 && temp >= 25 && drift >= 10)
     return `Easy on paper — ${temp} °C pushed HR to threshold (${run.hr} avg, +${drift} drift). Bank recovery.`;
-  if (drift >= 12)
+  if (intentEasy && drift >= 12)
     return `Big cardiac drift (+${drift}) — heat, dehydration, or too hot a start.`;
   if (d.splitShape === "negative")
     return "Negative split — controlled, finished stronger than you started.";

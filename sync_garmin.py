@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -272,7 +273,7 @@ def classify(a: dict) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. FETCHERS  (each returns data already shaped to the contract, §3)
 # ──────────────────────────────────────────────────────────────────────────────
-def fetch_recent_runs(acts: list[dict], n: int = RECENT_RUNS) -> list[dict]:
+def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[dict]:
     runs = [a for a in acts if is_run(a) and act_km(a) > 0]
     runs.sort(key=act_date, reverse=True)
     out = []
@@ -286,8 +287,56 @@ def fetch_recent_runs(acts: list[dict], n: int = RECENT_RUNS) -> list[dict]:
             "hr": act_hr(a) or 0,
             "cad": act_cad(a),
             "vo2": round(act_vo2(a), 1) if act_vo2(a) else None,
+            "detail": fetch_run_detail(client, a),
         })
     return out
+
+
+def fetch_run_detail(client, activity) -> dict | None:
+    """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
+    activity id so re-syncs only fetch genuinely new runs."""
+    aid = activity.get("activityId")
+    if not aid:
+        return None
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache = CACHE_DIR / f"detail-{aid}.json"
+    if cache.exists():
+        det = json.loads(cache.read_text(encoding="utf-8"))
+    else:
+        det = safe(lambda: client.get_activity_details(aid, maxchart=2000, maxpoly=0),
+                   None, f"detail {aid}")
+        if not det:
+            return None
+        cache.write_text(json.dumps(det, ensure_ascii=False), encoding="utf-8")
+
+    idx = {d.get("key"): d.get("metricsIndex") for d in (det.get("metricDescriptors") or [])}
+    rows = det.get("activityDetailMetrics") or []
+    splits = _bin_splits(rows, idx)
+
+    iHR = idx.get("directHeartRate")
+    hr_all = []
+    for row in rows:
+        m = row.get("metrics") or []
+        if iHR is not None and iHR < len(m) and m[iHR] is not None:
+            hr_all.append(m[iHR])
+
+    zone_min = [math.ceil((activity.get(f"hrTimeInZone_{k}") or 0) / 60) for k in range(1, 6)]
+    temp = activity.get("maxTemperature")
+    if temp is None:
+        temp = activity.get("minTemperature")
+    load = activity.get("activityTrainingLoad")
+    elev = activity.get("elevationGain")
+    return {
+        "splits": splits,
+        "hrSeries": [int(round(v)) for v in _downsample(hr_all, 30)],
+        "driftBpm": _hr_drift(hr_all),
+        "zoneMin": zone_min,
+        "tempC": int(round(temp)) if temp is not None else None,
+        "te": activity.get("aerobicTrainingEffect"),
+        "load": round(load) if load else None,
+        "elevGain": round(elev) if elev else None,
+        "splitShape": _split_shape(splits),
+    }
 
 
 def fetch_heatmap(acts: list[dict]) -> list[float]:
@@ -612,7 +661,7 @@ def build_data(client) -> dict:
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
         "personalBests": fetch_personal_bests(client),
-        "recentRuns": fetch_recent_runs(acts),
+        "recentRuns": fetch_recent_runs(client, acts),
         "history": {
             "vo2maxStartMonth": monthly["vo2maxStartMonth"],
             "vo2max": monthly["vo2max"],

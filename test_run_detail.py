@@ -33,6 +33,38 @@ def test_bin_splits():
     assert out[1]["km"] == 2 and out[1]["hr"] == 170
 
 
+class _FakeDetailClient:
+    def get_activity_details(self, aid, maxchart=2000, maxpoly=0):
+        return {
+            "metricDescriptors": [
+                {"key": "sumDistance", "metricsIndex": 0},
+                {"key": "directHeartRate", "metricsIndex": 1},
+                {"key": "directSpeed", "metricsIndex": 2},
+            ],
+            "activityDetailMetrics": [
+                {"metrics": [300, 150, 3.0]},
+                {"metrics": [800, 158, 3.0]},
+                {"metrics": [1400, 168, 2.6]},
+                {"metrics": [1900, 176, 2.6]},
+            ],
+        }
+
+
+def test_fetch_run_detail_shape():
+    act = {"activityId": 999, "hrTimeInZone_1": 0, "hrTimeInZone_2": 60,
+           "hrTimeInZone_3": 120, "hrTimeInZone_4": 240, "hrTimeInZone_5": 30,
+           "maxTemperature": 28, "aerobicTrainingEffect": 4.2,
+           "activityTrainingLoad": 210.7, "elevationGain": 88.0}
+    d = sg.fetch_run_detail(_FakeDetailClient(), act)
+    assert len(d["splits"]) == 2
+    assert all(isinstance(s["pace"], int) for s in d["splits"])
+    assert d["zoneMin"] == [0, 1, 2, 4, 1]
+    assert isinstance(d["driftBpm"], int) and d["driftBpm"] > 0
+    assert d["tempC"] == 28 and d["te"] == 4.2 and d["load"] == 211
+    assert d["splitShape"] in ("even", "positive", "negative")
+    assert len(d["hrSeries"]) == 4
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

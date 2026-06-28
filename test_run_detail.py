@@ -51,6 +51,9 @@ class _FakeDetailClient:
 
 
 def test_fetch_run_detail_shape():
+    cache = sg.CACHE_DIR / "detail-999.json"
+    if cache.exists():
+        cache.unlink()
     act = {"activityId": 999, "hrTimeInZone_1": 0, "hrTimeInZone_2": 60,
            "hrTimeInZone_3": 120, "hrTimeInZone_4": 240, "hrTimeInZone_5": 30,
            "maxTemperature": 28, "aerobicTrainingEffect": 4.2,

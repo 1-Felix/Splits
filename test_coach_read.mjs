@@ -32,4 +32,15 @@ assert.match(coachRead(r, [], maxHR), /5 km at/);
 // no detail -> empty string
 assert.strictEqual(coachRead({ km: 5 }, [], maxHR), "");
 
+// rule 4 — easy intent, positive split, drift low so rules 1/2 don't fire
+r = { date: "x", type: "Run", km: 8, pace: 360, hr: 150,
+  detail: { zoneMin: [5, 20, 10, 2, 0], driftBpm: 3, tempC: 15, splitShape: "positive" } };
+assert.match(coachRead(r, [], maxHR), /Faded in the back half/);
+
+// rule 5 — hard intent, enough Z4+Z5 time, drift/shape don't trigger earlier rules
+// zoneMin [2,8,10,15,5] → total 40, z[3]+z[4]=20 >= 0.4*40=16
+r = { date: "x", type: "Tempo Run", km: 10, pace: 320, hr: 170,
+  detail: { zoneMin: [2, 8, 10, 15, 5], driftBpm: 3, tempC: 15, splitShape: "even" } };
+assert.match(coachRead(r, [], maxHR), /Quality threshold work/);
+
 console.log("ALL PASS");

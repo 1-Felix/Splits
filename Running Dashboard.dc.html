@@ -424,11 +424,35 @@
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
                 <div>
                   <div style="font-size:9.5px;color:var(--sub);font-weight:700;margin-bottom:4px">SPLITS /km</div>
-                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block"><path d="{{ dv.spPath }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path></svg>
+                  <div style="position:relative">
+                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.sp.onLeave }}">
+                    <path d="{{ dv.spPath }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
+                    <sc-for list="{{ dv.sp.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="splits" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+                    <sc-for list="{{ dv.sp.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+                    <sc-for list="{{ dv.sp.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
+                  </svg>
+                  <sc-for list="{{ dv.sp.card }}" as="cd" hint-placeholder-count="0">
+                    <div data-card="splits" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:10.5px;line-height:1.3;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:7">
+                      <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+                    </div>
+                  </sc-for>
+                  </div>
                 </div>
                 <div>
                   <div style="font-size:9.5px;color:var(--sub);font-weight:700;margin-bottom:4px">HR {{ dv.hrStart }} → {{ dv.hrEnd }} ({{ dv.drift }})</div>
-                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block"><path d="{{ dv.hrPath }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path></svg>
+                  <div style="position:relative">
+                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.dr.onLeave }}">
+                    <path d="{{ dv.hrPath }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
+                    <sc-for list="{{ dv.dr.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="drift" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+                    <sc-for list="{{ dv.dr.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+                    <sc-for list="{{ dv.dr.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
+                  </svg>
+                  <sc-for list="{{ dv.dr.card }}" as="cd" hint-placeholder-count="0">
+                    <div data-card="drift" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:10.5px;line-height:1.3;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:7">
+                      <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+                    </div>
+                  </sc-for>
+                  </div>
                 </div>
                 <div>
                   <div style="font-size:9.5px;color:var(--sub);font-weight:700;margin-bottom:4px">ZONES · TE {{ dv.te }} · {{ dv.temp }} °C</div>
@@ -494,14 +518,29 @@ class Component extends DCLogic {
     const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
     const sp = (d.splits && d.splits.length) ? d.splits.map(s => s.pace) : [0, 0];
     const zsum = (d.zoneMin || []).reduce((a, b) => a + b, 0) || 1;
+    const spL = this.line(sp, 30, { padT: 2, padB: 2 });
+    const hsL = this.line(hs, 30, { padT: 2, padB: 2 });
+    const spPts = spL.pts.map((p, i) => ({
+      x: p[0], y: p[1], dotColor: 'var(--accent)',
+      aria: 'Km ' + (i + 1) + ', ' + this.fmtPace(sp[i]) + ' per km',
+      lines: [ { t: 'km ' + (i + 1), em: false }, { t: this.fmtPace(sp[i]) + ' /km', em: true } ]
+    }));
+    const hsPts = hsL.pts.map((p, i) => ({
+      x: p[0], y: p[1], dotColor: 'var(--accent2)',
+      aria: 'Segment ' + (i + 1) + ', ' + hs[i] + ' bpm',
+      lines: [ { t: 'seg ' + (i + 1), em: false }, { t: hs[i] + ' bpm', em: true } ]
+    }));
+    const splits = {}; this.attachOverlay(splits, this.hoverLayer('splits', spPts, { vbW: 600, vbH: 30 })); splits.onLeave = () => this.leaveChart('splits');
+    const drift = {}; this.attachOverlay(drift, this.hoverLayer('drift', hsPts, { vbW: 600, vbH: 30 })); drift.onLeave = () => this.leaveChart('drift');
     return {
       read: r.read || (r.km + ' km'),
       drift: d.driftBpm != null ? ((d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm') : '—',
       hrStart: hs[0], hrEnd: hs[hs.length - 1],
-      hrPath: this.line(hs, 30, { padT: 2, padB: 2 }).d,
-      spPath: this.line(sp, 30, { padT: 2, padB: 2 }).d,
+      hrPath: hsL.d,
+      spPath: spL.d,
       zones: (d.zoneMin || []).map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')' })),
-      te: d.te != null ? (+d.te).toFixed(1) : '—', temp: d.tempC != null ? d.tempC : '—'
+      te: d.te != null ? (+d.te).toFixed(1) : '—', temp: d.tempC != null ? d.tempC : '—',
+      sp: splits, dr: drift
     };
   };
 

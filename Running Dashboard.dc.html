@@ -21,7 +21,7 @@
 </style>
 </helmet>
 
-<div style="{{ rootStyle }}">
+<div style="{{ rootStyle }}" onClick="{{ onDismiss }}">
 <div style="max-width:1340px;margin:0 auto">
 
   <!-- ===== TOP BAR ===== -->
@@ -220,12 +220,22 @@
         <div><div style="font-size:13px;font-weight:800">VO₂ max</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Aerobic engine · 30 months</div></div>
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;color:var(--accent)">{{ vo2.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
       </div>
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px">
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ vo2.onLeave }}">
         <sc-for list="{{ vo2.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ vo2.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ vo2.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
         <circle cx="{{ vo2.lastX }}" cy="{{ vo2.lastY }}" r="4" style="fill:var(--accent)"></circle>
+        <sc-for list="{{ vo2.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="vo2" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ vo2.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ vo2.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
       </svg>
+      <sc-for list="{{ vo2.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="vo2" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
 
     <!-- PACE -->
@@ -397,7 +407,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1340,&quot;height&quot;:1900}}">
 class Component extends DCLogic {
-  state = { theme: 'volt', data: null, expandedRun: null };
+  state = { theme: 'volt', data: null, expandedRun: null, hover: null };
 
   THEMES = {
     volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',z1:'#4DA3FF',z2:'#34D399',z3:'#C7F646',z4:'#FFB020',z5:'#FF6A4D'},
@@ -405,8 +415,14 @@ class Component extends DCLogic {
     sunset:{bg:'#150F0C',panel:'#1E1612',panel2:'#261B15',ink:'#F8EFE7',sub:'#A89486',line:'#2C211A',grid:'#271C16',accent:'#FF7A3D',accent2:'#FFC24B',accentFade:'rgba(255,122,61,.15)',good:'#6BD49A',warn:'#FF5A4D',hm0:'#221813',hm1:'rgba(255,122,61,.24)',hm2:'rgba(255,122,61,.46)',hm3:'rgba(255,122,61,.7)',hm4:'#FF7A3D',z1:'#6BD49A',z2:'#FFC24B',z3:'#FF9F40',z4:'#FF7A3D',z5:'#FF5A4D'}
   };
 
-  setTheme = (name) => { this.setState({ theme: name }); };
-  toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id }); };
+  setTheme = (name) => { this.setState({ theme: name, hover: null }); };
+  toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };
+
+  // ---- datapoint hover/tap ----
+  hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
+  leaveChart = (chart) => { const h = this.state.hover; if (h && !h.pinned && h.chart === chart) this.setState({ hover: null }); };
+  pinPoint = (chart, i, e) => { if (e && e.stopPropagation) e.stopPropagation(); const h = this.state.hover; if (h && h.pinned && h.chart === chart && h.i === i) { this.setState({ hover: null }); return; } this.setState({ hover: { chart, i, pinned: true } }); };
+  dismissHover = () => { if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null }); };
   runDetail = (r) => {
     const d = r.detail;
     const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
@@ -424,7 +440,9 @@ class Component extends DCLogic {
   };
 
   componentDidMount() {
-    import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});
+    import('./chart-hover.js').then((m) => { this._ch = m; this.setState({}); }).catch(() => {});
+    import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
+    document.addEventListener('click', () => this.dismissHover());
   }
 
   // ---- deterministic fallback so the dashboard renders standalone ----------
@@ -498,7 +516,53 @@ class Component extends DCLogic {
     const d = 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
     const area = d + ' L' + pts[n-1][0].toFixed(1) + ' ' + (h-padB) + ' L' + pts[0][0].toFixed(1) + ' ' + (h-padB) + ' Z';
     const grid = [padT, padT + (h-padT-padB)/2, h-padB];
-    return { d, area, grid, lastX:+pts[n-1][0].toFixed(1), lastY:+pts[n-1][1].toFixed(1), Y };
+    return { d, area, grid, lastX:+pts[n-1][0].toFixed(1), lastY:+pts[n-1][1].toFixed(1), Y, pts };
+  }
+
+  hoverLayer(chartId, points, opt) {
+    const ch = this._ch;
+    if (!ch) return { bands: [], overlay: null };   // geometry module not loaded yet
+    opt = opt || {};
+    const vbW = opt.vbW != null ? opt.vbW : 600;
+    const vbH = opt.vbH != null ? opt.vbH : 150;
+    const bands = ch.bandRects(points, vbW, vbH).map((b, i) => ({
+      x: b.x, y: b.y, w: b.w, h: b.h,
+      onEnter: () => this.hoverPoint(chartId, i),
+      onClick: (e) => this.pinPoint(chartId, i, e),
+      aria: points[i].aria || ''
+    }));
+    const h = this.state.hover;
+    let overlay = null;
+    if (h && h.chart === chartId && h.i >= 0 && h.i < points.length) {
+      const p = points[h.i];
+      const pl = ch.cardPlace(p.x, p.y, vbW, vbH);
+      const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
+      const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
+      overlay = {
+        cross: opt.crosshair === false ? [] : [{ x:+p.x.toFixed(2), top:0, bot:vbH }],
+        dots: p.dots || [{ x:+p.x.toFixed(2), y:+p.y.toFixed(2), color:p.dotColor || 'var(--accent)' }],
+        card: {
+          left: pl.leftPct + '%', top: pl.topPct + '%', transform: 'translate(' + tx + ', ' + ty + ')',
+          rows: p.lines.map(r => ({ t: r.t, color: r.em ? 'var(--ink)' : 'var(--sub)', weight: r.em ? '800' : '600' }))
+        }
+      };
+    }
+    return { bands, overlay };
+  }
+
+  attachOverlay(obj, hl) {
+    obj.bands = hl.bands;
+    if (hl.overlay) { obj.cross = hl.overlay.cross; obj.odots = hl.overlay.dots; obj.card = [hl.overlay.card]; }
+    else { obj.cross = []; obj.odots = []; obj.card = []; }
+    return obj;
+  }
+
+  monthLabel(D, i) {
+    const sm = (D.history && D.history.vo2maxStartMonth) || '2024-01';
+    const parts = sm.split('-'); const y = +parts[0], m = +parts[1];
+    const idx = (m - 1) + i; const yr = y + Math.floor(idx / 12); const mo = ((idx % 12) + 12) % 12;
+    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return M[mo] + ' ' + yr;
   }
 
   fmtPace(sec){ const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
@@ -581,6 +645,17 @@ class Component extends DCLogic {
 
     // vo2 line
     const vo2 = this.line(H.vo2max, 150); vo2.last = vo2Now.toFixed(1); vo2.delta = '+'+(vo2Now-vo2Prev).toFixed(1)+' / 3mo';
+    const vo2pts = vo2.pts.map((p, i) => ({
+      x: p[0], y: p[1], dotColor: 'var(--accent)',
+      aria: 'VO2 ' + H.vo2max[i].toFixed(1) + ', ' + this.monthLabel(D, i),
+      lines: [
+        { t: this.monthLabel(D, i), em: false },
+        { t: 'VO₂ ' + H.vo2max[i].toFixed(1), em: true },
+        { t: i > 0 ? ((H.vo2max[i] - H.vo2max[i-1] >= 0 ? '+' : '') + (H.vo2max[i] - H.vo2max[i-1]).toFixed(1) + ' vs prev') : 'first month', em: false }
+      ]
+    }));
+    this.attachOverlay(vo2, this.hoverLayer('vo2', vo2pts));
+    vo2.onLeave = () => this.leaveChart('vo2');
 
     // pace line (lower better)
     const goalP = D.race.goalPaceSecPerKm;
@@ -646,6 +721,7 @@ class Component extends DCLogic {
 
     return {
       rootStyle, themes, initial:D.profile.name[0], syncedAgo:'2 min ago',
+      onDismiss: () => this.dismissHover(),
       race, ring, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
       historyWindow:'30-month history · imported from Garmin', vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs

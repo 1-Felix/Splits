@@ -1,3 +1,6 @@
+/* running-data.js — merges telemetry (garmin-data.js, sync-owned) and the plan
+ * (plan-data.js, coach-owned) into `athleteData`. The plan spread is last so any
+ * coaching dial (weekPlan, race, coach) always wins over telemetry on key collisions. */
 import { garminData } from "./garmin-data.js";
 import { planData } from "./plan-data.js";
 import { coachRead } from "./coach-read.js";

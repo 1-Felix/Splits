@@ -117,13 +117,18 @@ mirroring the `coach-read.js` / `test_coach_read.mjs` precedent:
 // extend to the chart edges. n<=1 → one full-width band; n===0 → [].
 export function bandRects(points, chartH, padX) -> [{ x, y:0, w, h:chartH }]
 
-// Clamped top-left for the floating card. Flips above/below the point so it
-// never spills past `bounds`; horizontal clamp keeps it within [0, bounds.w].
-// Allows negative y (escape above) when bounds permit — used by sparklines.
-export function cardBox(x, y, w, h, bounds) -> { x, y }
+// Placement descriptor for the HTML card, derived purely from the point's
+// viewBox coords (measurement-free). Chooses a horizontal anchor zone and a
+// vertical flip so the card never grossly overflows the chart.
+export function cardPlace(x, y, vbW, vbH) -> {
+  leftPct,   // x / vbW * 100
+  topPct,    // y / vbH * 100
+  anchorX,   // 'left' | 'center' | 'right'  — from the x zone (<20% / mid / >80%)
+  place      // 'above' | 'below'            — from the y zone (above unless near top)
+}
 ```
 
-These two are the only pieces with tricky off-by-one / edge-overflow risk, so
+These two are the only pieces with tricky off-by-one / zone-boundary risk, so
 they are the only ones extracted. Per-surface *content* stays in the dashboard,
 which has the data and the existing formatters (`fmtPace`, `mDate`).
 
@@ -133,12 +138,12 @@ which has the data and the existing formatters (`fmtPace`, `mDate`).
 // points: [{ x, y, lines:[{ t, em? }], dotColor? }]   // viewBox units
 // returns:
 //   bands:   [{ x, y, w, h, onEnter, onClick, ariaLabel }]   // transparent, always rendered
-//   overlay: null | { crossX, dots:[{x,y,color}], card:{ x, y, w, h, rows } }
+//   overlay: null | { crossX, dots:[{x,y,color}], card:{ leftPct, topPct, anchorX, place, rows } }
 //            // present only when state.hover.chart === chartId (and i in range)
 ```
 
 Each surface builds its `points` array and calls `hoverLayer`. The method:
-- delegates band spans to `bandRects` and card placement to `cardBox`;
+- delegates band spans to `bandRects` and card placement to `cardPlace`;
 - wires each band's `onEnter`/`onClick` to `hoverPoint`/`pinPoint`;
 - when this chart is the hovered one, assembles the overlay for `state.hover.i`.
 
@@ -148,23 +153,31 @@ place bands and dots without recomputing.
 
 ### 2c · Rendering
 
-The template renders, per chart, in this paint order (SVG has no z-index):
+Each chart's `<svg>` is wrapped in a `position:relative` container. The template
+renders, per chart:
 
-1. the existing data shape(s) — path / bars / cells;
-2. the transparent **bands** (`pointer-events:auto`);
-3. the **overlay** (only if present): a crosshair `<line>`, the dot(s)
-   `<circle>`, and the **card** — a `<g>` of a rounded `<rect>`
-   (`fill var(--panel2)`, `stroke var(--line)`) plus `<text>` rows (value in
-   `var(--ink)` weight-800, date/context in `var(--sub)`).
+1. **Inside the SVG**, in paint order (SVG has no z-index): the existing data
+   shape(s) → the transparent **bands** (`pointer-events:auto`) → the SVG part of
+   the overlay (only if present): a crosshair `<line>` and the dot(s) `<circle>`.
+   The crosshair/dot carry `pointer-events:none`.
+2. **As an HTML sibling** over the SVG (only if overlay present): the **card** —
+   a `<div>` styled to match the panels (`background var(--panel2)`,
+   `border var(--line)`, rounded), with rows (value in `var(--ink)` weight-800,
+   date/context in `var(--sub)`), `pointer-events:none`. It is positioned
+   `left: card.leftPct%` / `top: card.topPct%` of the wrapper, with a
+   `transform` chosen from `anchorX` (left/center/right) and `place`
+   (above/below) so it never grossly overflows.
 
-**The entire overlay group carries `pointer-events:none`** so moving onto the
-card or crosshair never re-triggers enter/leave flicker; only the bands are
+**The card is HTML, not SVG text**, because the chart viewBoxes (`0 0 600 150`)
+render at a non-matching aspect ratio — SVG text would be horizontally
+stretched/compressed by the non-uniform scale (the existing charts avoid text in
+these viewBoxes for the same reason). Percentage positioning over the relative
+wrapper is exact and measurement-free (no `getBoundingClientRect`); HTML text
+renders crisply at real font sizes and reuses the panel styling. The crosshair
+and dot stay in the SVG (a vertical line and a small dot read fine under the
+scale — matching the existing last-point dots). `pointer-events:none` on both the
+card and the SVG overlay prevents enter/leave flicker; only the bands are
 interactive.
-
-The card lives in **viewBox units** throughout — positioning *and* edge-clamping
-are exact and measurement-free (no `getBoundingClientRect`, no dependence on the
-responsive pixel width). Card width is estimated from the longest row's character
-count with generous padding — the single approximation, and a safe one.
 
 ## 3 · Per-surface points & card content
 
@@ -195,12 +208,13 @@ count with generous padding — the single approximation, and a safe one.
   shows only the breakdown card, sourced from `D.readiness`
   (`score`, `status`, `hrv`, `restingHR`, `sleepHours`).
 
-**Sparkline exception (the one special case):** the two drill-down sparklines are
-26 px tall (`viewBox 0 0 600 30`) — a multi-row card cannot fit inside. Fix: set
-`overflow:visible` on those two `<svg>`s so the **same** SVG card escapes upward
-into the detail-strip space, with `cardBox`'s up/down flip keeping it placed. The
-crosshair + dot still fit inside the 26 px band, so the mechanism stays uniform —
-one CSS property, no special-case card renderer.
+**Sparklines & heatmap fit the same model.** Because the card is an HTML overlay
+(not clipped by the SVG), the two 26 px sparklines need no special case — the
+card sits above the spark in the detail-strip space via the normal `place`
+flip, and the crosshair + dot stay inside the 26 px band. The heatmap's SVG uses
+intrinsic px coordinates (no viewBox), so its `cardPlace` is called with
+`vbW = heat.w` / `vbH = heat.h`; the card is placed over the heatmap's relative
+wrapper the same way.
 
 ## 4 · Labels (date/label per point)
 
@@ -259,9 +273,9 @@ Extends the run-row keyboard work:
 - **Unit** — `test_chart_hover.mjs` (Node, the `test_coach_read.mjs` pattern):
   - `bandRects` — midpoint boundaries; first/last extend to edges; `n===1`
     full-width; `n===0` empty; even spacing.
-  - `cardBox` — clamps left/right within bounds; flips above when the point is
-    near the bottom and below when near the top; permits negative-y escape for
-    the sparkline bounds.
+  - `cardPlace` — `leftPct`/`topPct` proportional to x/y; `anchorX` is `left`
+    below 20 %, `right` above 80 %, `center` between; `place` is `below` near the
+    top and `above` otherwise.
 - **Live render verification** — screenshots render black on this runtime
   (hidden placeholder DOM), so use the proven path: dispatch
   `mouseenter` / `pointerdown` / `keydown` via Playwright/devtools `evaluate`,
@@ -286,5 +300,7 @@ Extends the run-row keyboard work:
 ## Open decisions
 
 None outstanding. Defaults chosen: hover+tap trigger, all nine surfaces, crosshair
-+ floating card, viewBox-unit SVG card, relative labels for weekly/nightly series
-(no sync anchors), keyboard navigation included (one tab stop per chart).
++ floating card (HTML overlay positioned by percentage; crosshair/dot stay SVG),
+relative labels for weekly/nightly series (no sync anchors), keyboard navigation
+included (one tab stop per chart). Refined during planning: the card is an HTML
+overlay rather than SVG text, to avoid non-uniform-viewBox text distortion.

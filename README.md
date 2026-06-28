@@ -14,6 +14,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
 | `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
+| `chart-hover.js` | **The inspection layer.** Pure `bandRects` + `cardPlace` geometry behind the hover/tap crosshair-and-card that every chart, the heatmap, and the ring show for each datapoint. |
 | `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) |
 | `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
@@ -50,6 +51,11 @@ pnpm dev          # → http://localhost:8000/Running%20Dashboard.dc.html
 
 `support.js` pulls React from a CDN at runtime, so the first load needs network
 access. Switch visual themes with the three swatches top-right (Volt is default).
+
+Every chart is **interactive**: hover (or tap) any point — on a line, a bar, the
+heatmap, the ring, or a run's sparkline — for a crosshair and a card with that
+point's date, value, and context. Charts are keyboard-navigable (Tab to a chart,
+arrow keys to inspect).
 
 ## Wiring up real Garmin data
 

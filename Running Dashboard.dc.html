@@ -244,13 +244,23 @@
         <div><div style="font-size:13px;font-weight:800">Avg run pace</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Dashed = goal {{ race.goalPace }}/km</div></div>
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ pace.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
       </div>
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px">
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ pace.onLeave }}">
         <sc-for list="{{ pace.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <line x1="0" y1="{{ pace.goalY }}" x2="600" y2="{{ pace.goalY }}" style="stroke:var(--accent)" stroke-width="1.4" stroke-dasharray="5 5"></line>
         <path d="{{ pace.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ pace.d }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
         <circle cx="{{ pace.lastX }}" cy="{{ pace.lastY }}" r="4" style="fill:var(--accent2)"></circle>
+        <sc-for list="{{ pace.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="pace" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ pace.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ pace.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
       </svg>
+      <sc-for list="{{ pace.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="pace" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
 
     <!-- FITNESS / FATIGUE -->
@@ -261,12 +271,22 @@
           <span style="color:var(--accent)">● Fitness</span><span style="color:var(--accent2)">● Fatigue</span>
         </div>
       </div>
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px">
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ fit.onLeave }}">
         <sc-for list="{{ fit.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ fit.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ fit.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
         <path d="{{ fit.atl }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"></path>
+        <sc-for list="{{ fit.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="fit" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ fit.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ fit.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
       </svg>
+      <sc-for list="{{ fit.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="fit" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
 
     <!-- CADENCE -->
@@ -275,12 +295,22 @@
         <div><div style="font-size:13px;font-weight:800">Cadence</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Steps / min · efficiency rising</div></div>
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ cad.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
       </div>
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px">
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ cad.onLeave }}">
         <sc-for list="{{ cad.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
         <path d="{{ cad.area }}" style="fill:var(--accentFade)"></path>
         <path d="{{ cad.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
         <circle cx="{{ cad.lastX }}" cy="{{ cad.lastY }}" r="4" style="fill:var(--accent)"></circle>
+        <sc-for list="{{ cad.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="cad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ cad.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ cad.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
       </svg>
+      <sc-for list="{{ cad.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="cad" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
 
     <!-- HR ZONES -->
@@ -565,6 +595,12 @@ class Component extends DCLogic {
     return M[mo] + ' ' + yr;
   }
 
+  relLabel(i, n, unit) {
+    const back = n - 1 - i;
+    if (unit === 'wk') return back === 0 ? 'this week' : back === 1 ? 'last week' : back + ' wks ago';
+    return back === 0 ? 'last night' : back + ' nights ago';
+  }
+
   fmtPace(sec){ const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
   mDate(iso){ const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const d=new Date(iso); return M[d.getMonth()]+' '+d.getDate(); }
   daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
@@ -663,15 +699,56 @@ class Component extends DCLogic {
     pace.last = this.fmtPace(H.paceSecPerKm[H.paceSecPerKm.length-1]);
     pace.delta = '−'+this.fmtPace(H.paceSecPerKm[0]-H.paceSecPerKm[H.paceSecPerKm.length-1])+' /km';
     pace.goalY = +pace.Y(goalP).toFixed(1);
+    const pacePts = pace.pts.map((p, i) => ({
+      x: p[0], y: p[1], dotColor: 'var(--accent2)',
+      aria: 'Pace ' + this.fmtPace(H.paceSecPerKm[i]) + ' per km, ' + this.monthLabel(D, i),
+      lines: [
+        { t: this.monthLabel(D, i), em: false },
+        { t: this.fmtPace(H.paceSecPerKm[i]) + ' /km', em: true },
+        { t: (() => { const g = H.paceSecPerKm[i] - goalP; return g === 0 ? 'on goal' : (g > 0 ? '+' : '−') + this.fmtPace(Math.abs(g)) + ' vs goal'; })(), em: false }
+      ]
+    }));
+    this.attachOverlay(pace, this.hoverLayer('pace', pacePts));
+    pace.onLeave = () => this.leaveChart('pace');
 
     // fitness ctl + atl
     const fall = H.ctl.concat(H.atl); const fmin=Math.min.apply(null,fall), fmax=Math.max.apply(null,fall);
     const fit = this.line(H.ctl, 150, { min:fmin, max:fmax });
     const fitAtl = this.line(H.atl, 150, { min:fmin, max:fmax }); fit.atl = fitAtl.d;
     const formObj = { value:(form>0?'+':'')+form };
+    const fitN = H.ctl.length;
+    const fitPts = fit.pts.map((p, i) => {
+      const tsb = Math.round(H.ctl[i] - H.atl[i]);
+      return {
+        x: p[0], y: p[1],
+        dots: [
+          { x: +p[0].toFixed(2), y: +p[1].toFixed(2), color: 'var(--accent)' },
+          { x: +fitAtl.pts[i][0].toFixed(2), y: +fitAtl.pts[i][1].toFixed(2), color: 'var(--accent2)' }
+        ],
+        aria: 'Week ' + this.relLabel(i, fitN, 'wk') + ', fitness ' + Math.round(H.ctl[i]) + ', fatigue ' + Math.round(H.atl[i]),
+        lines: [
+          { t: this.relLabel(i, fitN, 'wk'), em: false },
+          { t: 'CTL ' + Math.round(H.ctl[i]) + ' / ATL ' + Math.round(H.atl[i]), em: true },
+          { t: 'Form ' + (tsb >= 0 ? '+' : '') + tsb, em: false }
+        ]
+      };
+    });
+    this.attachOverlay(fit, this.hoverLayer('fit', fitPts));
+    fit.onLeave = () => this.leaveChart('fit');
 
     // cadence
     const cad = this.line(H.cadenceSpm, 150); cad.last = H.cadenceSpm[H.cadenceSpm.length-1]; cad.delta = '+'+(H.cadenceSpm[H.cadenceSpm.length-1]-H.cadenceSpm[0])+' spm';
+    const cadPts = cad.pts.map((p, i) => ({
+      x: p[0], y: p[1], dotColor: 'var(--accent)',
+      aria: 'Cadence ' + H.cadenceSpm[i] + ' steps per minute, ' + this.monthLabel(D, i),
+      lines: [
+        { t: this.monthLabel(D, i), em: false },
+        { t: H.cadenceSpm[i] + ' spm', em: true },
+        { t: i > 0 ? ((H.cadenceSpm[i] - H.cadenceSpm[i-1] >= 0 ? '+' : '') + (H.cadenceSpm[i] - H.cadenceSpm[i-1]) + ' vs prev') : 'first month', em: false }
+      ]
+    }));
+    this.attachOverlay(cad, this.hoverLayer('cad', cadPts));
+    cad.onLeave = () => this.leaveChart('cad');
 
     // zones
     const ztot = D.hrZones.reduce((a,b)=>a+b.min,0); const zmax = Math.max.apply(null, D.hrZones.map(z=>z.min));

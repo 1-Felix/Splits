@@ -107,6 +107,10 @@ def validate(d: dict) -> list[str]:
               "recentRuns detail.zoneMin must have 5 entries", e)
         check(isinstance(det.get("driftBpm"), (int, float)),
               "recentRuns detail.driftBpm must be numeric", e)
+        check(isinstance(det.get("hrSeries"), list) and len(det["hrSeries"]) > 0,
+              "recentRuns detail.hrSeries must be a non-empty list", e)
+        check(det.get("splitShape") in ("even", "positive", "negative"),
+              f"recentRuns detail.splitShape invalid: {det.get('splitShape')!r}", e)
 
     return e
 

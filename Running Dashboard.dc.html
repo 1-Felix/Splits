@@ -205,10 +205,20 @@
       </div>
       <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:12px;color:var(--sub)"> km</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">this week</div></div>
     </div>
-    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block">
+    <div style="position:relative">
+    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" onMouseLeave="{{ vol.onLeave }}">
       <sc-for list="{{ vol.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
       <sc-for list="{{ vol.bars }}" as="b" hint-placeholder-count="26"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:{{ b.fill }}"></rect></sc-for>
+      <sc-for list="{{ vol.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="vol" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+      <sc-for list="{{ vol.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
+      <sc-for list="{{ vol.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
     </svg>
+    <sc-for list="{{ vol.card }}" as="cd" hint-placeholder-count="0">
+      <div data-card="vol" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+        <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+      </div>
+    </sc-for>
+    </div>
   </div>
 
   <!-- ===== CHART GRID ===== -->
@@ -336,11 +346,21 @@
         <div><div style="font-size:13px;font-weight:800">Sleep &amp; recovery</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">14 nights · bars=hours, line=HRV</div></div>
         <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ sleep.avgH }}<span style="font-size:12px;color:var(--sub)"> h</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">avg</div></div>
       </div>
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px">
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" onMouseLeave="{{ sleep.onLeave }}">
         <sc-for list="{{ sleep.bars }}" as="b" hint-placeholder-count="14"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:var(--accentFade)"></rect></sc-for>
         <path d="{{ sleep.hrvD }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.2" stroke-linejoin="round"></path>
         <sc-for list="{{ sleep.dots }}" as="p" hint-placeholder-count="14"><circle cx="{{ p.x }}" cy="{{ p.y }}" r="2.4" style="fill:var(--accent2)"></circle></sc-for>
+        <sc-for list="{{ sleep.bands }}" as="b" hint-placeholder-count="14"><rect data-hb="sleep" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ sleep.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
+        <sc-for list="{{ sleep.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
       </svg>
+      <sc-for list="{{ sleep.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="sleep" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};pointer-events:none;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.30);z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
     </div>
   </section>
 
@@ -678,6 +698,18 @@ class Component extends DCLogic {
       grid:[vpT, vpT+(vH-vpT-vpB)/2, vH-vpB],
       bars: H.weeklyKm.map((v,i)=>{ const bh=(v/vmax)*(vH-vpT-vpB); return { x:+(vpadX+vslot*i+(vslot-vbw)/2).toFixed(1), y:+(vH-vpB-bh).toFixed(1), w:+vbw.toFixed(1), h:+bh.toFixed(1), fill: i>=vN-2?'var(--accent2)':'var(--accent)' }; })
     };
+    const volN = H.weeklyKm.length;
+    const volPts = vol.bars.map((b, i) => ({
+      x: b.x + b.w / 2, y: b.y, dotColor: 'var(--accent2)',
+      aria: 'Week ' + this.relLabel(i, volN, 'wk') + ', ' + H.weeklyKm[i].toFixed(1) + ' km',
+      lines: [
+        { t: this.relLabel(i, volN, 'wk'), em: false },
+        { t: H.weeklyKm[i].toFixed(1) + ' km', em: true },
+        { t: i > 0 ? ((H.weeklyKm[i] - H.weeklyKm[i-1] >= 0 ? '+' : '−') + Math.abs(Math.round(H.weeklyKm[i] - H.weeklyKm[i-1])) + ' vs prev') : 'first week', em: false }
+      ]
+    }));
+    this.attachOverlay(vol, this.hoverLayer('vol', volPts));
+    vol.onLeave = () => this.leaveChart('vol');
 
     // vo2 line
     const vo2 = this.line(H.vo2max, 150); vo2.last = vo2Now.toFixed(1); vo2.delta = '+'+(vo2Now-vo2Prev).toFixed(1)+' / 3mo';
@@ -765,6 +797,21 @@ class Component extends DCLogic {
     const sDots = sl.map((d,i)=>({ x:+hX(i).toFixed(1), y:+hY(d.hrv).toFixed(1) }));
     const sleepObj = { avgH:(sl.reduce((a,b)=>a+b.hours,0)/sN).toFixed(1), bars:sleepBars, dots:sDots,
       hrvD: 'M'+sDots.map(p=>p.x+' '+p.y).join(' L') };
+    const sleepPts = sleepBars.map((b, i) => ({
+      x: b.x + b.w / 2, y: sDots[i].y,
+      dots: [
+        { x: +(b.x + b.w / 2).toFixed(2), y: +b.y.toFixed(2), color: 'var(--accentFade)' },
+        { x: +sDots[i].x.toFixed(2), y: +sDots[i].y.toFixed(2), color: 'var(--accent2)' }
+      ],
+      aria: 'Night ' + this.relLabel(i, sN, 'night') + ', ' + sl[i].hours.toFixed(1) + ' hours, HRV ' + sl[i].hrv,
+      lines: [
+        { t: this.relLabel(i, sN, 'night'), em: false },
+        { t: sl[i].hours.toFixed(1) + ' h', em: true },
+        { t: 'HRV ' + sl[i].hrv + ' ms', em: false }
+      ]
+    }));
+    this.attachOverlay(sleepObj, this.hoverLayer('sleep', sleepPts));
+    sleepObj.onLeave = () => this.leaveChart('sleep');
 
     // heatmap
     const km = D.heatmapKm; const start = new Date(D.today); start.setDate(start.getDate()-(km.length-1));

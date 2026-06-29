@@ -1,0 +1,19 @@
+/* dashboard.css — SPLITS visual language: tokens → components → responsive.
+   Loaded via the helmet <link>. Theme COLOR vars (--accent, --panel, …) are set
+   dynamically on the root div by renderVals(); they are intentionally NOT here. */
+
+:root {
+  /* type */
+  --fs-2xs: 10px; --fs-xs: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 15px;
+  --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 24px; --fs-3xl: 30px; --fs-display: 78px;
+  /* weight */
+  --fw-normal: 400; --fw-medium: 500; --fw-semibold: 600;
+  --fw-bold: 700; --fw-extrabold: 800; --fw-black: 900;
+  /* spacing — 4px grid + a 2px half-step for dense micro-gaps */
+  --sp-px: 1px; --sp-0: 2px; --sp-1: 4px; --sp-2: 8px; --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+  /* radius */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 99px;
+  /* shadow */
+  --shadow-pop: 0 6px 18px rgba(0,0,0,.30);
+}

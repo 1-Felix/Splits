@@ -84,6 +84,14 @@
   /* week strip → compact full-width agenda cards (Task 9 already stacks them 1-per-row) */
   .day { min-height: 0; }
 
+  /* this-week strip → compact one-line agenda rows */
+  .day--wk { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
+  .day--wk > :first-child { flex: 0 0 44px; }                 /* day + dot rail */
+  .day--wk > :nth-child(2) { display: none; }                 /* hide the icon tile */
+  .day--wk > :nth-child(3) { flex: 1; min-width: 0; }         /* title fills line 1 */
+  .day--wk > :nth-child(4) { flex: 1 1 100%; margin-left: calc(44px + var(--sp-3)); }  /* detail wraps to line 2, indented past the rail */
+  .day--wk > :last-child { display: none; }                   /* hide the load label for compactness */
+
   /* runs table → stacked labeled cards */
   .runs-head { display: none; }
   .runs-row  { display: block; padding: var(--sp-3) 0; }

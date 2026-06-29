@@ -160,7 +160,7 @@
   </div>
   <section id="sec-week1" class="week-grid">
     <sc-for list="{{ week }}" as="d" hint-placeholder-count="7">
-      <div class="day" style="background:{{ d.bg }};border:1px solid {{ d.border }};opacity:{{ d.opacity }}">
+      <div class="day day--wk" style="background:{{ d.bg }};border:1px solid {{ d.border }};opacity:{{ d.opacity }}">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-size:var(--fs-sm);font-weight:800;letter-spacing:.04em">{{ d.day }}</span>
           <span style="width:8px;height:8px;border-radius:50%;background:{{ d.dot }}"></span>

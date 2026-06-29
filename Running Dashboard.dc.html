@@ -136,18 +136,18 @@
   </section>
 
   <!-- ===== KPI TILES ===== -->
-  <section id="sec-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px">
+  <section id="sec-stats" class="stats-grid">
     <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px" style-hover="border-color:var(--accent)">
+      <div class="card" style-hover="border-color:var(--accent)">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:11px;letter-spacing:.1em;color:var(--sub);font-weight:700">{{ k.label }}</span>
-          <span style="font-size:11px;font-weight:700;color:{{ k.deltaColor }}">{{ k.delta }}</span>
+          <span class="eyebrow" style="letter-spacing:.1em">{{ k.label }}</span>
+          <span style="font-size:var(--fs-xs);font-weight:700;color:{{ k.deltaColor }}">{{ k.delta }}</span>
         </div>
-        <div style="display:flex;align-items:baseline;gap:5px;margin-top:9px">
-          <span style="font-family:'JetBrains Mono';font-weight:700;font-size:30px;letter-spacing:-.03em">{{ k.value }}</span>
-          <span style="font-size:13px;color:var(--sub);font-weight:600">{{ k.unit }}</span>
+        <div style="display:flex;align-items:baseline;gap:var(--sp-1);margin-top:var(--sp-2)">
+          <span class="metric" style="font-size:var(--fs-3xl);letter-spacing:-.03em">{{ k.value }}</span>
+          <span style="font-size:var(--fs-base);color:var(--sub);font-weight:600">{{ k.unit }}</span>
         </div>
-        <div style="font-size:11px;color:var(--sub);margin-top:4px;font-weight:500">{{ k.sub }}</div>
+        <div style="font-size:var(--fs-xs);color:var(--sub);margin-top:var(--sp-1);font-weight:500">{{ k.sub }}</div>
       </div>
     </sc-for>
   </section>

@@ -36,4 +36,5 @@
 .metric  { font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-bold); }     /* size/color stay inline */
 
 /* ---- hero layout ---- */
-.hero-grid { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+.hero-grid   { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+.stats-grid  { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }

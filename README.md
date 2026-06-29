@@ -11,6 +11,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | File | What it is |
 |------|------------|
 | `Running Dashboard.dc.html` | **The dashboard.** A Claude Design component rendered by `support.js`; imports `running-data.js`. |
+| `dashboard.css` | The dashboard's visual language — design tokens, semantic component classes, and the responsive `@media` layer. |
 | `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
 | `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
@@ -20,6 +21,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
 | `serve.mjs` | Zero-dependency static server (`pnpm dev`). |
+| `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
 | `CLAUDE_CODE_HANDOFF.md` | The backend brief: data contract, metric→source map, formulas, open decisions. |
 | `.env.example` | Template for Garmin credentials. Copy to `.env`. |
 
@@ -51,6 +53,8 @@ pnpm dev          # → http://localhost:8000/Running%20Dashboard.dc.html
 
 `support.js` pulls React from a CDN at runtime, so the first load needs network
 access. Switch visual themes with the three swatches top-right (Volt is default).
+
+The dashboard is **responsive** — it reflows across phone (390 px), tablet (768 px), and desktop (1200 px+), driven by the `@media` rules in `dashboard.css`.
 
 Every chart is **interactive**: hover (or tap) any point — on a line, a bar, the
 heatmap, the ring, or a run's sparkline — for a crosshair and a card with that

@@ -64,3 +64,20 @@
 
 .timeline { display: flex; flex-direction: column; gap: 0; }
 .timeline-item { display: flex; gap: var(--sp-3); padding-bottom: var(--sp-4); }
+
+/* ============ tablet ============ */
+@media (max-width: 900px) {
+  .hero-grid   { grid-template-columns: 1fr 1fr; }
+  #card-hero   { grid-column: 1 / -1; }
+  .stats-grid  { grid-template-columns: repeat(2, 1fr); }
+  .week-grid   { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .split-grid  { grid-template-columns: 1fr; }
+}
+/* ============ phone ============ */
+@media (max-width: 560px) {
+  .hero-grid   { grid-template-columns: 1fr; }
+  .stats-grid  { grid-template-columns: repeat(2, 1fr); }
+  .week-grid   { grid-template-columns: 1fr; }
+  .drill-grid  { grid-template-columns: 1fr; }
+  .topbar      { flex-wrap: wrap; gap: var(--sp-3); }
+}

@@ -38,6 +38,7 @@
 /* ---- hero layout ---- */
 .hero-grid   { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
 .stats-grid  { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+.chart-grid  { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-4); }
 
 /* ---- section headings ---- */
 .section-head        { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-3); }

@@ -207,13 +207,13 @@
     <span class="meta">{{ historyWindow }}</span>
   </div>
 
-  <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head" style="margin-bottom:6px">
       <div>
-        <div style="font-size:13px;font-weight:800">Weekly volume</div>
-        <div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Last 26 weeks · building to peak, taper begins</div>
+        <div class="card-title">Weekly volume</div>
+        <div class="card-sub">Last 26 weeks · building to peak, taper begins</div>
       </div>
-      <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:12px;color:var(--sub)"> km</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">this week</div></div>
+      <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:12px;color:var(--sub)"> km</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">this week</div></div>
     </div>
     <div style="position:relative">
     <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" tabIndex="0" role="img" aria-label="{{ vol.navLabel }}" onKeyDown="{{ vol.onKey }}" onMouseLeave="{{ vol.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
@@ -232,13 +232,13 @@
   </div>
 
   <!-- ===== CHART GRID ===== -->
-  <section id="sec-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px">
+  <section id="sec-charts" class="chart-grid">
 
     <!-- VO2 -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-size:13px;font-weight:800">VO₂ max</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Aerobic engine · 30 months</div></div>
-        <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px;color:var(--accent)">{{ vo2.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · 30 months</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ vo2.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
       </div>
       <div style="position:relative">
       <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ vo2.navLabel }}" onKeyDown="{{ vo2.onKey }}" onMouseLeave="{{ vo2.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
@@ -259,10 +259,10 @@
     </div>
 
     <!-- PACE -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-size:13px;font-weight:800">Avg run pace</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Dashed = goal {{ race.goalPace }}/km</div></div>
-        <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ pace.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Avg run pace</div><div class="card-sub">Dashed = goal {{ race.goalPace }}/km</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ pace.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
       </div>
       <div style="position:relative">
       <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ pace.navLabel }}" onKeyDown="{{ pace.onKey }}" onMouseLeave="{{ pace.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
@@ -284,9 +284,9 @@
     </div>
 
     <!-- FITNESS / FATIGUE -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-size:13px;font-weight:800">Fitness &amp; fatigue</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Form (freshness) <span style="color:var(--accent)">{{ form.value }}</span></div></div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Fitness &amp; fatigue</div><div class="card-sub">Form (freshness) <span style="color:var(--accent)">{{ form.value }}</span></div></div>
         <div style="display:flex;gap:12px;font-size:10.5px;font-weight:700">
           <span style="color:var(--accent)">● Fitness</span><span style="color:var(--accent2)">● Fatigue</span>
         </div>
@@ -310,10 +310,10 @@
     </div>
 
     <!-- CADENCE -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-size:13px;font-weight:800">Cadence</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">Steps / min · efficiency rising</div></div>
-        <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ cad.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Cadence</div><div class="card-sub">Steps / min · efficiency rising</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cad.last }}</div><div style="font-size:11px;color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
       </div>
       <div style="position:relative">
       <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cad.navLabel }}" onKeyDown="{{ cad.onKey }}" onMouseLeave="{{ cad.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
@@ -334,27 +334,27 @@
     </div>
 
     <!-- HR ZONES -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="font-size:13px;font-weight:800">HR zones · this week</div>
-      <div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px;margin-bottom:12px">{{ zones.totalMin }} min total · {{ zones.easyPct }}% easy</div>
-      <div style="display:flex;flex-direction:column;gap:9px">
+    <div class="card">
+      <div class="card-title">HR zones · this week</div>
+      <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ zones.totalMin }} min total · {{ zones.easyPct }}% easy</div>
+      <div style="display:flex;flex-direction:column;gap:var(--sp-2)">
         <sc-for list="{{ zones.rows }}" as="z" hint-placeholder-count="5">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="width:60px;font-size:11px;font-weight:700;color:var(--sub)">Z{{ z.z }} · {{ z.label }}</span>
-            <div style="flex:1;height:14px;background:var(--line);border-radius:5px;overflow:hidden">
-              <div style="height:100%;width:{{ z.pct }}%;background:{{ z.color }};border-radius:5px"></div>
+          <div style="display:flex;align-items:center;gap:var(--sp-3)">
+            <span style="width:60px;font-size:var(--fs-xs);font-weight:700;color:var(--sub)">Z{{ z.z }} · {{ z.label }}</span>
+            <div style="flex:1;height:14px;background:var(--line);border-radius:var(--r-sm);overflow:hidden">
+              <div style="height:100%;width:{{ z.pct }}%;background:{{ z.color }};border-radius:var(--r-sm)"></div>
             </div>
-            <span style="width:42px;text-align:right;font-family:'JetBrains Mono';font-size:11.5px;font-weight:600">{{ z.min }}m</span>
+            <span style="width:42px;text-align:right;font-family:'JetBrains Mono';font-size:var(--fs-sm);font-weight:600">{{ z.min }}m</span>
           </div>
         </sc-for>
       </div>
     </div>
 
     <!-- SLEEP / HRV -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div style="font-size:13px;font-weight:800">Sleep &amp; recovery</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">14 nights · bars=hours, line=HRV</div></div>
-        <div style="text-align:right"><div style="font-family:'JetBrains Mono';font-weight:700;font-size:24px">{{ sleep.avgH }}<span style="font-size:12px;color:var(--sub)"> h</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">avg</div></div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Sleep &amp; recovery</div><div class="card-sub">14 nights · bars=hours, line=HRV</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ sleep.avgH }}<span style="font-size:12px;color:var(--sub)"> h</span></div><div style="font-size:11px;color:var(--sub);font-weight:600">avg</div></div>
       </div>
       <div style="position:relative">
       <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ sleep.navLabel }}" onKeyDown="{{ sleep.onKey }}" onMouseLeave="{{ sleep.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
@@ -375,15 +375,15 @@
   </section>
 
   <!-- ===== HEATMAP ===== -->
-  <div id="sec-heat" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div><div style="font-size:13px;font-weight:800">Running streak</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">{{ heat.totalKm }} km over the last 52 weeks · {{ heat.runDays }} run days</div></div>
+  <div id="sec-heat" class="card" style="margin-bottom:var(--sp-4)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)">
+      <div><div class="card-title">Running streak</div><div class="card-sub">{{ heat.totalKm }} km over the last 52 weeks · {{ heat.runDays }} run days</div></div>
       <div style="display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--sub);font-weight:600">less
-        <span style="width:11px;height:11px;border-radius:3px;background:var(--hm0)"></span>
-        <span style="width:11px;height:11px;border-radius:3px;background:var(--hm1)"></span>
-        <span style="width:11px;height:11px;border-radius:3px;background:var(--hm2)"></span>
-        <span style="width:11px;height:11px;border-radius:3px;background:var(--hm3)"></span>
-        <span style="width:11px;height:11px;border-radius:3px;background:var(--hm4)"></span>more
+        <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm0)"></span>
+        <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm1)"></span>
+        <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm2)"></span>
+        <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm3)"></span>
+        <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm4)"></span>more
       </div>
     </div>
     <div style="overflow-x:auto;padding-bottom:4px">

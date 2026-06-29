@@ -17,3 +17,20 @@
   /* shadow */
   --shadow-pop: 0 6px 18px rgba(0,0,0,.30);
 }
+
+/* ---- surfaces ---- */
+.card        { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-4); }
+.card--roomy { padding: var(--sp-5); }
+.card--hero  { background: linear-gradient(150deg, var(--panel2), var(--panel)); padding: var(--sp-5); }
+
+/* ---- card header pattern ---- */
+.card-head  { display: flex; justify-content: space-between; align-items: flex-start; }
+.card-title { font-size: var(--fs-base); font-weight: var(--fw-extrabold); }
+.card-sub   { font-size: var(--fs-sm); color: var(--sub); font-weight: var(--fw-medium); margin-top: var(--sp-0); }
+
+/* ---- small repeated text patterns ---- */
+.eyebrow { font-size: var(--fs-xs); color: var(--sub); font-weight: var(--fw-bold); }  /* letter-spacing stays inline (expressive, per-use) */
+.metric  { font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-bold); }     /* size/color stay inline */
+
+/* ---- hero layout ---- */
+.hero-grid { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }

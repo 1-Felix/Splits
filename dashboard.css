@@ -23,6 +23,9 @@
 .card--roomy { padding: var(--sp-5); }
 .card--hero  { background: linear-gradient(150deg, var(--panel2), var(--panel)); padding: var(--sp-5); }
 
+/* floating data-point card (hover/tap). position/left/top/transform stay inline (dynamic). */
+.pop { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-2); font-size: var(--fs-xs); line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-pop); pointer-events: none; }
+
 /* ---- card header pattern ---- */
 .card-head  { display: flex; justify-content: space-between; align-items: flex-start; }
 .card-title { font-size: var(--fs-base); font-weight: var(--fw-extrabold); }

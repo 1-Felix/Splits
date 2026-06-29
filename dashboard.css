@@ -80,4 +80,13 @@
   .week-grid   { grid-template-columns: 1fr; }
   .drill-grid  { grid-template-columns: 1fr; }
   .topbar      { flex-wrap: wrap; gap: var(--sp-3); }
+
+  /* week strip → compact full-width agenda cards (Task 9 already stacks them 1-per-row) */
+  .day { min-height: 0; }
+
+  /* runs table → stacked labeled cards */
+  .runs-head { display: none; }
+  .runs-row  { display: block; padding: var(--sp-3) 0; }
+  .runs-row [data-label] { text-align: left; display: inline-block; margin-right: var(--sp-4); }
+  .runs-row [data-label]::before { content: attr(data-label) " "; color: var(--sub); font-weight: var(--fw-semibold); }
 }

@@ -51,3 +51,16 @@
 
 /* ---- day card ---- */
 .day { display: flex; flex-direction: column; border-radius: var(--r-lg); padding: var(--sp-3); min-height: 128px; position: relative; }
+
+/* ---- bottom split: runs table + drill-down + coach-log ---- */
+.split-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--sp-4); }
+
+.runs-head, .runs-row { display: grid; grid-template-columns: 1fr 1.3fr .8fr .9fr .9fr .7fr .7fr; gap: var(--sp-2); }
+.runs-head { font-size: var(--fs-2xs); letter-spacing: .06em; color: var(--sub); font-weight: var(--fw-bold); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); }
+.runs-row  { font-size: var(--fs-sm); padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); align-items: center; }
+.runs-row [data-label] { text-align: right; }
+
+.drill-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--sp-4); align-items: end; }
+
+.timeline { display: flex; flex-direction: column; gap: 0; }
+.timeline-item { display: flex; gap: var(--sp-3); padding-bottom: var(--sp-4); }

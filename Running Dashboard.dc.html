@@ -403,27 +403,27 @@
   </div>
 
   <!-- ===== RECENT + ADJUSTMENTS ===== -->
-  <section id="sec-split" style="display:grid;grid-template-columns:1.6fr 1fr;gap:14px">
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
+  <section id="sec-split" class="split-grid">
+    <div class="card">
       <div style="font-size:13px;font-weight:800;margin-bottom:12px">Recent activities</div>
-      <div style="display:grid;grid-template-columns:1fr 1.3fr .8fr .9fr .9fr .7fr .7fr;gap:6px;font-size:10px;letter-spacing:.06em;color:var(--sub);font-weight:700;padding-bottom:9px;border-bottom:1px solid var(--line)">
+      <div class="runs-head">
         <span>DATE</span><span>WORKOUT</span><span style="text-align:right">DIST</span><span style="text-align:right">TIME</span><span style="text-align:right">PACE</span><span style="text-align:right">HR</span><span style="text-align:right">CAD</span>
       </div>
       <sc-for list="{{ runs }}" as="r" hint-placeholder-count="6">
         <div>
-          <div onClick="{{ r.toggle }}" role="{{ r.role }}" tabIndex="{{ r.tabIndex }}" aria-expanded="{{ r.ariaExpanded }}" onKeyDown="{{ r.onKey }}" style="display:grid;grid-template-columns:1fr 1.3fr .8fr .9fr .9fr .7fr .7fr;gap:6px;font-size:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:center;cursor:{{ r.cursor }}">
+          <div onClick="{{ r.toggle }}" role="{{ r.role }}" tabIndex="{{ r.tabIndex }}" aria-expanded="{{ r.ariaExpanded }}" onKeyDown="{{ r.onKey }}" class="runs-row" style="cursor:{{ r.cursor }}">
             <span style="color:var(--sub);font-weight:600">{{ r.date }}</span>
             <span style="display:flex;align-items:center;gap:7px;font-weight:700"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }}"></span>{{ r.type }}<span style="margin-left:auto;color:var(--sub);font-size:11px">{{ r.chevron }}</span></span>
-            <span style="text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.km }}</span>
-            <span style="text-align:right;font-family:'JetBrains Mono'">{{ r.time }}</span>
-            <span style="text-align:right;font-family:'JetBrains Mono';color:var(--accent)">{{ r.pace }}</span>
-            <span style="text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
-            <span style="text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.cad }}</span>
+            <span data-label="Dist" style="font-family:'JetBrains Mono';font-weight:600">{{ r.km }}</span>
+            <span data-label="Time" style="font-family:'JetBrains Mono'">{{ r.time }}</span>
+            <span data-label="Pace" style="font-family:'JetBrains Mono';color:var(--accent)">{{ r.pace }}</span>
+            <span data-label="HR" style="font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+            <span data-label="Cad" style="font-family:'JetBrains Mono';color:var(--sub)">{{ r.cad }}</span>
           </div>
           <sc-for list="{{ r.detailRows }}" as="dv" hint-placeholder-count="0">
             <div style="padding:11px 2px 15px;border-bottom:1px solid var(--line)">
               <div style="font-size:11.5px;font-weight:600;color:var(--accent);margin-bottom:10px;line-height:1.4">⚡ {{ dv.read }}</div>
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
+              <div class="drill-grid">
                 <div>
                   <div style="font-size:9.5px;color:var(--sub);font-weight:700;margin-bottom:4px">SPLITS /km</div>
                   <div style="position:relative">
@@ -469,26 +469,26 @@
       </sc-for>
     </div>
 
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
+    <div class="card">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
         <div style="width:20px;height:20px;border-radius:6px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;color:#0E0F12">AI</div>
         <div style="font-size:13px;font-weight:800">Plan adjustments</div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:0">
+      <div class="timeline">
         <sc-for list="{{ coachLog }}" as="l" hint-placeholder-count="3">
-          <div style="display:flex;gap:11px;padding-bottom:16px">
+          <div class="timeline-item">
             <div style="display:flex;flex-direction:column;align-items:center;flex:none">
               <span style="width:9px;height:9px;border-radius:50%;background:var(--accent);margin-top:4px"></span>
               <span style="width:1.5px;flex:1;background:var(--line);margin-top:3px"></span>
             </div>
             <div>
-              <div style="font-size:10.5px;color:var(--sub);font-weight:700;letter-spacing:.04em">{{ l.date }}</div>
-              <div style="font-size:12.5px;line-height:1.45;margin-top:3px;font-weight:500">{{ l.text }}</div>
+              <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;letter-spacing:.04em">{{ l.date }}</div>
+              <div style="font-size:var(--fs-sm);line-height:1.45;margin-top:3px;font-weight:500">{{ l.text }}</div>
             </div>
           </div>
         </sc-for>
       </div>
-      <div style="margin-top:4px;padding:11px 13px;border:1px dashed var(--line);border-radius:10px;font-size:11.5px;color:var(--sub);line-height:1.45;font-weight:500">
+      <div style="margin-top:var(--sp-1);padding:var(--sp-3);border:1px dashed var(--line);border-radius:var(--r-md);font-size:var(--fs-xs);color:var(--sub);line-height:1.45;font-weight:500">
         Your agent reads &amp; writes <span style="font-family:'JetBrains Mono';color:var(--ink)">running-data.js</span> — edit the plan there and this dashboard updates.
       </div>
     </div>

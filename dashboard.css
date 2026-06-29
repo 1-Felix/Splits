@@ -51,6 +51,7 @@
 
 /* ---- day card ---- */
 .day { display: flex; flex-direction: column; border-radius: var(--r-lg); padding: var(--sp-3); min-height: 128px; position: relative; }
+.day > :last-child { margin-top: auto; padding-top: var(--sp-2); }   /* push the last row (load / focus) to the card bottom */
 
 /* ---- bottom split: runs table + drill-down + coach-log ---- */
 .split-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--sp-4); }
@@ -90,7 +91,7 @@
   .day--wk > :nth-child(2) { display: none; }                 /* hide the icon tile */
   .day--wk > :nth-child(3) { flex: 0 1 auto; min-width: 0; }  /* title (content width, shrinkable) on line 1 */
   .day--wk > :nth-child(4) { order: 1; flex: 1 1 100%; margin-left: calc(44px + var(--sp-3)); }  /* detail wraps to line 2, indented past the rail */
-  .day--wk > :last-child { margin-left: auto; }               /* load badge → right end of line 1 */
+  .day--wk > :last-child { margin-top: 0; padding-top: 0; margin-left: auto; }  /* load badge → right end of line 1, reset the desktop bottom-push */
 
   /* runs table → stacked labeled cards */
   .runs-head { display: none; }

@@ -52,10 +52,10 @@
   </header>
 
   <!-- ===== HERO ===== -->
-  <section style="display:grid;grid-template-columns:1.55fr 1fr 1.4fr;gap:14px;margin-bottom:14px">
+  <section id="sec-hero" style="display:grid;grid-template-columns:1.55fr 1fr 1.4fr;gap:14px;margin-bottom:14px">
 
     <!-- countdown -->
-    <div style="background:linear-gradient(150deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between">
+    <div id="card-hero" style="background:linear-gradient(150deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
           <div style="font-size:11px;letter-spacing:.18em;color:var(--sub);font-weight:700">NEXT RACE</div>
@@ -89,7 +89,7 @@
     </div>
 
     <!-- readiness -->
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column">
+    <div id="card-ready" style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column">
       <div style="font-size:11px;letter-spacing:.18em;color:var(--sub);font-weight:700">TODAY · READINESS</div>
       <div style="display:flex;align-items:center;gap:8px;margin:10px 0 4px">
         <div style="position:relative;flex:none">
@@ -136,7 +136,7 @@
   </section>
 
   <!-- ===== KPI TILES ===== -->
-  <section style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px">
+  <section id="sec-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px">
     <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
       <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px" style-hover="border-color:var(--accent)">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -158,7 +158,7 @@
     <div style="height:1px;flex:1;background:var(--line)"></div>
     <span style="font-size:12px;color:var(--sub);font-weight:600">{{ weekTotal }} km planned · 3 runs · 3 strength · 1 spin</span>
   </div>
-  <section style="display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:26px">
+  <section id="sec-week1" style="display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:26px">
     <sc-for list="{{ week }}" as="d" hint-placeholder-count="7">
       <div style="background:{{ d.bg }};border:1px solid {{ d.border }};border-radius:13px;padding:13px 12px;min-height:128px;display:flex;flex-direction:column;position:relative;opacity:{{ d.opacity }}">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -179,7 +179,7 @@
     <div style="height:1px;flex:1;background:var(--line)"></div>
     <span style="font-size:12px;color:var(--sub);font-weight:600">{{ blockMeta }}</span>
   </div>
-  <section style="display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:26px">
+  <section id="sec-week2" style="display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:26px">
     <sc-for list="{{ block }}" as="w" hint-placeholder-count="7">
       <div style="background:{{ w.bg }};border:1px solid {{ w.border }};border-radius:13px;padding:13px 12px;min-height:132px;display:flex;flex-direction:column;opacity:{{ w.opacity }}">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -232,7 +232,7 @@
   </div>
 
   <!-- ===== CHART GRID ===== -->
-  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px">
+  <section id="sec-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px">
 
     <!-- VO2 -->
     <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
@@ -375,7 +375,7 @@
   </section>
 
   <!-- ===== HEATMAP ===== -->
-  <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px">
+  <div id="sec-heat" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div><div style="font-size:13px;font-weight:800">Running streak</div><div style="font-size:11.5px;color:var(--sub);font-weight:500;margin-top:2px">{{ heat.totalKm }} km over the last 52 weeks · {{ heat.runDays }} run days</div></div>
       <div style="display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--sub);font-weight:600">less
@@ -403,7 +403,7 @@
   </div>
 
   <!-- ===== RECENT + ADJUSTMENTS ===== -->
-  <section style="display:grid;grid-template-columns:1.6fr 1fr;gap:14px">
+  <section id="sec-split" style="display:grid;grid-template-columns:1.6fr 1fr;gap:14px">
     <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px">
       <div style="font-size:13px;font-weight:800;margin-bottom:12px">Recent activities</div>
       <div style="display:grid;grid-template-columns:1fr 1.3fr .8fr .9fr .9fr .7fr .7fr;gap:6px;font-size:10px;letter-spacing:.06em;color:var(--sub);font-weight:700;padding-bottom:9px;border-bottom:1px solid var(--line)">

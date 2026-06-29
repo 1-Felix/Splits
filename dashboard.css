@@ -88,9 +88,9 @@
   .day--wk { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
   .day--wk > :first-child { flex: 0 0 44px; }                 /* day + dot rail */
   .day--wk > :nth-child(2) { display: none; }                 /* hide the icon tile */
-  .day--wk > :nth-child(3) { flex: 1; min-width: 0; }         /* title fills line 1 */
-  .day--wk > :nth-child(4) { flex: 1 1 100%; margin-left: calc(44px + var(--sp-3)); }  /* detail wraps to line 2, indented past the rail */
-  .day--wk > :last-child { display: none; }                   /* hide the load label for compactness */
+  .day--wk > :nth-child(3) { flex: 0 1 auto; min-width: 0; }  /* title (content width, shrinkable) on line 1 */
+  .day--wk > :nth-child(4) { order: 1; flex: 1 1 100%; margin-left: calc(44px + var(--sp-3)); }  /* detail wraps to line 2, indented past the rail */
+  .day--wk > :last-child { margin-left: auto; }               /* load badge → right end of line 1 */
 
   /* runs table → stacked labeled cards */
   .runs-head { display: none; }

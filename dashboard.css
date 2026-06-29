@@ -38,3 +38,15 @@
 /* ---- hero layout ---- */
 .hero-grid   { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
 .stats-grid  { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+
+/* ---- section headings ---- */
+.section-head        { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.section-head h2     { font-size: var(--fs-md); font-weight: var(--fw-extrabold); letter-spacing: .02em; }
+.section-head .rule  { height: 1px; flex: 1; background: var(--line); }
+.section-head .meta  { font-size: var(--fs-sm); color: var(--sub); font-weight: var(--fw-semibold); }
+
+/* ---- week strips ---- */
+.week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--sp-2); margin-bottom: var(--sp-6); }
+
+/* ---- day card ---- */
+.day { display: flex; flex-direction: column; border-radius: var(--r-lg); padding: var(--sp-3); min-height: 128px; position: relative; }

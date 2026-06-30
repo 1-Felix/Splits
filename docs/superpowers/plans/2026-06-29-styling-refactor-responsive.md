@@ -40,6 +40,8 @@ SHADOW   0 6px 18px rgba(0,0,0,.30) → --shadow-pop
 
 > **Spec refinement (flag to user):** the spec's spacing table had `2,3 → --sp-1(4)`. This plan adds a `--sp-0: 2px` half-step and maps `2,3 → --sp-0`, because a pure 4px grid would visibly loosen the dashboard's dense 2–3px micro-gaps. Everything else matches the spec. If the user prefers the strict 4px grid, drop `--sp-0` and remap `2,3 → --sp-1`.
 
+> **Grid-gap exception (note):** the SPACING table governs *content* margins/padding. Layout-container `gap`s are chosen per-container for visual density and may take a tighter token than the generic nearest-snap — e.g. `.week-grid`'s original `gap:10px` became `--sp-2`(8px) for a snug day-card rhythm rather than the table's `--sp-3`(12px). These are deliberate, reviewed per-grid choices, not table violations.
+
 ### Section migration procedure (used by Tasks 3–8)
 
 Each section-migration task follows the same recipe (its task body gives the concrete classes, elements, and expected values):

@@ -1,39 +1,39 @@
 {
   "#sec-hero": {
     "display": "grid",
-    "grid-template-columns": "428.5px 276.453px 387.047px",
-    "gap": "14px"
+    "grid-template-columns": "426.922px 275.453px 385.625px",
+    "gap": "16px"
   },
   "#sec-stats": {
     "display": "grid",
-    "grid-template-columns": "269.5px 269.5px 269.5px 269.5px",
-    "gap": "14px"
+    "grid-template-columns": "268px 268px 268px 268px",
+    "gap": "16px"
   },
   "#sec-week1": {
     "display": "grid",
-    "grid-template-columns": "151.422px 151.422px 151.438px 151.422px 151.438px 151.422px 151.438px",
-    "gap": "10px"
+    "grid-template-columns": "153.141px 153.141px 153.141px 153.141px 153.141px 153.141px 153.141px",
+    "gap": "8px"
   },
   "#sec-week2": {
     "display": "grid",
-    "grid-template-columns": "151.422px 151.422px 151.438px 151.422px 151.438px 151.422px 151.438px",
-    "gap": "10px"
+    "grid-template-columns": "153.141px 153.141px 153.141px 153.141px 153.141px 153.141px 153.141px",
+    "gap": "8px"
   },
   "#sec-charts": {
     "display": "grid",
-    "grid-template-columns": "364px 364px 364px"
+    "grid-template-columns": "362.656px 362.672px 362.656px"
   },
   "#sec-split": {
     "display": "grid",
-    "grid-template-columns": "680.609px 425.391px"
+    "grid-template-columns": "679.375px 424.625px"
   },
   "#card-hero": {
-    "border-radius": "16px",
-    "padding": "22px",
+    "border-radius": "14px",
+    "padding": "20px",
     "background-image": "linear-gradient(150deg, rgb(27, 30, 37), rgb(21, 23, 28))"
   },
   "#card-ready": {
-    "border-radius": "16px",
+    "border-radius": "14px",
     "padding": "20px"
   }
 }

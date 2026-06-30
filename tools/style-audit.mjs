@@ -1,7 +1,7 @@
 // Computed-style audit for the SPLITS dashboard. Starts its own dev server on
 // PORT 8123 (never clashes with `pnpm dev`) and drives headless chromium.
 //
-//   node tools/style-audit.mjs baseline                 → write tools/style-baseline.json (run once, pre-refactor)
+//   node tools/style-audit.mjs baseline                 → capture current desktop computed styles → tools/style-baseline.json (the regression baseline)
 //   node tools/style-audit.mjs diff                      → print computed-style changes vs baseline (desktop 1200)
 //   node tools/style-audit.mjs read '<sel>' <prop...>    → print computed props for a selector (desktop 1200)
 //   node tools/style-audit.mjs layout                    → assert the responsive layout map at 1200/768/390 (PASS/FAIL)
@@ -10,6 +10,7 @@
 
 import { chromium } from "playwright";
 import { readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 process.env.PORT = process.env.AUDIT_PORT || "8123";
 const PORT = process.env.PORT;
@@ -76,15 +77,16 @@ let code = 0;
 
 if (mode === "baseline") {
   const snap = await snapshot(page, 1200);
-  await writeFile(BASELINE, JSON.stringify(snap, null, 2));
-  console.log("baseline written:", BASELINE.pathname);
+  await writeFile(BASELINE, JSON.stringify(snap, null, 2) + "\n");
+  console.log("baseline written:", fileURLToPath(BASELINE));
 } else if (mode === "diff") {
   const base = JSON.parse(await readFile(BASELINE, "utf8"));
   const snap = await snapshot(page, 1200);
   let changed = 0;
   for (const sel of Object.keys(TRACK)) {
+    if (!snap[sel]) { console.log(`MISSING: ${sel} (selector not found)`); changed++; continue; }
     for (const p of TRACK[sel]) {
-      const a = base[sel]?.[p], b = snap[sel]?.[p];
+      const a = base[sel]?.[p], b = snap[sel][p];
       if (a !== b) { console.log(`Δ ${sel} { ${p}: ${a} → ${b} }`); changed++; }
     }
   }

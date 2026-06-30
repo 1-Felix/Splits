@@ -26,16 +26,16 @@ export const planData = {
 
   /* ----------------------------------------------------- this week's plan
    * Wk 2 — Mon 2026-06-29 → Sun 2026-07-05. The first week with the 4th run:
-   * Monday doubles the group ride with an easy shakeout, Fri is the threshold
+   * Monday pairs the 19:00 spin class with an easy shakeout, Fri is the threshold
    * session, Sun the long run (held at 16 — we add frequency this week and grow
    * the long run from Wk 3). Roll the next week in each Monday.
    * status: "done" | "today" | "upcoming"   kind: "run" | "strength" | "cross" */
   weekPlan: [
-    { day: "Mon", date: "2026-06-29", kind: "cross", title: "Ride + Easy Run", detail: "Z2 group ride + 4 km easy a.m. shakeout", load: "Easy", status: "today", km: 4 },
+    { day: "Mon", date: "2026-06-29", kind: "cross", title: "Spin + Easy Run", detail: "1 h spin · level 2 · 19:00 + 4 km easy a.m. shakeout", load: "Easy", status: "today", km: 4 },
     { day: "Tue", date: "2026-06-30", kind: "strength", title: "Strength · Full Body", detail: "Full session", load: "Moderate", status: "upcoming", km: 0 },
     { day: "Wed", date: "2026-07-01", kind: "run", title: "Easy Run", detail: "5 km easy · Z2 (by HR if warm)", load: "Easy", status: "upcoming", km: 5 },
     { day: "Thu", date: "2026-07-02", kind: "strength", title: "Strength · Full Body", detail: "Full session", load: "Moderate", status: "upcoming", km: 0 },
-    { day: "Fri", date: "2026-07-03", kind: "run", title: "Threshold Reps", detail: "1.5 wu · 4×1 km @ 5:25–5:35 (60s jog) · 1.5 cd", load: "Hard", status: "upcoming", km: 7 },
+    { day: "Fri", date: "2026-07-03", kind: "run", title: "Threshold + a.m. Spin", detail: "7:00 spin · 1 h · level 2 + threshold: 1.5 wu · 4×1 km @ 5:25–5:35 (60s jog) · 1.5 cd", load: "Hard", status: "upcoming", km: 7 },
     { day: "Sat", date: "2026-07-04", kind: "strength", title: "Strength · Light", detail: "Light / mobility", load: "Easy", status: "upcoming", km: 0 },
     { day: "Sun", date: "2026-07-05", kind: "run", title: "Long Run", detail: "16 km easy @ ~6:10 (run early — heat) · fuel @ 8 km", load: "Moderate", status: "upcoming", km: 16 },
   ],
@@ -45,7 +45,7 @@ export const planData = {
    * threshold session steps up to 5×1 km. On Mon Jul 6, swap this into
    * `weekPlan` (or ask me to) and I'll pre-load Wk 4 here.                    */
   nextWeekPlan: [
-    { day: "Mon", date: "2026-07-06", kind: "cross", title: "Ride + Easy Run", detail: "Z2 group ride + 4 km easy a.m. shakeout", load: "Easy", status: "today", km: 4 },
+    { day: "Mon", date: "2026-07-06", kind: "cross", title: "Spin + Easy Run", detail: "1 h spin · level 2 · 19:00 + 4 km easy a.m. shakeout", load: "Easy", status: "upcoming", km: 4 },
     { day: "Tue", date: "2026-07-07", kind: "strength", title: "Strength · Full Body", detail: "Full session", load: "Moderate", status: "upcoming", km: 0 },
     { day: "Wed", date: "2026-07-08", kind: "run", title: "Easy Run", detail: "5 km easy · Z2", load: "Easy", status: "upcoming", km: 5 },
     { day: "Thu", date: "2026-07-09", kind: "strength", title: "Strength · Full Body", detail: "Full session", load: "Moderate", status: "upcoming", km: 0 },
@@ -74,9 +74,10 @@ export const planData = {
    * `note` = current focus. `log` = adjustment feed, most-recent first.       */
   coach: {
     headline: "6 weeks to Sonthofen — rebuild volume, keep the speed.",
-    note: "Half PB is 2:19:07 (Dec 2025), but your spring block pushed fitness well past it — Garmin projects 2:04 right now. The gap to sub-2:00 (5:41/km) is volume: weekly running slipped to the teens–low-20s km off a 35+ km spring, and fitness (CTL) is down near 20. The block rebuilds running to ~40 km/wk by mid-July and the long run to 20 km, holding one threshold session a week, then tapers into Aug 9. Biggest lever: a 4th easy run on top of your steady 3×/week — keep the Monday group ride and all 3 strength days (one light), just layer easy km on, even as a morning double. Hold that and sub-2 is live; drift on volume and it's more like 2:03–2:05.",
+    note: "Half PB is 2:19:07 (Dec 2025), but your spring block pushed fitness well past it — Garmin projects 2:04 right now. The gap to sub-2:00 (5:41/km) is volume: weekly running slipped to the teens–low-20s km off a 35+ km spring, and fitness (CTL) is down near 20. The block rebuilds running to ~40 km/wk by mid-July and the long run to 20 km, holding one threshold session a week, then tapers into Aug 9. Biggest lever: a 4th easy run on top of your steady 3×/week — keep the Monday spin class and all 3 strength days (one light), just layer easy km on, even as a morning double. Hold that and sub-2 is live; drift on volume and it's more like 2:03–2:05.",
     focus: ["Rebuild volume → 40 km/wk", "Add a 4th easy run", "Long run → 20 km", "Keep 3× strength (1 light)"],
     log: [
+      { date: "2026-06-29", text: "Plan correction: Monday's cross-training is your standing 1 h level-2 spin class at 19:00 (not a group ride) — same easy aerobic load, so the week's stimulus is unchanged. This week you're also riding a Friday 7 a.m. spin before the threshold session: keep it genuinely easy (level 2) so it stays a bonus aerobic hit and doesn't blunt Friday's quality work." },
       { date: "2026-06-28", text: "Long run logged: 16 km @ 6:12, but 28–30 °C drove it to threshold — avg HR 170 (86% max), +16 bpm cardiac drift, Training Effect 5.0. Pacing was right; the heat repriced the effort. Banking recovery (Monday's shakeout stays truly easy), and from here: on hot days run easy by HR ~150, not pace." },
       { date: "2026-06-27", text: "Mapped the full 6-week block: rebuild to ~40 km/wk by Jul 20 (a 4th easy run joins this week), long run 16 → 20 km, then taper into Aug 9." },
       { date: "2026-06-26", text: "Friday's 1–2–1 km tempo pyramid held Z4 (avg HR 161). Threshold is still sharp — protecting one quality run a week through the build." },

@@ -13,11 +13,14 @@
 // The dashboard never talks to Garmin — it imports running-data.js, which merges
 // the data files. This server just produces/serves those files.
 
+import "./load-env.mjs"; // MUST be first — loads .env before the process.env reads below
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, unlink, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hashPlan, validatePlanText } from "./plan-io.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const PORT = Number(process.env.PORT) || 8000;
@@ -45,6 +48,12 @@ const PYTHON = process.env.SPLITS_PYTHON || "python3";
 const SYNC_ON_BOOT = (process.env.SYNC_ON_BOOT || "on").toLowerCase() !== "off";
 const SYNC_AT = process.env.SYNC_AT || "04:00";
 const STALE_HOURS = Number(process.env.SYNC_STALE_HOURS || 18);
+
+// Plan push (PUT /api/plan). OFF unless a token is set — a self-host that doesn't opt in
+// never exposes a write endpoint (the route simply 404s like any unknown path).
+const PLAN_TOKEN = process.env.SPLITS_PLAN_TOKEN || "";
+const PLAN_MAX_BYTES = 512 * 1024;
+let planSeq = 0;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -74,6 +83,71 @@ function json(res, status, body) {
     "Cache-Control": "no-store",
   });
   res.end(payload);
+}
+
+// Constant-time string compare (equal-length only; unequal lengths are trivially unequal).
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
+
+// Read a request body as UTF-8, rejecting past `max` bytes (→ err.code === 'TOO_LARGE').
+// Once over the cap we stop buffering (bounded memory) but keep draining, so the response
+// is sent cleanly after the upload rather than resetting the socket mid-stream.
+function readBody(req, max) {
+  return new Promise((done, fail) => {
+    let size = 0;
+    let over = false;
+    const chunks = [];
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > max) { over = true; return; }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) {
+        const e = new Error("body too large");
+        e.code = "TOO_LARGE";
+        fail(e);
+      } else {
+        done(Buffer.concat(chunks).toString("utf8"));
+      }
+    });
+    req.on("error", fail);
+  });
+}
+
+// Serialize plan writes: run each push after the previous settles, so the version check and
+// the rename form one atomic critical section (no read-check-write interleaving) and at most
+// one validator child runs at a time.
+let planPushChain = Promise.resolve();
+function planPushExclusive(fn) {
+  const run = planPushChain.then(fn, fn);
+  planPushChain = run.then(() => {}, () => {});
+  return run;
+}
+
+// Version guard → validate → atomic write. Returns { status, body }. Runs inside the mutex.
+async function applyPlanPush(body, ifMatch) {
+  const planPath = join(DATA_DIR, "plan-data.js");
+  const current = await readFile(planPath, "utf8").catch(() => null);
+  const currentHash = current != null ? hashPlan(current) : null;
+  if (ifMatch == null)
+    return { status: 428, body: { ok: false, error: "If-Match required — pull first, or force", version: currentHash } };
+  if (ifMatch !== "*" && ifMatch !== currentHash)
+    return { status: 409, body: { ok: false, error: "stale — canonical changed since your pull; pull first", version: currentHash } };
+  const v = await validatePlanText(body);
+  if (!v.ok) return { status: 422, body: { ok: false, error: v.error } };
+  const tmp = join(DATA_DIR, `.plan-data.${process.pid}.${planSeq++}.tmp.js`);
+  try {
+    await writeFile(tmp, body, "utf8");
+    await rename(tmp, planPath);
+  } catch (e) {
+    await unlink(tmp).catch(() => {}); // don't leave the temp behind on a failed write
+    throw e;
+  }
+  return { status: 200, body: { ok: true, bytes: Buffer.byteLength(body), weeks: v.weeks, version: hashPlan(body) } };
 }
 
 // Last successful sync = mtime of the telemetry file (survives restarts because
@@ -179,6 +253,35 @@ const server = createServer(async (req, res) => {
     }
     if (pathname === "/api/status") {
       json(res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
+      return;
+    }
+
+    // ── plan push: replace the canonical plan-data.js. Gated on PLAN_TOKEN — when unset
+    //    the route falls through to the static handler and 404s, as if it didn't exist.
+    if (pathname === "/api/plan" && PLAN_TOKEN) {
+      if (req.method !== "PUT") { json(res, 405, { ok: false, error: "use PUT" }); return; }
+      // auth
+      const auth = req.headers["authorization"] || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!safeEqual(token, PLAN_TOKEN)) { json(res, 401, { ok: false, error: "unauthorized" }); return; }
+      // reject an oversized declared body up front (streaming cap is the fallback)
+      const declared = Number(req.headers["content-length"]);
+      if (Number.isFinite(declared) && declared > PLAN_MAX_BYTES) {
+        json(res, 413, { ok: false, error: "body too large" });
+        return;
+      }
+      // body (size-capped)
+      let body;
+      try {
+        body = await readBody(req, PLAN_MAX_BYTES);
+      } catch (e) {
+        json(res, e.code === "TOO_LARGE" ? 413 : 400, { ok: false, error: e.message });
+        return;
+      }
+      // version guard → validate → atomic write, serialized so concurrent pushes can't
+      // interleave (a bad or stale push never touches the live file)
+      const out = await planPushExclusive(() => applyPlanPush(body, req.headers["if-match"]));
+      json(res, out.status, out.body);
       return;
     }
 

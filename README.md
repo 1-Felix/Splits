@@ -105,6 +105,55 @@ compose file.
 | `SYNC_AT` | `04:00` | Daily auto-sync time (local). `off` to disable. |
 | `SYNC_ON_BOOT` | `on` | Sync once at startup if telemetry is missing/stale. `off` to disable. |
 | `ATHLETE_NAME` / `ATHLETE_AGE` / `ATHLETE_MAX_HR` | — | Profile overrides Garmin doesn't always expose. |
+| `SPLITS_PLAN_TOKEN` | — | Secret that enables `PUT /api/plan` (plan push). Unset ⇒ no write endpoint. See below. |
+
+## Keeping your plan in sync
+
+Your training plan (`plan-data.js`) is coach-owned and lives on the homeserver's `/data`
+volume — that's the single source of truth. There are two ways to edit it.
+
+**At home — edit the file directly (no protocol).** Mount the homeserver's `/data` on your
+machine (SMB / NFS / SSHFS over your LAN or VPN), then either symlink the repo's
+`plan-data.js` to the mounted file or run dev against the mount:
+
+```bash
+# macOS / Linux
+SPLITS_DATA_DIR=/mnt/splits-data pnpm dev
+```
+```powershell
+# Windows (PowerShell) — mounted as drive Z:, say
+$env:SPLITS_DATA_DIR = "Z:\"; pnpm dev
+```
+
+On Windows the symlink route also works: `New-Item -ItemType SymbolicLink -Path plan-data.js -Target Z:\plan-data.js` (Developer Mode or an elevated shell), then just `pnpm dev`.
+
+Now editing `plan-data.js` writes the canonical file — the homeserver dashboard and your
+local dev both reflect it on the next load. Bonus: because `garmin-data.js` is in the same
+volume, local dev shows **real telemetry** with no local Garmin sync.
+
+**Away — push over HTTPS (opt-in, token-authed).** On the homeserver, set a strong
+`SPLITS_PLAN_TOKEN`; the endpoint stays absent until you do. On the client set the same
+token plus the dashboard URL (both go in `.env`):
+
+```bash
+SPLITS_PLAN_TOKEN=<same-long-random-secret>
+SPLITS_PLAN_URL=https://splits.example.com
+```
+
+Then:
+
+```bash
+pnpm plan:pull    # fetch the canonical plan → local plan-data.js (+ records its version)
+#   …edit plan-data.js…
+pnpm plan:push    # validates locally, then writes canonical (guarded against stale overwrites)
+```
+
+If someone changed the canonical since your pull, `plan:push` stops with a conflict — run
+`plan:pull` again, reapply, and push (or `pnpm plan:push --force` to override the guard).
+
+> **Trust model:** the plan is executed as code by the dashboard, so a push writes runnable
+> code. The token gates that — whoever holds it can write the plan on your server. Use HTTPS,
+> keep `SPLITS_PLAN_TOKEN` secret, and leave the endpoint off (token unset) if you don't need it.
 
 ## Running locally (development)
 

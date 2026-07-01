@@ -6,7 +6,9 @@
   "description": "SPLITS — a high-contrast running training dashboard fed by Garmin data.",
   "scripts": {
     "dev": "node serve.mjs",
-    "start": "node serve.mjs"
+    "start": "node serve.mjs",
+    "plan:pull": "node tools/plan-pull.mjs",
+    "plan:push": "node tools/plan-push.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

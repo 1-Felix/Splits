@@ -14,6 +14,8 @@ garmin-data.js
 # The live plan — coach-owned, lives in the data volume (seeded from
 # plan-data.default.js on first container boot). The default is what ships.
 plan-data.js
+# Records the plan version last pulled by `pnpm plan:pull`, for the plan:push guard.
+.plan-data.version
 
 # Python
 __pycache__/

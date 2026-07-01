@@ -44,8 +44,16 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 HERE = Path(__file__).parent
-OUTPUT_PATH = HERE / "garmin-data.js"
-CACHE_DIR = HERE / ".garmin_cache"
+
+# Where personal data lives. The container sets SPLITS_DATA_DIR=/data (the
+# mounted volume); when unset, it falls back to the project dir so a plain
+# `python sync_garmin.py` works unchanged. Mirrors the resolution in serve.mjs.
+# (No /data auto-detect — that misfires on Windows, where "/data" is C:\data.)
+DATA_DIR = Path(os.environ["SPLITS_DATA_DIR"]) if os.environ.get("SPLITS_DATA_DIR") else HERE
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+OUTPUT_PATH = DATA_DIR / "garmin-data.js"
+CACHE_DIR = DATA_DIR / ".garmin_cache"
 TODAY = dt.date.today()
 
 # How much history each section keeps (matches the dashboard's expectations).
@@ -114,7 +122,7 @@ def connect() -> Garmin:
     load_dotenv(HERE / ".env")
     email = os.getenv("GARMIN_EMAIL")
     password = os.getenv("GARMIN_PASSWORD")
-    tokenstore = os.path.expanduser(os.getenv("GARMIN_TOKENSTORE", str(HERE / ".garmin_tokens")))
+    tokenstore = os.path.expanduser(os.getenv("GARMIN_TOKENSTORE", str(DATA_DIR / ".garmin_tokens")))
 
     def prompt_mfa() -> str:
         code = os.getenv("GARMIN_MFA")

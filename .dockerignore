@@ -1,0 +1,32 @@
+# VCS / CI
+.git
+.github
+
+# dependencies (reinstalled in the image)
+node_modules
+.venv
+venv
+__pycache__
+*.pyc
+
+# personal data + secrets — must NEVER bake into the image (they live in /data)
+.env
+.garmin_tokens
+.garmin_cache
+garmin-data.js
+plan-data.js
+
+# dev-only / not needed at runtime
+openspec
+docs
+tools
+test_*.py
+test_*.mjs
+*.md
+.playwright-mcp
+.claude
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+splits-*.png

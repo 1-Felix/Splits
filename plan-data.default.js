@@ -1,9 +1,15 @@
 /* =============================================================================
- *  plan-data.js  —  THE PLAN. Owned by the AI coach (you, in Claude Code).
+ *  plan-data.default.js  —  THE SHIPPED DEFAULT PLAN (the seed).
  *
- *  These are the EDITABLE coaching dials. `sync_garmin.py` NEVER touches this
- *  file, so nightly telemetry syncs can never overwrite your training plan.
- *  Edit here, reload the dashboard, done.
+ *  This file ships in the image. On first container boot the entrypoint copies
+ *  it to <data volume>/plan-data.js IF that file does not already exist, then
+ *  never touches it again — so image upgrades never clobber your live plan.
+ *  In local dev the live plan is just `plan-data.js` next to this file.
+ *
+ *  THE PLAN is owned by the AI coach (you, in Claude Code). These are the
+ *  EDITABLE coaching dials. `sync_garmin.py` NEVER touches the plan, so nightly
+ *  telemetry syncs can never overwrite it. Edit the live plan-data.js (in the
+ *  volume, or here in local dev), reload the dashboard, done.
  *
  *  `running-data.js` merges this with `garmin-data.js` into `athleteData`.
  *

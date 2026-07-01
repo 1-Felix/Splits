@@ -16,11 +16,14 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
 | `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
 | `chart-hover.js` | **The inspection layer.** Pure `bandRects` + `cardPlace` geometry behind the hover/tap crosshair-and-card that every chart, the heatmap, and the ring show for each datapoint. |
-| `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) |
-| `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) |
+| `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) — lives in the `/data` volume when containerized. |
+| `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) — lives in the `/data` volume (seeded from the default below). |
+| `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
-| `serve.mjs` | Zero-dependency static server (`pnpm dev`). |
+| `serve.mjs` | Zero-dependency web server: serves the dashboard, serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status`, and runs the boot + nightly sync. |
+| `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
+| `.github/workflows/docker-publish.yml` | CI that builds and pushes `ghcr.io/1-felix/splits` on `main` and on version tags. |
 | `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
 | `CLAUDE_CODE_HANDOFF.md` | The backend brief: data contract, metric→source map, formulas, open decisions. |
 | `.env.example` | Template for Garmin credentials. Copy to `.env`. |
@@ -40,11 +43,74 @@ plan-data.js    (EDITABLE,   coach-owned) ┘     { ...garmin, ...plan }
 A nightly `sync_garmin.py` can overwrite `garmin-data.js` freely and never risks
 your training plan.
 
-## Running the dashboard
+## Self-hosting with Docker (recommended)
 
-The dashboard loads ES modules, so **serve the folder** — don't open the file
-directly (a `file://` URL blocks the imports and the page falls back to built-in
-demo data):
+SPLITS ships as a single image — Node serves the dashboard, Python runs the Garmin
+sync, and your data lives in a Docker volume. To self-host:
+
+1. Put your Garmin login in a git-ignored `.env` (compose reads it automatically):
+   ```bash
+   cp .env.example .env
+   # edit .env → GARMIN_EMAIL, GARMIN_PASSWORD  (optional: TZ, SYNC_AT)
+   ```
+2. Start it:
+   ```bash
+   docker compose up -d
+   ```
+3. Open **http://localhost:8000**.
+
+Credentials never live in `docker-compose.yml` — it references `${GARMIN_EMAIL}` /
+`${GARMIN_PASSWORD}` from `.env`, so the compose file stays safe to commit. Missing
+creds don't crash anything: the dashboard comes up and the top-bar pill reads
+**"Connect Garmin"** until you add them and sync.
+
+On first boot the container seeds your plan, syncs your Garmin data in the
+background, and the dashboard comes up. Hit **Sync now** (the pill in the top bar)
+any time to pull fresh data; it also re-syncs nightly (see `SYNC_AT`) and on every
+restart when the data is stale. The dashboard tracks the real clock — the
+countdown, the highlighted "today" in the week, and the greeting all follow your
+local date and time of day, while the telemetry stays anchored to the last sync.
+
+**Where your data lives.** Everything personal — `garmin-data.js`, `plan-data.js`,
+the cached auth token, and the raw API cache — is stored in the `splits-data`
+volume mounted at `/data`. It survives restarts and image upgrades; the image
+carries no personal data. Your plan is seeded once from `plan-data.default.js` and
+never overwritten after that, so upgrading the image keeps your training plan
+intact. The plan stays coach-owned — your agent edits `plan-data.js` in the volume
+exactly as before.
+
+**First run / MFA.** This account doesn't use Garmin MFA, so credentials in compose
+are all you need. (If you ever enable MFA, set `GARMIN_MFA=<code>` in compose once —
+the token is then cached in the volume for ~a year — or seed the first login
+interactively: `docker compose run --rm splits python3 sync_garmin.py`.) If a sync
+can't authenticate, the dashboard still comes up on demo/last data with a "connect
+Garmin" prompt — it never crash-loops.
+
+**Security posture.** This is built for a single user on a trusted home network: the
+**Sync now** endpoint (`POST /api/sync`) is unauthenticated and your credentials sit
+in plain text in `.env` — the normal self-host bargain. If you expose the port beyond
+your LAN, put it behind an authenticating reverse proxy, bind the published port to
+`127.0.0.1`, and/or use Docker secrets for the credentials.
+
+**Image source.** The committed compose pulls `ghcr.io/1-felix/splits:latest` (built
+by CI for `linux/amd64`). To build from source instead, uncomment `build: .` in the
+compose file.
+
+### Config knobs (compose `environment`)
+
+| Var | Default | What it does |
+|-----|---------|--------------|
+| `GARMIN_EMAIL` / `GARMIN_PASSWORD` | — | Garmin Connect login (required for sync). |
+| `TZ` | UTC | Your timezone — drives the live clock and the nightly sync time. |
+| `SYNC_AT` | `04:00` | Daily auto-sync time (local). `off` to disable. |
+| `SYNC_ON_BOOT` | `on` | Sync once at startup if telemetry is missing/stale. `off` to disable. |
+| `ATHLETE_NAME` / `ATHLETE_AGE` / `ATHLETE_MAX_HR` | — | Profile overrides Garmin doesn't always expose. |
+
+## Running locally (development)
+
+Without Docker — the original dev flow. The dashboard loads ES modules, so **serve
+the folder** — don't open the file directly (a `file://` URL blocks the imports and
+the page falls back to built-in demo data):
 
 ```bash
 pnpm dev          # → http://localhost:8000/Running%20Dashboard.dc.html

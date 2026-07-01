@@ -1,0 +1,37 @@
+# SPLITS — self-hosted running dashboard.
+#   1. cp .env.example .env  →  set GARMIN_EMAIL / GARMIN_PASSWORD in .env
+#   2. docker compose up -d
+#   3. open http://localhost:8000
+# Credentials are read from .env (git-ignored) — never commit them. Missing creds
+# don't crash anything: the dashboard comes up and shows "Connect Garmin".
+services:
+  splits:
+    image: ghcr.io/1-felix/splits:latest
+    # To build locally from source instead of pulling the published image,
+    # comment the line above and uncomment:
+    # build: .
+    container_name: splits
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8000:8000"
+    environment:
+      # ── Garmin credentials — pulled from .env by compose (git-ignored) ───────
+      GARMIN_EMAIL: ${GARMIN_EMAIL:-}
+      GARMIN_PASSWORD: ${GARMIN_PASSWORD:-}
+      GARMIN_MFA: ${GARMIN_MFA:-}          # only if your account uses MFA (one-time)
+
+      # ── locale / schedule ───────────────────────────────────────────────────
+      TZ: ${TZ:-Europe/Berlin}             # your timezone — drives clock + nightly sync
+      SYNC_AT: ${SYNC_AT:-04:00}           # daily auto-sync (local time); "off" to disable
+      # SYNC_ON_BOOT: "on"                 # sync once at startup if telemetry is missing/stale
+
+      # ── profile overrides (optional; uncomment to set) ──────────────────────
+      # ATHLETE_NAME: "Felix"
+      # ATHLETE_AGE: "31"
+      # ATHLETE_MAX_HR: "197"
+    volumes:
+      - splits-data:/data     # garmin-data.js, plan-data.js, token + raw cache
+
+volumes:
+  splits-data:

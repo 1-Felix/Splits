@@ -36,12 +36,14 @@
         <div style="font-weight:900;font-size:var(--fs-xl);letter-spacing:-.04em">SPLITS</div>
         <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
       </div>
+      <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
+      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">{{ greeting }}</div>
     </div>
     <div style="display:flex;align-items:center;gap:var(--sp-4)">
-      <div style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600">
-        <span style="width:6px;height:6px;border-radius:50%;background:var(--good);animation:pulse 2.4s infinite"></span>
-        Garmin synced · {{ syncedAgo }}
-      </div>
+      <button onClick="{{ sync.onClick }}" title="{{ sync.title }}" aria-label="{{ sync.title }}" style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600;background:transparent;cursor:pointer;font-family:inherit">
+        <span style="{{ sync.dotStyle }}"></span>
+        {{ sync.label }}
+      </button>
       <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
         <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
           <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
@@ -499,7 +501,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1340,&quot;height&quot;:1900}}">
 class Component extends DCLogic {
-  state = { theme: 'volt', data: null, expandedRun: null, hover: null };
+  state = { theme: 'volt', data: null, expandedRun: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
 
   THEMES = {
     volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',z1:'#4DA3FF',z2:'#34D399',z3:'#C7F646',z4:'#FFB020',z5:'#FF6A4D'},
@@ -509,6 +511,32 @@ class Component extends DCLogic {
 
   setTheme = (name) => { this.setState({ theme: name, hover: null }); };
   toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };
+
+  // ---- sync from the dashboard (POST /api/sync, reload on success) ----------
+  syncNow = () => {
+    if (this.state.syncState === 'syncing') return;
+    this.setState({ syncState: 'syncing', syncError: null });
+    fetch('./api/sync', { method: 'POST' })
+      .then((r) => r.json().then((b) => ({ status: r.status, ok: r.ok, b })).catch(() => ({ status: r.status, ok: r.ok, b: null })))
+      .then(({ status, ok, b }) => {
+        if (ok && b && b.ok) { window.location.reload(); return; }                    // fresh telemetry
+        if (status === 409 || (b && b.status === 'already-running')) { this.waitForSync(); return; }
+        const msg = (b && (b.error || b.status)) || (ok ? 'empty response' : 'request failed');
+        this.setState({ syncState: 'error', syncError: msg });
+      })
+      .catch((err) => this.setState({ syncState: 'error', syncError: String((err && err.message) || err) }));
+  };
+
+  // A sync (boot/nightly) is already running — show "Syncing…" and poll until it
+  // finishes, then reload to pick up the result.
+  waitForSync = () => {
+    this.setState({ syncState: 'syncing', syncError: null });
+    const poll = () => fetch('./api/status').then((r) => r.ok ? r.json() : null).then((s) => {
+      if (s && !s.syncing) { window.location.reload(); return; }
+      setTimeout(poll, 2000);
+    }).catch(() => this.setState({ syncState: 'error', syncError: 'lost connection to server' }));
+    setTimeout(poll, 2000);
+  };
 
   // ---- datapoint hover/tap ----
   hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
@@ -566,7 +594,18 @@ class Component extends DCLogic {
     import('./chart-hover.js').then((m) => { this._ch = m; this.setState({}); }).catch(() => {});
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
     document.addEventListener('click', () => this.dismissHover());
+    // last-sync indicator (absent when opened as a static file / no server API)
+    fetch('./api/status').then((r) => r.ok ? r.json() : null)
+      .then((s) => { if (s) { this.setState({ lastSync: s.lastSync, lastResult: s.lastResult, statusReady: true }); if (s.syncing) this.waitForSync(); } }).catch(() => {});
+    // keep date-driven views live: re-render when the local day or the time-of-
+    // day bucket (greeting) changes, so a page left open rolls over on its own.
+    this._tick = setInterval(() => {
+      const n = new Date(), p = this.state.now;
+      if (n.toDateString() !== p.toDateString() || this.dayBucket(n) !== this.dayBucket(p)) this.setState({ now: n });
+    }, 60000);
   }
+
+  componentWillUnmount() { if (this._tick) clearInterval(this._tick); }
 
   // ---- deterministic fallback so the dashboard renders standalone ----------
   buildData() {
@@ -697,6 +736,10 @@ class Component extends DCLogic {
   fmtPace(sec){ const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
   mDate(iso){ const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const d=new Date(iso); return M[d.getMonth()]+' '+d.getDate(); }
   daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+  // local calendar date as YYYY-MM-DD (the live "display-today")
+  localISO(d){ const z=(n)=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
+  dayBucket(d){ const h=d.getHours(); return h<5?'night':h<12?'morning':h<18?'afternoon':'evening'; }
+  greetingText(d){ return {night:'Good night',morning:'Good morning',afternoon:'Good afternoon',evening:'Good evening'}[this.dayBucket(d)]; }
 
   renderVals() {
     const D = this.state.data || this.buildData();
@@ -711,10 +754,13 @@ class Component extends DCLogic {
       { ...tprops('sunset'), swatch:'#FF7A3D', ring: this.state.theme==='sunset'?'#FF7A3D':'transparent' }
     ];
 
-    // race countdown
-    const days = this.daysBetween(D.today, D.race.date);
+    // race countdown — driven by the live local date (displayToday), not the
+    // baked telemetry date, so it stays correct between syncs.
+    const now = this.state.now || new Date();
+    const displayToday = this.localISO(now);
+    const days = this.daysBetween(displayToday, D.race.date);
     const totalPlanDays = this.daysBetween('2026-04-01', D.race.date);
-    const elapsed = this.daysBetween('2026-04-01', D.today);
+    const elapsed = this.daysBetween('2026-04-01', displayToday);
     const race = {
       name:D.race.name, location:D.race.location, dateFmt:this.mDate(D.race.date)+', 2026',
       goalTime:D.race.goalTime, days, weeksLeft:Math.round(days/7),
@@ -758,9 +804,14 @@ class Component extends DCLogic {
       cross:{icon:'◆',iconBg:'rgba(52,211,153,.14)',iconFg:'var(--good)',dot:'var(--good)'}
     };
     const loadColors = { Easy:'var(--sub)', Moderate:'var(--accent2)', Hard:'var(--warn)' };
-    const week = D.weekPlan.map(d => { const k = kindMap[d.kind]; const today = d.status==='today';
-      return { day:d.day, title:d.title, detail:d.detail, icon:k.icon, iconBg:k.iconBg, iconFg:k.iconFg, dot:d.status==='upcoming'?'var(--line)':k.dot,
-        bg: today?'var(--panel2)':'var(--panel)', border: today?'var(--accent)':'var(--line)', opacity: d.status==='done'?'.62':'1',
+    // status is derived from each row's date vs the live date when dates exist
+    // (so the "today" highlight is automatic and never hand-rolled); the builtin
+    // demo rows carry no date, so they fall back to the baked status.
+    const week = D.weekPlan.map(d => { const k = kindMap[d.kind];
+      const st = d.date ? (d.date < displayToday ? 'done' : d.date > displayToday ? 'upcoming' : 'today') : d.status;
+      const today = st==='today';
+      return { day:d.day, title:d.title, detail:d.detail, icon:k.icon, iconBg:k.iconBg, iconFg:k.iconFg, dot:st==='upcoming'?'var(--line)':k.dot,
+        bg: today?'var(--panel2)':'var(--panel)', border: today?'var(--accent)':'var(--line)', opacity: st==='done'?'.62':'1',
         loadLabel: today?'TODAY':d.load.toUpperCase(), loadColor: today?'var(--accent)':loadColors[d.load] }; });
     const weekTotal = D.weekPlan.reduce((a,b)=>a+b.km,0).toFixed(1);
 
@@ -769,7 +820,7 @@ class Component extends DCLogic {
     const blockData = D.block || [];
     const phaseColor = { Rebuild:'var(--accent2)', Build:'var(--accent)', Peak:'var(--accent)', Taper:'var(--warn)', Race:'var(--accent)' };
     const blockMax = blockData.length ? Math.max.apply(null, blockData.map(b=>b.km)) : 1;
-    const block = blockData.map(b => { const cur = D.today>=b.mon && D.today<=b.sun; const past = D.today>b.sun;
+    const block = blockData.map(b => { const cur = displayToday>=b.mon && displayToday<=b.sun; const past = displayToday>b.sun;
       return { wk:b.wk, label:b.label, km:b.km, long:b.long, focus:b.focus,
         phaseColor: phaseColor[b.phase]||'var(--accent)', barPct: Math.round(b.km/blockMax*100),
         bg: cur?'var(--panel2)':'var(--panel)', border: cur?'var(--accent)':'var(--line)',
@@ -960,12 +1011,41 @@ class Component extends DCLogic {
     { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, sleep:sleepObj, heat:heat, ring:ringObj };
       if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
 
+    // sync freshness — telemetry is anchored to D.today (the sync date); compare
+    // it to the live date for the "synced N days ago" label + staleness colour.
+    const syncAgeDays = Math.max(0, this.daysBetween(D.today, displayToday));
+    const syncDateLabel = this.mDate(D.today);
+    const freshLabel = syncAgeDays <= 0 ? 'today' : syncAgeDays === 1 ? 'yesterday' : syncAgeDays + ' days ago';
+    const stale = syncAgeDays >= 2;
+    const ss = this.state.syncState;
+    const lr = this.state.lastResult;
+    // a background (boot/nightly) sync that failed and the user hasn't overridden
+    // this session → prompt to connect Garmin rather than a normal "synced" pill.
+    const bootFailed = ss === 'idle' && lr && lr.ok === false;
+    const noData = !this.state.lastSync;   // garmin-data.js never written = first run
+    const bootErr = bootFailed ? String(lr.error || 'could not reach Garmin').split('\n')[0] : '';
+    const problem = ss === 'error' || bootFailed || stale;
+    const sync = {
+      onClick: this.syncNow,
+      label: ss === 'syncing' ? 'Syncing…'
+        : ss === 'error' ? 'Sync failed — retry'
+        : bootFailed ? (noData ? 'Connect Garmin' : 'Sync failed — retry')
+        : 'Garmin · ' + freshLabel,
+      title: (ss === 'error' && this.state.syncError) ? ('Sync failed: ' + this.state.syncError + ' — click to retry')
+        : bootFailed ? ((noData ? 'Not connected — ' : 'Last sync failed: ') + bootErr + ' — check credentials, then click to retry')
+        : ('Telemetry synced ' + syncDateLabel + ' (' + freshLabel + ') — click to sync now'),
+      dotStyle: 'width:6px;height:6px;border-radius:50%;background:' +
+        (ss === 'syncing' ? 'var(--accent)' : problem ? 'var(--warn)' : 'var(--good)') +
+        (ss === 'syncing' ? ';animation:pulse 1s infinite' : '')
+    };
+
     return {
-      rootStyle, themes, initial:D.profile.name[0], syncedAgo:'2 min ago',
+      rootStyle, themes, initial:D.profile.name[0],
+      greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
-      historyWindow:'30-month history · imported from Garmin', vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
+      historyWindow:'30-month history · synced ' + syncDateLabel, vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
       liveText
     };
   }

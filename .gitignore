@@ -11,6 +11,10 @@
 # until `python sync_garmin.py` regenerates it.
 garmin-data.js
 
+# The live plan — coach-owned, lives in the data volume (seeded from
+# plan-data.default.js on first container boot). The default is what ships.
+plan-data.js
+
 # Python
 __pycache__/
 *.pyc

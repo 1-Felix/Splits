@@ -15,7 +15,7 @@ Constraints that shaped this design:
 **Goals:**
 - Trigger a Garmin sync from the dashboard with no terminal.
 - One container image, published to `ghcr.io/1-felix/splits`, run by a minimal `docker-compose.yml`.
-- Credentials supplied as compose environment variables; personal data persisted in a `/data` volume across restarts and image upgrades.
+- Credentials supplied via a git-ignored `.env` (referenced by compose with `${VAR}` substitution); personal data persisted in a `/data` volume across restarts and image upgrades.
 - The dashboard reflects the real date and time of day (countdown, current-day highlight, greeting), while telemetry stays honestly anchored to the last sync.
 - A fresh `docker compose up` produces a working dashboard (demo data at worst) without manual steps.
 
@@ -55,7 +55,7 @@ Application files ship in the image; `garmin-data.js`, `plan-data.js`, `.garmin_
 ### D5 — Graceful degradation over crash-loop
 If a sync cannot authenticate or reach Garmin (missing/invalid credentials, network failure — or, were MFA ever enabled, a missing code), sync fails *soft*: the server returns a structured error, the dashboard renders demo/last data with a "connect Garmin" prompt, and the boot/nightly sync logs and continues. The token cache in `/data` makes auth a one-time concern.
 - **Why:** a crash-looping container on first run is the worst possible onboarding. The demo fallback already exists in the page — lean on it.
-- **MFA:** the target account does not use MFA, so the happy path is just credentials in compose. The soft-fail and the optional `GARMIN_MFA` path remain available if MFA is ever turned on, but are off the documented main road.
+- **MFA:** the target account does not use MFA, so the happy path is just credentials in `.env`. The soft-fail and the optional `GARMIN_MFA` path remain available if MFA is ever turned on, but are off the documented main road.
 
 ### D6 — Unauthenticated sync endpoint (LAN-trust)
 `POST /api/sync` has no auth.
@@ -71,8 +71,8 @@ The page imports data once as ES modules; after a successful sync the client rel
 
 ## Risks / Trade-offs
 
-- **Authentication failure on first run** (wrong credentials, network) → boot sync fails. Mitigation: D5 soft-fail; the account uses no MFA, so the documented first run is just credentials in compose. (If MFA is ever enabled, a one-time `GARMIN_MFA=` or interactive `docker compose run --rm splits python sync_garmin.py` seeds the token in the volume.)
-- **Plaintext credentials in `docker-compose.yml`** → standard self-host bargain. Mitigation: document it; `.gitignore` the real compose/`.env`; note Docker secrets as an advanced option.
+- **Authentication failure on first run** (wrong credentials, network) → boot sync fails. Mitigation: D5 soft-fail; the account uses no MFA, so the documented first run is just credentials in `.env`. (If MFA is ever enabled, a one-time `GARMIN_MFA=` or interactive `docker compose run --rm splits python sync_garmin.py` seeds the token in the volume.)
+- **Plaintext credentials in `.env`** → standard self-host bargain. Mitigation: creds live in a git-ignored `.env` (never in the committed compose, which references `${VAR}`); note Docker secrets as an advanced option.
 - **Unauthenticated sync trigger** (D6) → anyone on the LAN can initiate a Garmin pull. Mitigation: documented; bind-to-localhost and shared-token escape hatches noted.
 - **Client-clock trust** (D2) → a wrong device clock skews display-today. Mitigation: acceptable for personal use; telemetry (the data of record) is unaffected.
 - **Image size from dual runtime** (D1) → larger pulls. Mitigation: slim base, layer ordering, `.dockerignore`; acceptable on a home server.
@@ -83,7 +83,7 @@ The page imports data once as ES modules; after a successful sync the client rel
 
 1. Land the app/data split (`SPLITS_DATA_DIR` resolution in `serve.mjs` and `sync_garmin.py`) with local-dev fallbacks — `pnpm dev` must keep working unchanged.
 2. Add the API routes and the live-clock frontend behavior (both degrade safely with no container).
-3. Add `Dockerfile`, entrypoint (seed `plan-data.js`, boot sync, start cron + server), `docker-compose.yml`, `.dockerignore`.
+3. Add `Dockerfile`, entrypoint (seed `plan-data.js`, then launch the server), `docker-compose.yml` (creds via `.env`), `.dockerignore`. The boot sync and nightly scheduler run in-process in `serve.mjs`.
 4. Add the GHCR workflow.
 5. Update README with the self-host quickstart and the MFA first-run note.
 
@@ -91,5 +91,5 @@ The page imports data once as ES modules; after a successful sync the client rel
 
 ## Open Questions
 
-- **MFA:** Resolved — the account does not use MFA, so the documented first run is just credentials in compose + `docker compose up`. The soft-fail handling (D5) and optional `GARMIN_MFA` path are kept available but stay off the main docs path.
+- **MFA:** Resolved — the account does not use MFA, so the documented first run is just credentials in `.env` + `docker compose up`. The soft-fail handling (D5) and optional `GARMIN_MFA` path are kept available but stay off the main docs path.
 - **Nightly cron time / `TZ` default** — pick a sensible default (e.g., 04:00 local) and make it overridable via env. Confirm during implementation.

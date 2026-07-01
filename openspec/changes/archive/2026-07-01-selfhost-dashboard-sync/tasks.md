@@ -33,7 +33,7 @@
 - [x] 5.1 Write a `Dockerfile` on a base with both Node and Python; install `requirements.txt`; copy app files; expose the server port.
 - [x] 5.2 Write an entrypoint that seeds `/data/plan-data.js` from the default if absent (never overwrites existing), then launches the server; the boot sync (when data is missing/stale, soft-fail) and the nightly schedule run in-process in `serve.mjs`.
 - [x] 5.3 Configure the nightly sync schedule in-process (`serve.mjs`, no cron daemon) honoring container `TZ`, overridable via env (`SYNC_AT=HH:MM`, default 04:00 local; `SYNC_ON_BOOT` toggle).
-- [x] 5.4 Write `docker-compose.yml` with `GARMIN_EMAIL`/`GARMIN_PASSWORD` (+ optional `GARMIN_MFA`, `ATHLETE_*`, `TZ`), a named `/data` volume, port mapping, and `image: ghcr.io/1-felix/splits`.
+- [x] 5.4 Write `docker-compose.yml` that reads `GARMIN_EMAIL`/`GARMIN_PASSWORD` (+ optional `GARMIN_MFA`, `TZ`, `SYNC_AT`) from a git-ignored `.env` via `${VAR}` substitution, a named `/data` volume, port mapping, and `image: ghcr.io/1-felix/splits`.
 - [x] 5.5 Add `.dockerignore` (exclude `node_modules`, `.venv`, `.git`, caches, local data/secrets).
 - [x] 5.6 Build the image locally and verify a fresh `docker compose up` yields a working dashboard (demo data acceptable without creds) and that `/api/status` responds.
 
@@ -44,7 +44,7 @@
 
 ## 7. Docs
 
-- [x] 7.1 Update `README.md` with the self-host quickstart: set credentials in `docker-compose.yml`, `docker compose up`, open the dashboard; note data lives in the volume.
-- [x] 7.2 Document the first-run path (credentials in compose → `docker compose up`; account uses no MFA) and the soft-fail behavior; note the optional `GARMIN_MFA=` / interactive seed path only as a fallback if MFA is ever enabled.
+- [x] 7.1 Update `README.md` with the self-host quickstart: `cp .env.example .env` + set credentials, `docker compose up`, open the dashboard; note data lives in the volume.
+- [x] 7.2 Document the first-run path (credentials in `.env` → `docker compose up`; account uses no MFA) and the soft-fail behavior; note the optional `GARMIN_MFA=` / interactive seed path only as a fallback if MFA is ever enabled.
 - [x] 7.3 Document the LAN-trust posture of `POST /api/sync` and the plaintext-credentials bargain, with bind-to-localhost / shared-token noted as upgrades.
 - [x] 7.4 Note that the working `plan-data.js` now lives in the volume (seeded from the default) and remains coach-edited there.

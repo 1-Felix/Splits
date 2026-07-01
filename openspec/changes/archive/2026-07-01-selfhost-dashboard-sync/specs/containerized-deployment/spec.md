@@ -8,11 +8,15 @@ The project SHALL be deployable as a single container image that bundles the Nod
 - **THEN** it serves the dashboard over HTTP and is able to execute `sync_garmin.py` within the same container
 
 ### Requirement: Compose-driven deployment with credentials and a data volume
-The repository SHALL provide a `docker-compose.yml` that runs the image, supplies Garmin credentials and profile/timezone settings as environment variables, and mounts a persistent volume for personal data. A user SHALL be able to deploy by setting credentials in compose and running `docker compose up`.
+The repository SHALL provide a `docker-compose.yml` that runs the image, reads Garmin credentials and timezone from a git-ignored `.env` (via `${VAR}` substitution) and passes them to the container as environment variables, and mounts a persistent volume for personal data. A user SHALL be able to deploy by putting credentials in `.env` and running `docker compose up`. Credentials SHALL NOT be committed — the compose file references them, it does not contain them.
 
 #### Scenario: Deploy from compose
-- **WHEN** a user sets `GARMIN_EMAIL`/`GARMIN_PASSWORD` (and optional `ATHLETE_*`/`TZ`) in `docker-compose.yml` and runs `docker compose up`
-- **THEN** the dashboard becomes reachable and syncs use the provided credentials
+- **WHEN** a user sets `GARMIN_EMAIL`/`GARMIN_PASSWORD` (and optional `TZ`) in `.env` and runs `docker compose up`
+- **THEN** the dashboard becomes reachable and syncs use the credentials supplied via `.env`
+
+#### Scenario: Missing credentials do not block startup
+- **WHEN** `.env` is absent or the credentials are unset
+- **THEN** compose still starts the container (creds resolve to empty) and the dashboard comes up in the graceful-degradation state rather than failing to launch
 
 ### Requirement: Personal data persists in a mounted volume
 `garmin-data.js`, `plan-data.js`, the auth token cache, and the raw API cache SHALL be stored in a mounted data volume so they survive container restarts and image upgrades. Application code SHALL ship in the image and SHALL NOT be required in the volume.

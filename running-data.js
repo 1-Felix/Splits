@@ -7,6 +7,12 @@ import { coachRead } from "./coach-read.js";
 
 export const athleteData = { ...garminData, ...planData };
 
+// The plan lives as block[i].days now. Flatten every detailed day into one list so
+// coach-read can match a run to its planned day even when the run is from an earlier
+// week, and any legacy `weekPlan` consumer keeps working. (Which week is "current" is
+// a live-clock question, so the dashboard derives the active week itself from block dates.)
+athleteData.weekPlan = (athleteData.block || []).flatMap((w) => w.days || []);
+
 // Attach a plan-aware coach-read to each recent run that has drill-down detail.
 const _maxHR = (athleteData.profile && athleteData.profile.maxHR) || 0;
 athleteData.recentRuns = (athleteData.recentRuns || []).map((r) =>

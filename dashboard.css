@@ -55,6 +55,44 @@
 /* ---- day card ---- */
 .day { display: flex; flex-direction: column; border-radius: var(--r-lg); padding: var(--sp-3); min-height: 128px; position: relative; }
 .day > :last-child { margin-top: auto; padding-top: var(--sp-2); }   /* push the last row (load / focus) to the card bottom */
+.day[role="button"] { cursor: pointer; transition: box-shadow .12s ease, transform .12s ease; }
+.day[role="button"]:hover { transform: translateY(-1px); }
+
+/* ---- THIS WEEK day card internals (classed so the mobile agenda reflow is robust) ---- */
+.wk-head   { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); }
+.wk-day    { font-size: var(--fs-sm); font-weight: var(--fw-extrabold); letter-spacing: .04em; }
+.wk-head-r { display: flex; align-items: center; gap: 6px; }
+.wk-dot    { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.wk-chev   { font-size: var(--fs-2xs); color: var(--sub); }
+.wk-icon   { width: 26px; height: 26px; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; margin: var(--sp-2) 0; flex: none; }
+.wk-title  { font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.2; }
+.wk-pace   { margin-top: var(--sp-1); }
+.pace-chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-2xs); font-weight: var(--fw-bold); color: var(--accent); background: var(--accentFade); border-radius: var(--r-pill); padding: 2px 8px; letter-spacing: .02em; }
+.wk-detail { font-size: var(--fs-xs); color: var(--sub); margin-top: var(--sp-1); line-height: 1.35; font-weight: var(--fw-medium); }
+.wk-load   { font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .06em; }
+
+/* expanded planned-workout detail */
+.wk-expand { border-top: 1px solid var(--line); margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-1); width: 100%; }
+.wk-seg    { display: flex; gap: var(--sp-2); align-items: baseline; font-size: var(--fs-2xs); }
+.wk-seg-l  { color: var(--sub); font-weight: var(--fw-bold); flex: 0 0 60px; }
+.wk-seg-v  { font-weight: var(--fw-semibold); color: var(--ink); }
+.wk-seg-r  { color: var(--sub); margin-left: auto; font-weight: var(--fw-medium); }
+.wk-extra  { font-size: var(--fs-2xs); color: var(--sub); line-height: 1.4; font-weight: var(--fw-medium); }
+.wk-lbl    { color: var(--ink); font-weight: var(--fw-bold); }
+.wk-note   { font-size: var(--fs-2xs); color: var(--sub); line-height: 1.4; font-weight: var(--fw-medium); font-style: italic; }
+
+/* un-detailed week → summary placeholder (spans the whole week strip) */
+.wk-placeholder { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: var(--r-lg); padding: var(--sp-4); background: var(--panel); }
+.wk-ph-head  { font-size: var(--fs-base); font-weight: var(--fw-extrabold); }
+.wk-ph-focus { font-size: var(--fs-sm); color: var(--ink); font-weight: var(--fw-semibold); margin-top: var(--sp-1); }
+.wk-ph-meta  { font-size: var(--fs-sm); color: var(--sub); font-weight: var(--fw-medium); margin-top: var(--sp-1); }
+.wk-ph-km    { font-family: 'JetBrains Mono', monospace; color: var(--ink); font-weight: var(--fw-bold); }
+.wk-ph-note  { font-size: var(--fs-xs); color: var(--sub); font-weight: var(--fw-medium); line-height: 1.4; margin-top: var(--sp-2); }
+
+/* THIS WEEK header: active-week label + back-to-current control */
+.wk-active { font-size: var(--fs-sm); color: var(--accent); font-weight: var(--fw-bold); letter-spacing: .02em; }
+.wk-back   { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--sub); background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px; cursor: pointer; }
+.wk-back:hover { color: var(--ink); border-color: var(--accent); }
 
 /* ---- bottom split: runs table + drill-down + coach-log ---- */
 .split-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--sp-4); }
@@ -88,14 +126,17 @@
   /* week strip → compact full-width agenda cards (Task 9 already stacks them 1-per-row) */
   .day { min-height: 0; }
 
-  /* this-week strip → compact one-line agenda rows. --rail = the day+dot rail width,
-     reused by the line-2 indent so they stay in sync. */
-  .day--wk { --rail: 44px; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
-  .day--wk > :first-child { flex: 0 0 var(--rail); }          /* day + dot rail */
-  .day--wk > :nth-child(2) { display: none; }                 /* hide the icon tile */
-  .day--wk > :nth-child(3) { flex: 0 1 auto; min-width: 0; }  /* title (content width, shrinkable) on line 1 */
-  .day--wk > :nth-child(4) { order: 1; flex: 1 1 100%; margin-left: calc(var(--rail) + var(--sp-3)); }  /* detail wraps to line 2, indented past the rail */
-  .day--wk > :last-child { margin-top: 0; padding-top: 0; margin-left: auto; }  /* load badge → right end of line 1, reset the desktop bottom-push */
+  /* this-week strip → compact agenda rows: day-rail + title + load on line 1, then the
+     pace chip, detail, and any expanded plan stack full-width beneath. Classed selectors
+     so adding the chip / chevron / expand doesn't shift positional rules. */
+  .day--wk { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); }
+  .day--wk .wk-head   { flex: 0 0 auto; }                     /* day + dot + chevron */
+  .day--wk .wk-icon   { display: none; }                      /* hide the icon tile */
+  .day--wk .wk-title  { flex: 0 1 auto; min-width: 0; }       /* title on line 1, shrinkable */
+  .day--wk .wk-load   { margin-top: 0; padding-top: 0; margin-left: auto; }  /* load badge → right end of line 1 */
+  .day--wk .wk-pace   { order: 1; flex: 1 1 100%; margin-top: 0; }           /* pace chip → own line */
+  .day--wk .wk-detail { order: 2; flex: 1 1 100%; margin-top: 0; }           /* detail → own line */
+  .day--wk .wk-expand { order: 3; flex: 1 1 100%; }                          /* expanded plan → full width */
 
   /* runs table → stacked labeled cards */
   .runs-head { display: none; }

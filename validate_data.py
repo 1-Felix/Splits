@@ -77,11 +77,32 @@ def validate(d: dict) -> list[str]:
         check(abs(expected - race["goalPaceSecPerKm"]) <= 3,
               f"race.goalPaceSecPerKm ({race['goalPaceSecPerKm']}) ≠ goalTime÷distance (~{expected:.0f})", e)
 
-    # weekPlan
+    # plan block — one row per week, each optionally carrying a 7-day `days` plan
+    block = d.get("block", [])
+    check(isinstance(block, list) and len(block) > 0, "block must be a non-empty list of weeks", e)
+    for b in block if isinstance(block, list) else []:
+        for key in ("wk", "label", "mon", "sun", "phase", "km", "long", "focus"):
+            check(key in b, f"block week {b.get('wk', '?')} missing '{key}'", e)
+        days = b.get("days")
+        check(days is None or (isinstance(days, list) and len(days) == 7),
+              f"block week {b.get('wk', '?')} days must be null or 7 entries "
+              f"(got {len(days) if isinstance(days, list) else days!r})", e)
+        for day in (days or []):
+            for key in ("day", "date", "kind", "title", "load", "km"):
+                check(key in day, f"{b.get('wk', '?')} {day.get('day', '?')} missing '{key}'", e)
+            check(day.get("kind") in ("run", "strength", "cross"),
+                  f"{b.get('wk', '?')} {day.get('day', '?')} invalid kind {day.get('kind')!r}", e)
+            check(isinstance(day.get("km"), (int, float)),
+                  f"{b.get('wk', '?')} {day.get('day', '?')} km must be numeric", e)
+            segs = day.get("segments")
+            check(segs is None or (isinstance(segs, list) and all("label" in s and "val" in s for s in segs)),
+                  f"{b.get('wk', '?')} {day.get('day', '?')} segments must be a list of {{label, val}}", e)
+
+    # flattened weekPlan alias (running-data.js) — coach-read resolves runs to plan days by date
     wp = d.get("weekPlan", [])
-    check(len(wp) == 7, f"weekPlan must have 7 entries Mon→Sun (got {len(wp)})", e)
-    todays = [w for w in wp if w.get("status") == "today"]
-    check(len(todays) <= 1, f"at most one weekPlan entry may be status:'today' (got {len(todays)})", e)
+    check(isinstance(wp, list), "weekPlan alias must be a list", e)
+    check(all(("date" in w and "kind" in w) for w in wp),
+          "every weekPlan day needs date + kind for coach-read to resolve", e)
 
     # history arrays present, numeric, gap-free
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm", "weeklyKm", "weeklyRuns", "ctl", "atl"):

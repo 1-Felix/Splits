@@ -157,20 +157,46 @@
   <!-- ===== THIS WEEK ===== -->
   <div class="section-head">
     <h2>THIS WEEK</h2>
+    <span class="wk-active">{{ weekLabel }}</span>
+    <sc-for list="{{ backToCurrent }}" as="b" hint-placeholder-count="0">
+      <button type="button" class="wk-back" onClick="{{ b.onClick }}" onKeyDown="{{ b.onKey }}">← back to current</button>
+    </sc-for>
     <div class="rule"></div>
-    <span class="meta">{{ weekTotal }} km planned · 3 runs · 3 strength · 1 spin</span>
+    <span class="meta">{{ weekTotal }}</span>
   </div>
   <section id="sec-week1" class="week-grid">
     <sc-for list="{{ week }}" as="d" hint-placeholder-count="7">
-      <div class="day day--wk" style="background:{{ d.bg }};border:1px solid {{ d.border }};opacity:{{ d.opacity }}">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:var(--fs-sm);font-weight:800;letter-spacing:.04em">{{ d.day }}</span>
-          <span style="width:8px;height:8px;border-radius:50%;background:{{ d.dot }}"></span>
+      <div class="day day--wk" style="background:{{ d.bg }};border:1px solid {{ d.border }};opacity:{{ d.opacity }}" role="button" tabIndex="0" aria-expanded="{{ d.ariaExpanded }}" onClick="{{ d.toggle }}" onKeyDown="{{ d.onKey }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:2px">
+        <div class="wk-head">
+          <span class="wk-day">{{ d.day }}</span>
+          <span class="wk-head-r">
+            <span class="wk-dot" style="background:{{ d.dot }}"></span>
+            <span class="wk-chev">{{ d.chevron }}</span>
+          </span>
         </div>
-        <div style="width:26px;height:26px;border-radius:var(--r-md);background:{{ d.iconBg }};display:flex;align-items:center;justify-content:center;margin:var(--sp-2) 0 var(--sp-2);color:{{ d.iconFg }}">{{ d.icon }}</div>
-        <div style="font-size:var(--fs-sm);font-weight:700;line-height:1.2">{{ d.title }}</div>
-        <div style="font-size:var(--fs-xs);color:var(--sub);margin-top:var(--sp-1);line-height:1.35;font-weight:500">{{ d.detail }}</div>
-        <div style="font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;color:{{ d.loadColor }}">{{ d.loadLabel }}</div>
+        <div class="wk-icon" style="background:{{ d.iconBg }};color:{{ d.iconFg }}">{{ d.icon }}</div>
+        <div class="wk-title">{{ d.title }}</div>
+        <sc-for list="{{ d.paceChip }}" as="pc" hint-placeholder-count="0"><div class="wk-pace"><span class="pace-chip">{{ pc.t }}</span></div></sc-for>
+        <div class="wk-detail">{{ d.detail }}</div>
+        <div class="wk-load" style="color:{{ d.loadColor }}">{{ d.loadLabel }}</div>
+        <sc-for list="{{ d.detailRows }}" as="dv" hint-placeholder-count="0">
+          <div class="wk-expand">
+            <sc-for list="{{ dv.segments }}" as="s" hint-placeholder-count="0">
+              <div class="wk-seg"><span class="wk-seg-l">{{ s.label }}</span><span class="wk-seg-v">{{ s.val }}</span><span class="wk-seg-r">{{ s.rest }}</span></div>
+            </sc-for>
+            <sc-for list="{{ dv.extraRow }}" as="x" hint-placeholder-count="0"><div class="wk-extra"><span class="wk-lbl">Also</span> {{ x.t }}</div></sc-for>
+            <sc-for list="{{ dv.fuelRow }}" as="f" hint-placeholder-count="0"><div class="wk-extra"><span class="wk-lbl">Fuel</span> {{ f.t }}</div></sc-for>
+            <sc-for list="{{ dv.noteRow }}" as="n" hint-placeholder-count="0"><div class="wk-note">{{ n.t }}</div></sc-for>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+    <sc-for list="{{ weekPlaceholder }}" as="p" hint-placeholder-count="0">
+      <div class="wk-placeholder">
+        <div class="wk-ph-head">{{ p.wk }} · {{ p.label }}</div>
+        <div class="wk-ph-focus">{{ p.focus }}</div>
+        <div class="wk-ph-meta"><span class="wk-ph-km">{{ p.km }} km</span> planned · long run {{ p.long }}</div>
+        <div class="wk-ph-note">Not detailed yet — this week's sessions are written closer to the day. Here's the shape; select the current week to see its full plan.</div>
       </div>
     </sc-for>
   </section>
@@ -183,7 +209,7 @@
   </div>
   <section id="sec-week2" class="week-grid">
     <sc-for list="{{ block }}" as="w" hint-placeholder-count="7">
-      <div class="day" style="background:{{ w.bg }};border:1px solid {{ w.border }};opacity:{{ w.opacity }}">
+      <div class="day day--sel" style="background:{{ w.bg }};border:1px solid {{ w.border }};opacity:{{ w.opacity }};box-shadow:{{ w.ring }}" role="button" tabIndex="0" aria-pressed="{{ w.ariaPressed }}" aria-label="{{ w.ariaLabel }}" onClick="{{ w.onSelect }}" onKeyDown="{{ w.onKey }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:2px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-size:var(--fs-sm);font-weight:800;letter-spacing:.04em">{{ w.wk }}</span>
           <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.07em;color:{{ w.phaseColor }}">{{ w.tag }}</span>
@@ -501,7 +527,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1340,&quot;height&quot;:1900}}">
 class Component extends DCLogic {
-  state = { theme: 'volt', data: null, expandedRun: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
+  state = { theme: 'volt', data: null, expandedRun: null, expandedDay: null, selectedWeek: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
 
   THEMES = {
     volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',z1:'#4DA3FF',z2:'#34D399',z3:'#C7F646',z4:'#FFB020',z5:'#FF6A4D'},
@@ -511,6 +537,11 @@ class Component extends DCLogic {
 
   setTheme = (name) => { this.setState({ theme: name, hover: null }); };
   toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };
+  // planned-workout detail (THIS WEEK) — mirrors toggleRun; id = weekIndex + ':' + day
+  toggleDay = (id) => { this.setState({ expandedDay: this.state.expandedDay === id ? null : id, hover: null }); };
+  // week selector (ROAD TO SONTHOFEN → THIS WEEK). selectedWeek === null follows the live clock.
+  selectWeek = (i) => { this.setState({ selectedWeek: i, expandedDay: null, hover: null }); };
+  clearWeek = () => { this.setState({ selectedWeek: null, expandedDay: null, hover: null }); };
 
   // ---- sync from the dashboard (POST /api/sync, reload on success) ----------
   syncNow = () => {
@@ -590,6 +621,18 @@ class Component extends DCLogic {
     };
   };
 
+  // structured detail for one PLANNED day (THIS WEEK expand). Returns 0/1-length
+  // arrays for the optional rows so the template can drive them with sc-for, matching
+  // the runs drill-down idiom.
+  dayDetail = (d) => {
+    return {
+      segments: (d.segments || []).map((s) => ({ label: s.label, val: s.val, rest: s.rest ? '· ' + s.rest : '' })),
+      extraRow: d.extra ? [{ t: d.extra }] : [],
+      fuelRow: d.fuel ? [{ t: d.fuel }] : [],
+      noteRow: d.detail ? [{ t: d.detail }] : []
+    };
+  };
+
   componentDidMount() {
     import('./chart-hover.js').then((m) => { this._ch = m; this.setState({}); }).catch(() => {});
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
@@ -625,23 +668,30 @@ class Component extends DCLogic {
       race:{name:'Half Marathon',location:'Lakeside Half',date:'2026-08-09',distanceKm:21.1,goalTime:'1:59:59',goalPaceSecPerKm:341,pb:'2:17:30'},
       today:'2026-06-27',
       readiness:{score:82,status:'Primed',hrv:68,restingHR:46,sleepHours:7.8,trainingLoad:412,loadStatus:'Optimal'},
-      weekPlan:[
-        {day:'Mon',kind:'cross',title:'Spin / Bike',detail:'45 min Z2 indoor cycling',load:'Easy',status:'done',km:0},
-        {day:'Tue',kind:'strength',title:'Strength · Push',detail:'Bench, OHP, dips — 4×8',load:'Moderate',status:'done',km:0},
-        {day:'Wed',kind:'run',title:'Recovery Run',detail:'6 km easy · HR < 145',load:'Easy',status:'done',km:6.2},
-        {day:'Thu',kind:'strength',title:'Strength · Pull',detail:'Deadlift, rows, chin-ups',load:'Moderate',status:'done',km:0},
-        {day:'Fri',kind:'run',title:'Tempo Run',detail:'2 wu · 5 km @ 5:35 · 2 cd',load:'Hard',status:'done',km:9.1},
-        {day:'Sat',kind:'strength',title:'Strength · Legs',detail:'Squat, lunges, calves',load:'Moderate',status:'today',km:0},
-        {day:'Sun',kind:'run',title:'Long Run',detail:'18 km @ 6:05 · fuel @ 8/14 km',load:'Hard',status:'upcoming',km:18}
-      ],
       block:[
-        {wk:'Wk 1',label:'Jun 22',mon:'2026-06-22',sun:'2026-06-28',phase:'Rebuild',km:28,long:'16 km',focus:'Tempo pyramid + long run'},
-        {wk:'Wk 2',label:'Jun 29',mon:'2026-06-29',sun:'2026-07-05',phase:'Build',km:31,long:'17 km',focus:'Add a 4th easy run · threshold'},
-        {wk:'Wk 3',label:'Jul 6',mon:'2026-07-06',sun:'2026-07-12',phase:'Build',km:34,long:'18 km',focus:'6k threshold · race-pace finish'},
-        {wk:'Wk 4',label:'Jul 13',mon:'2026-07-13',sun:'2026-07-19',phase:'Build',km:37,long:'19 km',focus:'Cruise intervals · longest run'},
-        {wk:'Wk 5',label:'Jul 20',mon:'2026-07-20',sun:'2026-07-26',phase:'Peak',km:38,long:'20 km',focus:'Peak volume · 3×3k @ goal'},
-        {wk:'Wk 6',label:'Jul 27',mon:'2026-07-27',sun:'2026-08-02',phase:'Taper',km:30,long:'15 km',focus:'Sharpen · cut volume ~25%'},
-        {wk:'Wk 7',label:'Aug 3',mon:'2026-08-03',sun:'2026-08-09',phase:'Race',km:12,long:'Race',focus:'Full taper · RACE Aug 9'}
+        {wk:'Wk 1',label:'Jun 22',mon:'2026-06-22',sun:'2026-06-28',phase:'Rebuild',km:28,long:'16 km',focus:'Tempo pyramid + long run',days:null},
+        {wk:'Wk 2',label:'Jun 29',mon:'2026-06-29',sun:'2026-07-05',phase:'Build',km:31,long:'17 km',focus:'Add a 4th easy run · threshold',days:[
+          {day:'Mon',date:'2026-06-29',kind:'cross',title:'Spin / Bike',load:'Easy',km:0,detail:'45 min Z2 indoor cycling'},
+          {day:'Tue',date:'2026-06-30',kind:'strength',title:'Strength · Push',load:'Moderate',km:0,detail:'Bench, OHP, dips — 4×8'},
+          {day:'Wed',date:'2026-07-01',kind:'run',title:'Recovery Run',load:'Easy',km:6.2,pace:'~6:20',zone:'Z2',detail:'6 km easy · HR < 145',segments:[{label:'Easy',val:'6 km @ ~6:20'}],extra:'Cap HR under 145.'},
+          {day:'Thu',date:'2026-07-02',kind:'strength',title:'Strength · Pull',load:'Moderate',km:0,detail:'Deadlift, rows, chin-ups'},
+          {day:'Fri',date:'2026-07-03',kind:'run',title:'Tempo Run',load:'Hard',km:9.1,pace:'5:35',zone:'Z4',detail:'2 wu · 5 km @ 5:35 · 2 cd',segments:[{label:'Warm-up',val:'2 km easy'},{label:'Tempo',val:'5 km @ 5:35'},{label:'Cool-down',val:'2 km easy'}]},
+          {day:'Sat',date:'2026-07-04',kind:'strength',title:'Strength · Legs',load:'Moderate',km:0,detail:'Squat, lunges, calves'},
+          {day:'Sun',date:'2026-07-05',kind:'run',title:'Long Run',load:'Hard',km:18,pace:'6:05',zone:'Z2',detail:'18 km @ 6:05 · fuel @ 8/14 km',segments:[{label:'Steady',val:'18 km @ 6:05'}],fuel:'gel @ 8 & 14 km'}
+        ]},
+        {wk:'Wk 3',label:'Jul 6',mon:'2026-07-06',sun:'2026-07-12',phase:'Build',km:34,long:'18 km',focus:'6k threshold · race-pace finish',days:[
+          {day:'Mon',date:'2026-07-06',kind:'cross',title:'Spin / Bike',load:'Easy',km:0,detail:'45 min Z2 indoor cycling'},
+          {day:'Tue',date:'2026-07-07',kind:'strength',title:'Strength · Push',load:'Moderate',km:0,detail:'Bench, OHP, dips — 4×8'},
+          {day:'Wed',date:'2026-07-08',kind:'run',title:'Easy Run',load:'Easy',km:6,pace:'~6:15',zone:'Z2',detail:'6 km easy · Z2',segments:[{label:'Easy',val:'6 km @ ~6:15'}]},
+          {day:'Thu',date:'2026-07-09',kind:'strength',title:'Strength · Pull',load:'Moderate',km:0,detail:'Deadlift, rows, chin-ups'},
+          {day:'Fri',date:'2026-07-10',kind:'run',title:'Threshold',load:'Hard',km:10,pace:'5:30',zone:'Z4',detail:'2 wu · 6 km @ 5:30 · 2 cd',segments:[{label:'Warm-up',val:'2 km easy'},{label:'Threshold',val:'6 km @ 5:30'},{label:'Cool-down',val:'2 km easy'}]},
+          {day:'Sat',date:'2026-07-11',kind:'strength',title:'Strength · Legs',load:'Moderate',km:0,detail:'Squat, lunges, calves'},
+          {day:'Sun',date:'2026-07-12',kind:'run',title:'Long Run',load:'Hard',km:19,pace:'6:05',zone:'Z2',detail:'19 km @ 6:05 · fuel @ 8/14 km',segments:[{label:'Steady',val:'19 km @ 6:05'}],fuel:'gel @ 8 & 14 km'}
+        ]},
+        {wk:'Wk 4',label:'Jul 13',mon:'2026-07-13',sun:'2026-07-19',phase:'Build',km:37,long:'19 km',focus:'Cruise intervals · longest run',days:null},
+        {wk:'Wk 5',label:'Jul 20',mon:'2026-07-20',sun:'2026-07-26',phase:'Peak',km:38,long:'20 km',focus:'Peak volume · 3×3k @ goal',days:null},
+        {wk:'Wk 6',label:'Jul 27',mon:'2026-07-27',sun:'2026-08-02',phase:'Taper',km:30,long:'15 km',focus:'Sharpen · cut volume ~25%',days:null},
+        {wk:'Wk 7',label:'Aug 3',mon:'2026-08-03',sun:'2026-08-09',phase:'Race',km:12,long:'Race',focus:'Full taper · RACE Aug 9',days:null}
       ],
       hrZones:[{z:1,label:'Recovery',min:95},{z:2,label:'Endurance',min:182},{z:3,label:'Tempo',min:64},{z:4,label:'Threshold',min:28},{z:5,label:'VO2 max',min:9}],
       predictions:{halfNow:'2:03:40',halfGoal:'1:59:59',trend:'-1:55 / 4wks'},
@@ -804,28 +854,67 @@ class Component extends DCLogic {
       cross:{icon:'◆',iconBg:'rgba(52,211,153,.14)',iconFg:'var(--good)',dot:'var(--good)'}
     };
     const loadColors = { Easy:'var(--sub)', Moderate:'var(--accent2)', Hard:'var(--warn)' };
-    // status is derived from each row's date vs the live date when dates exist
-    // (so the "today" highlight is automatic and never hand-rolled); the builtin
-    // demo rows carry no date, so they fall back to the baked status.
-    const week = D.weekPlan.map(d => { const k = kindMap[d.kind];
-      const st = d.date ? (d.date < displayToday ? 'done' : d.date > displayToday ? 'upcoming' : 'today') : d.status;
-      const today = st==='today';
-      return { day:d.day, title:d.title, detail:d.detail, icon:k.icon, iconBg:k.iconBg, iconFg:k.iconFg, dot:st==='upcoming'?'var(--line)':k.dot,
-        bg: today?'var(--panel2)':'var(--panel)', border: today?'var(--accent)':'var(--line)', opacity: st==='done'?'.62':'1',
-        loadLabel: today?'TODAY':d.load.toUpperCase(), loadColor: today?'var(--accent)':loadColors[d.load] }; });
-    const weekTotal = D.weekPlan.reduce((a,b)=>a+b.km,0).toFixed(1);
 
-    // training block (forward arc) — from plan-data.js D.block; current week
-    // auto-highlights from its mon/sun range vs garmin-data `today`.
+    // training block (forward arc) — from plan-data.js D.block; each week carries an
+    // optional `days` plan. The current week auto-highlights from its mon/sun range vs
+    // the live date; the viewer can select any week to load its days into THIS WEEK.
     const blockData = D.block || [];
     const phaseColor = { Rebuild:'var(--accent2)', Build:'var(--accent)', Peak:'var(--accent)', Taper:'var(--warn)', Race:'var(--accent)' };
     const blockMax = blockData.length ? Math.max.apply(null, blockData.map(b=>b.km)) : 1;
-    const block = blockData.map(b => { const cur = displayToday>=b.mon && displayToday<=b.sun; const past = displayToday>b.sun;
+    // which week is "now" by the live clock (fallback: before the block → first; after → last)
+    let currentWeekIndex = blockData.findIndex(b => displayToday >= b.mon && displayToday <= b.sun);
+    if (currentWeekIndex < 0) currentWeekIndex = (blockData.length && displayToday < blockData[0].mon) ? 0 : Math.max(0, blockData.length - 1);
+    const sel = this.state.selectedWeek;
+    const activeWeekIndex = (sel != null && blockData[sel]) ? sel : currentWeekIndex;
+    const activeWeek = blockData[activeWeekIndex] || null;
+    const viewingOther = sel != null && sel !== currentWeekIndex;
+
+    const block = blockData.map((b, i) => {
+      const cur = i === currentWeekIndex, past = displayToday > b.sun, active = i === activeWeekIndex;
       return { wk:b.wk, label:b.label, km:b.km, long:b.long, focus:b.focus,
         phaseColor: phaseColor[b.phase]||'var(--accent)', barPct: Math.round(b.km/blockMax*100),
-        bg: cur?'var(--panel2)':'var(--panel)', border: cur?'var(--accent)':'var(--line)',
-        opacity: past?'.5':'1', tag: cur?'THIS WK':b.phase.toUpperCase() }; });
+        bg: cur?'var(--panel2)':'var(--panel)', border: (cur||active)?'var(--accent)':'var(--line)',
+        ring: (active && !cur) ? '0 0 0 2px var(--accent)' : 'none',
+        opacity: (past && !active)?'.5':'1',
+        tag: cur ? 'THIS WK' : active ? 'VIEWING' : b.phase.toUpperCase(),
+        onSelect: () => this.selectWeek(i),
+        onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.selectWeek(i); } },
+        ariaPressed: String(active), ariaLabel: 'Show ' + b.wk + ' (' + b.label + ') in This Week' }; });
     const blockMeta = 'Build → peak → taper · long run 16 → 20 km · race Aug 9';
+
+    // THIS WEEK — the active week's day plan (status derived from each day's date vs the
+    // live date). Weeks with no `days` yet fall through to a summary placeholder below.
+    const activeDays = (activeWeek && activeWeek.days) || null;
+    const week = (activeDays || []).map(d => { const k = kindMap[d.kind];
+      const st = d.date ? (d.date < displayToday ? 'done' : d.date > displayToday ? 'upcoming' : 'today') : d.status;
+      const today = st==='today';
+      const dayId = activeWeekIndex + ':' + d.day;
+      const expanded = this.state.expandedDay === dayId;
+      const paceText = d.pace ? (d.pace + (d.zone ? ' · ' + d.zone : '')) : '';
+      return { day:d.day, title:d.title, detail:d.detail, icon:k.icon, iconBg:k.iconBg, iconFg:k.iconFg, dot:st==='upcoming'?'var(--line)':k.dot,
+        bg: today?'var(--panel2)':'var(--panel)', border: today?'var(--accent)':'var(--line)', opacity: st==='done'?'.62':'1',
+        loadLabel: today?'TODAY':d.load.toUpperCase(), loadColor: today?'var(--accent)':loadColors[d.load],
+        paceChip: paceText ? [{ t: paceText }] : [],
+        chevron: expanded ? '▾' : '▸', ariaExpanded: String(expanded),
+        toggle: () => this.toggleDay(dayId),
+        onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.toggleDay(dayId); } },
+        detailRows: expanded ? [ this.dayDetail(d) ] : [] }; });
+
+    // active-week meta + header controls. Detailed weeks show derived counts; un-detailed
+    // weeks show the block summary and render a placeholder instead of day cards.
+    let weekTotal, weekPlaceholder = [];
+    if (activeDays) {
+      const nRun = activeDays.filter(d=>d.kind==='run').length;
+      const nStr = activeDays.filter(d=>d.kind==='strength').length;
+      const nX = activeDays.filter(d=>d.kind==='cross').length;
+      const km = activeDays.reduce((a,b)=>a+(b.km||0),0);
+      weekTotal = (km % 1 ? km.toFixed(1) : km) + ' km planned · ' + nRun + ' runs · ' + nStr + ' strength' + (nX ? ' · ' + nX + ' spin' : '');
+    } else {
+      weekTotal = activeWeek ? (activeWeek.km + ' km planned · long ' + activeWeek.long) : '';
+      if (activeWeek) weekPlaceholder = [{ wk: activeWeek.wk, label: activeWeek.label, km: activeWeek.km, long: activeWeek.long, focus: activeWeek.focus }];
+    }
+    const weekLabel = activeWeek ? (activeWeek.wk + ' · ' + activeWeek.label) : '';
+    const backToCurrent = viewingOther ? [{ onClick: this.clearWeek, onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.clearWeek(); } } }] : [];
 
     // volume bars
     const vmax = Math.max.apply(null, H.weeklyKm)*1.12;
@@ -1044,7 +1133,7 @@ class Component extends DCLogic {
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
-      week, weekTotal, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
+      week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
       historyWindow:'30-month history · synced ' + syncDateLabel, vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
       liveText
     };

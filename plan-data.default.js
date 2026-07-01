@@ -10,10 +10,23 @@
  *  NEVER touches the plan, so nightly telemetry syncs can't overwrite it. Edit
  *  the live plan-data.js, reload the dashboard, done.
  *
- *  TIP: add a `date: "YYYY-MM-DD"` to each weekPlan row and the dashboard will
- *  auto-highlight "today" and roll the week over on its own; without dates it
- *  falls back to the `status` flags below. The block's `mon`/`sun` dates drive
- *  the current-week highlight the same way.
+ *  STRUCTURE: the whole plan is one `block` — one row per week (Mon→Sun). Each
+ *  week carries a summary (km / long / focus / phase) plus an optional `days`
+ *  array holding that week's 7 sessions. The dashboard renders the block as the
+ *  "Road to race day" panel; clicking a week loads its `days` into "THIS WEEK"
+ *  (a "back to current" control returns to the live week). Weeks with `days:null`
+ *  aren't detailed yet — the dashboard shows their summary as a placeholder, so
+ *  you flesh out each week (add its `days`) as it approaches. The current week
+ *  auto-highlights from its `mon`/`sun` dates vs today.
+ *
+ *  DAY SHAPE:
+ *    { day, date, kind, title, load, km,   // always
+ *      pace, zone,                         // run target — surfaced as a chip
+ *      segments:[{label,val,rest?}],       // warm-up / reps / cool-down
+ *      extra, fuel,                        // optional notes
+ *      detail }                            // prose fallback / summary line
+ *    kind: "run" | "strength" | "cross"    load: "Easy" | "Moderate" | "Hard"
+ *    A minimal day is just { day, date, kind, title, load, km }.
  * ========================================================================== */
 
 export const planData = {
@@ -29,30 +42,43 @@ export const planData = {
     pbDate: "2025-10-05",
   },
 
-  /* ----------------------------------------------------- this week's plan
-   * status: "done" | "today" | "upcoming"   kind: "run" | "strength" | "cross"
-   * Add a `date: "YYYY-MM-DD"` per row to switch to automatic day highlighting. */
-  weekPlan: [
-    { day: "Mon", kind: "cross",    title: "Cross-Training",       detail: "45 min easy spin / bike · Z2",                    load: "Easy",     status: "done",     km: 0 },
-    { day: "Tue", kind: "strength", title: "Strength · Full Body", detail: "Full session",                                    load: "Moderate", status: "done",     km: 0 },
-    { day: "Wed", kind: "run",      title: "Easy Run",             detail: "6 km easy · Z2",                                  load: "Easy",     status: "today",    km: 6 },
-    { day: "Thu", kind: "strength", title: "Strength · Full Body", detail: "Full session",                                    load: "Moderate", status: "upcoming", km: 0 },
-    { day: "Fri", kind: "run",      title: "Threshold Reps",       detail: "1.5 wu · 4×1 km @ threshold (60s jog) · 1.5 cd",  load: "Hard",     status: "upcoming", km: 7 },
-    { day: "Sat", kind: "strength", title: "Strength · Light",     detail: "Light / mobility",                                load: "Easy",     status: "upcoming", km: 0 },
-    { day: "Sun", kind: "run",      title: "Long Run",             detail: "16 km easy · fuel @ 8 km",                        load: "Moderate", status: "upcoming", km: 16 },
-  ],
-
   /* ------------------------------------------------ the multi-week block (arc)
-   * One row per week (Mon→Sun). The dashboard's "Road to race day" panel renders
-   * this; with real `mon`/`sun` dates the current week auto-highlights vs today.
-   * `km` = planned running volume for the week; `long` = that week's long run. */
+   * One row per week (Mon→Sun). `km` = planned running volume; `long` = that
+   * week's long run. Add a `days` array to detail a week's sessions; leave it
+   * null until you're ready to write that week. */
   block: [
-    { wk: "Wk 1", label: "Jun 29", mon: "2026-06-29", sun: "2026-07-05", phase: "Rebuild", km: 29, long: "16 km", focus: "Rebuild base · easy volume" },
-    { wk: "Wk 2", label: "Jul 6",  mon: "2026-07-06", sun: "2026-07-12", phase: "Build",   km: 33, long: "17 km", focus: "Add a 4th easy run" },
-    { wk: "Wk 3", label: "Jul 13", mon: "2026-07-13", sun: "2026-07-19", phase: "Build",   km: 36, long: "18 km", focus: "Threshold reps · long run grows" },
-    { wk: "Wk 4", label: "Jul 20", mon: "2026-07-20", sun: "2026-07-26", phase: "Build",   km: 38, long: "19 km", focus: "Cruise intervals · longest run" },
-    { wk: "Wk 5", label: "Jul 27", mon: "2026-07-27", sun: "2026-08-02", phase: "Peak",    km: 40, long: "20 km", focus: "Peak volume · race-pace work" },
-    { wk: "Wk 6", label: "Aug 3",  mon: "2026-08-03", sun: "2026-08-09", phase: "Taper",   km: 22, long: "Race",  focus: "Taper · sharpen · race day" },
+    {
+      wk: "Wk 1", label: "Jun 29", mon: "2026-06-29", sun: "2026-07-05",
+      phase: "Rebuild", km: 29, long: "16 km", focus: "Rebuild base · easy volume",
+      days: [
+        { day: "Mon", date: "2026-06-29", kind: "cross", title: "Cross-Training", load: "Easy", km: 0,
+          detail: "45 min easy spin / bike · Z2", extra: "Keep it genuinely easy — this is recovery aerobic work." },
+        { day: "Tue", date: "2026-06-30", kind: "strength", title: "Strength · Full Body", load: "Moderate", km: 0,
+          detail: "Full session" },
+        { day: "Wed", date: "2026-07-01", kind: "run", title: "Easy Run", load: "Easy", km: 6,
+          pace: "~6:20", zone: "Z2", detail: "6 km easy · Z2",
+          segments: [{ label: "Easy", val: "6 km @ ~6:20" }] },
+        { day: "Thu", date: "2026-07-02", kind: "strength", title: "Strength · Full Body", load: "Moderate", km: 0,
+          detail: "Full session" },
+        { day: "Fri", date: "2026-07-03", kind: "run", title: "Threshold Reps", load: "Hard", km: 7,
+          pace: "5:35", zone: "Z4", detail: "1.5 wu · 4×1 km @ threshold (60s jog) · 1.5 cd",
+          segments: [
+            { label: "Warm-up", val: "1.5 km easy" },
+            { label: "Reps", val: "4×1 km @ 5:35", rest: "60s jog" },
+            { label: "Cool-down", val: "1.5 km easy" },
+          ] },
+        { day: "Sat", date: "2026-07-04", kind: "strength", title: "Strength · Light", load: "Easy", km: 0,
+          detail: "Light / mobility" },
+        { day: "Sun", date: "2026-07-05", kind: "run", title: "Long Run", load: "Moderate", km: 16,
+          pace: "~6:15", zone: "Z2", detail: "16 km easy · fuel @ 8 km", fuel: "gel @ 8 km",
+          segments: [{ label: "Steady", val: "16 km easy @ ~6:15" }] },
+      ],
+    },
+    { wk: "Wk 2", label: "Jul 6",  mon: "2026-07-06", sun: "2026-07-12", phase: "Build", km: 33, long: "17 km", focus: "Add a 4th easy run", days: null },
+    { wk: "Wk 3", label: "Jul 13", mon: "2026-07-13", sun: "2026-07-19", phase: "Build", km: 36, long: "18 km", focus: "Threshold reps · long run grows", days: null },
+    { wk: "Wk 4", label: "Jul 20", mon: "2026-07-20", sun: "2026-07-26", phase: "Build", km: 38, long: "19 km", focus: "Cruise intervals · longest run", days: null },
+    { wk: "Wk 5", label: "Jul 27", mon: "2026-07-27", sun: "2026-08-02", phase: "Peak", km: 40, long: "20 km", focus: "Peak volume · race-pace work", days: null },
+    { wk: "Wk 6", label: "Aug 3",  mon: "2026-08-03", sun: "2026-08-09", phase: "Taper", km: 22, long: "Race", focus: "Taper · sharpen · race day", days: null },
   ],
 
   /* -------------------------------------------------------------- the coach

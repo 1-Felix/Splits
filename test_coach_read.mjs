@@ -51,4 +51,17 @@ r = { date: "x", type: "Tempo Run", km: 7, pace: 330, hr: 170,
 assert.match(coachRead(r, [], maxHR), /Quality threshold work/);
 assert.doesNotMatch(coachRead(r, [], maxHR), /cardiac drift/);
 
+// flattened block alias — running-data.js does block.flatMap(w => w.days || []); a run from
+// an EARLIER week must still resolve to its planned day (matched by date + kind), so a hard
+// session is classified via its plan load rather than the fallback line.
+const flat = [
+  { date: "2026-06-29", kind: "cross", title: "Spin", load: "Easy" },
+  { date: "2026-07-03", kind: "run", title: "Threshold", load: "Hard" },       // wk 2 (earlier)
+  { date: "2026-07-10", kind: "run", title: "Threshold Reps", load: "Hard" },  // wk 3 (later)
+];
+r = { date: "2026-07-03", type: "Run", km: 7, pace: 330, hr: 170,
+  detail: { zoneMin: [2, 8, 10, 15, 5], driftBpm: 3, tempC: 18, splitShape: "even" } };
+assert.match(coachRead(r, flat, maxHR), /Quality threshold work/);      // found the earlier-week Hard day
+assert.doesNotMatch(coachRead(r, [], maxHR), /Quality threshold work/); // without the lookup → not classified hard
+
 console.log("ALL PASS");

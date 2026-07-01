@@ -4,8 +4,14 @@
 import { garminData } from "./garmin-data.js";
 import { planData } from "./plan-data.js";
 import { coachRead } from "./coach-read.js";
+import { migrateLegacyPlan } from "./plan-migrate.js";
 
 export const athleteData = { ...garminData, ...planData };
+
+// Upgrade a legacy plan in place: a self-host volume seeded before the block carried
+// per-week `days` still holds top-level weekPlan/nextWeekPlan + a block without days, and
+// the entrypoint never overwrites it. Map that onto block[i].days so it renders as day cards.
+migrateLegacyPlan(athleteData);
 
 // The plan lives as block[i].days now. Flatten every detailed day into one list so
 // coach-read can match a run to its planned day even when the run is from an earlier

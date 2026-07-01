@@ -149,19 +149,49 @@ def connect() -> Garmin:
 # 2. RAW ACTIVITY PULL (one call feeds most sections) + tiny per-day cache
 # ──────────────────────────────────────────────────────────────────────────────
 def load_activities(client) -> list[dict]:
-    """Every activity in the lookback window, newest first. Cached per day so
-    re-running the sync doesn't keep hammering Garmin."""
-    CACHE_DIR.mkdir(exist_ok=True)
-    cache = CACHE_DIR / f"activities-{TODAY.isoformat()}.json"
-    if cache.exists():
-        log(f"✓ activities (cached) {cache.name}")
-        return json.loads(cache.read_text(encoding="utf-8"))
+    """Every activity in the lookback window, newest first. The immutable HISTORY
+    (older than the recent window) is cached per day so a re-sync doesn't re-pull years
+    of activities; the last RECENT_REFETCH_DAYS are ALWAYS re-fetched and merged in, so a
+    run added later the same day — or a batch uploaded after the watch wasn't synced for a
+    while — shows up on the next sync without clearing any cache.
 
+    A new day means a new cache key, so any longer gap re-pulls the full history on its
+    first sync. A failed/empty history pull is never cached (a transient Garmin error can't
+    wipe historical data for the rest of the day) and a corrupt cache is re-pulled."""
+    RECENT_REFETCH_DAYS = 14
+    CACHE_DIR.mkdir(exist_ok=True)
     start = (TODAY - dt.timedelta(days=31 * MONTHS + 20)).isoformat()
-    log(f"… pulling activities {start} → {TODAY.isoformat()}")
-    acts = client.get_activities_by_date(start, TODAY.isoformat()) or []
-    cache.write_text(json.dumps(acts, ensure_ascii=False), encoding="utf-8")
-    log(f"✓ {len(acts)} activities pulled")
+    recent_start = (TODAY - dt.timedelta(days=RECENT_REFETCH_DAYS)).isoformat()
+
+    cache = CACHE_DIR / f"activities-history-{TODAY.isoformat()}.json"
+    history = None
+    if cache.exists():
+        try:
+            history = json.loads(cache.read_text(encoding="utf-8"))
+            log(f"✓ activity history (cached) {cache.name}")
+        except Exception:
+            history = None                              # corrupt cache → re-pull
+    if history is None:
+        log(f"… pulling activity history {start} → {recent_start}")
+        history = client.get_activities_by_date(start, recent_start) or []
+        if history:                                     # never cache a failed/empty pull
+            cache.write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+        log(f"✓ {len(history)} historical activities pulled")
+
+    log(f"… refreshing recent activities {recent_start} → {TODAY.isoformat()}")
+    recent = client.get_activities_by_date(recent_start, TODAY.isoformat()) or []
+
+    # merge newest-first, de-duped by activityId (a fresh recent copy wins over history)
+    by_id = {}
+    for i, a in enumerate(history + recent):
+        aid = a.get("activityId")
+        by_id[aid if aid is not None else f"noid-{i}"] = a
+    acts = sorted(
+        by_id.values(),
+        key=lambda a: a.get("startTimeLocal") or a.get("startTimeGMT") or "",
+        reverse=True,
+    )
+    log(f"✓ {len(acts)} activities ({len(recent)} in the fresh {RECENT_REFETCH_DAYS}-day window)")
     return acts
 
 

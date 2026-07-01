@@ -79,6 +79,100 @@ def test_fetch_run_detail_shape():
     assert len(d["hrSeries"]) == 4
 
 
+def test_load_activities_refetches_recent():
+    """A run added later the same day must appear on the next sync without clearing the
+    cache, while the immutable history is still served from cache (not re-pulled)."""
+    import tempfile
+    from pathlib import Path
+
+    today = sg.TODAY.isoformat()
+
+    class FakeClient:
+        def __init__(self):
+            self.recent = []
+            self.calls = []
+
+        def get_activities_by_date(self, start, end):
+            self.calls.append((start, end))
+            if end == today:                       # the always-fresh recent window
+                return list(self.recent)
+            return [{"activityId": 1, "startTimeLocal": "2026-05-01 08:00:00",  # history
+                     "distance": 5000, "activityType": {"typeKey": "running"}}]
+
+    orig = sg.CACHE_DIR
+    sg.CACHE_DIR = Path(tempfile.mkdtemp())
+    try:
+        fc = FakeClient()
+        first = sg.load_activities(fc)                       # first sync of the day: no run yet
+        assert not any(a["activityId"] == 99 for a in first)
+        n = len(fc.calls)                                    # history + recent = 2 calls
+
+        # a run is uploaded later the SAME day; the cache is NOT cleared
+        fc.recent = [{"activityId": 99, "startTimeLocal": today + " 18:00:00",
+                      "distance": 5000, "activityType": {"typeKey": "running"}}]
+        second = sg.load_activities(fc)                      # next sync
+        assert any(a["activityId"] == 99 for a in second), "same-day run must appear"
+        assert second[0]["activityId"] == 99, "newest activity should sort first"
+        assert len(fc.calls) == n + 1, "history stays cached; only the recent window re-fetched"
+    finally:
+        sg.CACHE_DIR = orig
+
+
+def test_history_not_cached_when_empty():
+    """A failed/empty history pull must NOT be cached, so the next sync retries it —
+    a transient Garmin error can't wipe historical data for the rest of the day."""
+    import tempfile
+    from pathlib import Path
+
+    class FakeClient:
+        def __init__(self):
+            self.history_calls = 0
+
+        def get_activities_by_date(self, start, end):
+            if end == sg.TODAY.isoformat():
+                return []
+            self.history_calls += 1
+            return []  # simulate a failed/empty history pull
+
+    orig = sg.CACHE_DIR
+    sg.CACHE_DIR = Path(tempfile.mkdtemp())
+    try:
+        fc = FakeClient()
+        sg.load_activities(fc)
+        sg.load_activities(fc)
+        assert fc.history_calls == 2, "empty/failed history must be retried each sync, not cached"
+    finally:
+        sg.CACHE_DIR = orig
+
+
+def test_history_cache_corrupt_is_refetched():
+    """A corrupt history cache is re-pulled, not fatal."""
+    import tempfile
+    from pathlib import Path
+
+    class FakeClient:
+        def __init__(self):
+            self.history_calls = 0
+
+        def get_activities_by_date(self, start, end):
+            if end == sg.TODAY.isoformat():
+                return []
+            self.history_calls += 1
+            return [{"activityId": 1, "startTimeLocal": "2026-05-01 08:00:00"}]
+
+    orig = sg.CACHE_DIR
+    sg.CACHE_DIR = Path(tempfile.mkdtemp())
+    try:
+        sg.CACHE_DIR.mkdir(exist_ok=True)
+        (sg.CACHE_DIR / f"activities-history-{sg.TODAY.isoformat()}.json").write_text("{ not json", encoding="utf-8")
+        fc = FakeClient()
+        acts = sg.load_activities(fc)
+        assert fc.history_calls == 1, "corrupt cache should trigger a fresh history pull"
+        assert any(a["activityId"] == 1 for a in acts)
+    finally:
+        sg.CACHE_DIR = orig
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

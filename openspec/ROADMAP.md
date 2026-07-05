@@ -95,8 +95,7 @@ the dashboard deserved — grow the weekend project into a running companion)*
 
 Split into three sub-stages; 3a is the architectural investment the rest ride on.
 
-- **3a — the refactor + two views** *(built 2026-07-05; ships with the
-  progress-views change)*: multi-page shell (cockpit `/` + `/progress`, shared
+- **3a — the refactor + two views** *(shipped 2026-07-05)*: multi-page shell (cockpit `/` + `/progress`, shared
   `topbar.js` behavior, theme persisted via `localStorage`), the read-only
   archive API (`node:sqlite`, Node 24, distilled detail stored at sync time —
   archive schema v4), the cockpit diet (long-game sections move to `/progress`;

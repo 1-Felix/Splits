@@ -57,6 +57,6 @@
 
 ## 9. Deploy & live verification
 
-- [ ] 9.1 Merge to main → CI publishes the image; pull on the homeserver and recreate the container
-- [ ] 9.2 First server sync: confirm schema v4 applied, distillation pass covered all archived runs (`--verify-archive` in the container), insights block carries byYear + yoy
-- [ ] 9.3 Live smoke over the LAN: cockpit slim and complete, `/progress` renders all views, theme persists across pages, a pre-2026 record click-through opens its run's drill-down from the archive
+- [x] 9.1 Merge to main → CI publishes the image; pull on the homeserver and recreate the container — commit `087345b`, CI green, container recreated on Node v24.18.0 (2026-07-05 ~21:35)
+- [x] 9.2 First server sync: confirm schema v4 applied, distillation pass covered all archived runs (`--verify-archive` in the container), insights block carries byYear + yoy — schema 4, distilled 162/162, verify passed; served garmin-data.js carries byYear/yoy/activityId
+- [x] 9.3 Live smoke over the LAN: cockpit slim and complete, `/progress` renders all views, theme persists across pages, a pre-2026 record click-through opens its run's drill-down from the archive — all green headless against 192.168.0.37:5732 (1K · 5:32 on 2025-09-17 opened from the archive)

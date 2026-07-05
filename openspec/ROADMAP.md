@@ -93,6 +93,42 @@ execution vs targets), `coach-briefing.md`, and a `/coach` skill that reads the
 briefing and edits `plan-data.js`. Turns the existing manual coaching workflow
 into a one-command ritual.
 
+**Decisions from the 2026-07-05 explore session:**
+
+- **Full plan upfront, adjust-don't-author.** The block is detailed to race
+  day from day one; the ritual *adjusts* the standing plan from actuals rather
+  than authoring next week from a summary row. Progressive elaboration
+  (`days: null` until the week approaches) is retired — an undetailed future
+  week is a plan-integrity warning in the briefing. `plan-data.default.js`
+  (seed plan + header docs) flips to the new philosophy as part of the change.
+  Rationale: progressive elaboration exists because *human* re-planning is
+  expensive; with an AI coach revision is cheap, and a fully detailed living
+  draft beats `null` for compliance, diffable coaching, and the dashboard.
+- **Plan snapshots are mandatory.** Under adjust-don't-author the plan file
+  mutates constantly; the sync snapshots the scored week into the archive
+  (append-only) so a later plan edit can never rewrite what a past run was
+  measured against.
+- **Matcher** (well-defined because the plan is total): same date + kind →
+  matched; same week, nearest unmatched same-kind day → swapped; otherwise
+  unplanned. Planned day with no actual by week's end → missed. Scoring stays
+  coarse on the structured fields (kind / km / load / zone); intent comes from
+  the plan, never re-classified.
+- **Plan staleness signal:** deterministic comparison of the plan's pace
+  targets vs current demonstrated fitness (best efforts / Riegel anchor),
+  surfaced in the briefing; the skill judges whether to reprice.
+- **Dashboard compliance marks are in scope:** per-day compliance block in
+  `garmin-data.js` (done / partial / missed / swapped / unplanned), joined
+  onto the block's week rows and THIS WEEK by date, degrading gracefully when
+  the block is absent.
+- **One adaptive `/coach` skill, no modes** — offers block-building when
+  future weeks are undetailed, review-and-adjust otherwise.
+- **Python reads the coach-owned JS plan** via a short-lived node child that
+  imports it and prints JSON (the `plan-io.mjs` CHECK_SCRIPT pattern),
+  fail-soft: plan unreadable → skip compliance, never break `garmin-data.js`.
+- **Briefing contents** to be specced from a hand-run of the ritual (the
+  2026-07-05 Wk 2–6 detailing session): whatever the coach reached for is
+  what `coach-briefing.md` must contain.
+
 ## Sequencing rationale
 
 - Archive first: cheap now, impossible to regret, and stage 2–4 all read it.

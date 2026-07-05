@@ -24,13 +24,14 @@ Stdlib only (sqlite3, json) — no new dependencies in requirements.txt.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import sqlite3
 import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -97,6 +98,41 @@ CREATE TABLE IF NOT EXISTS race_predictions (
 );
 """
 
+# Schema v3 (coach-loop, design D2/D3): plan snapshots + compliance — derived
+# tables only, raw v1/v2 tables untouched. `plan_snapshots` is append-only and
+# content-deduped so a later plan edit can never rewrite what a past day was
+# scored against; `plan_compliance` rows are a disposable cache keyed by the
+# engine's COMPLIANCE_VERSION (like run_metrics), always recomputable from
+# snapshots + activities.
+SCHEMA_V3_SQL = """
+CREATE TABLE IF NOT EXISTS plan_snapshots (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  sha256          TEXT NOT NULL UNIQUE,
+  first_seen_date TEXT NOT NULL,
+  plan_json       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_compliance (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  date               TEXT NOT NULL,
+  wk                 TEXT,
+  snapshot_id        INTEGER NOT NULL REFERENCES plan_snapshots(id),
+  compliance_version INTEGER NOT NULL,
+  planned_kind       TEXT,
+  planned_km         REAL,
+  planned_load       TEXT,
+  planned_title      TEXT,
+  status             TEXT NOT NULL,
+  reason             TEXT,
+  actual_km          REAL,
+  actual_pace_s      REAL,
+  actual_hr          INTEGER,
+  activity_id        INTEGER,
+  updated_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plan_compliance_date ON plan_compliance(date);
+"""
+
 
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -128,8 +164,10 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=DELETE")  # trips early on a corrupt file
         conn.executescript(SCHEMA_SQL)
         conn.executescript(SCHEMA_V2_SQL)
-        # Forward-only migration: v1→v2 is purely additive (CREATE IF NOT EXISTS
-        # above), so "migrating" is just stamping the version. Never downgrade.
+        conn.executescript(SCHEMA_V3_SQL)
+        # Forward-only migration: v1→v2→v3 is purely additive (CREATE IF NOT
+        # EXISTS above), so "migrating" is just stamping the version. Never
+        # downgrade.
         current = get_meta(conn, "schema_version")
         if current is None or int(current) < SCHEMA_VERSION:
             set_meta(conn, "schema_version", str(SCHEMA_VERSION))
@@ -338,6 +376,87 @@ def upsert_race_prediction(conn: sqlite3.Connection, date: str, values: dict,
 
 def race_predictions_empty(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM race_predictions LIMIT 1").fetchone() is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# plan snapshots + compliance (schema v3 — owned by the coach-loop engine;
+# see plan_compliance.py for the matcher/scoring that fills these tables)
+# ──────────────────────────────────────────────────────────────────────────────
+def bank_plan_snapshot(conn: sqlite3.Connection, raw_text: str,
+                       plan_json: dict, seen_date: str) -> int:
+    """Bank the plan append-only, deduped on the raw file text's SHA-256:
+    an unchanged plan across many syncs stays one row. Returns the snapshot id
+    (existing or new) — compliance rows reference it so a later edit can never
+    change what a scored day was measured against."""
+    sha = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+    row = conn.execute("SELECT id FROM plan_snapshots WHERE sha256 = ?", (sha,)).fetchone()
+    if row:
+        return row[0]
+    cur = conn.execute(
+        "INSERT INTO plan_snapshots (sha256, first_seen_date, plan_json) VALUES (?, ?, ?)",
+        (sha, seen_date, json.dumps(plan_json, ensure_ascii=False)))
+    conn.commit()
+    return cur.lastrowid
+
+
+def snapshot_plan(conn: sqlite3.Connection, snapshot_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT plan_json FROM plan_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+_COMPLIANCE_COLS = (
+    "date", "wk", "snapshot_id", "compliance_version", "planned_kind",
+    "planned_km", "planned_load", "planned_title", "status", "reason",
+    "actual_km", "actual_pace_s", "actual_hr", "activity_id",
+)
+
+
+def replace_compliance_week(conn: sqlite3.Connection, mon: str, sun: str,
+                            rows: list[dict]) -> None:
+    """Idempotent week rescore: drop every row in [mon, sun] and insert the
+    fresh scoring in one transaction — recomputing a week twice with the same
+    inputs yields byte-identical rows (modulo updated_at)."""
+    now = _now()
+    conn.execute("DELETE FROM plan_compliance WHERE date >= ? AND date <= ?", (mon, sun))
+    conn.executemany(
+        f"INSERT INTO plan_compliance ({', '.join(_COMPLIANCE_COLS)}, updated_at) "
+        f"VALUES ({', '.join('?' * len(_COMPLIANCE_COLS))}, ?)",
+        [tuple(r.get(c) for c in _COMPLIANCE_COLS) + (now,) for r in rows])
+    conn.commit()
+
+
+def compliance_rows(conn: sqlite3.Connection, since_date: str | None = None) -> list[dict]:
+    """Stored compliance rows as dicts, oldest first (unplanned rows sort after
+    the planned row of the same date)."""
+    sql = (f"SELECT {', '.join(_COMPLIANCE_COLS)} FROM plan_compliance "
+           "WHERE date >= ? ORDER BY date, planned_kind IS NULL, id")
+    rows = conn.execute(sql, (since_date or "",)).fetchall()
+    return [dict(zip(_COMPLIANCE_COLS, r)) for r in rows]
+
+
+def stale_compliance_weeks(conn: sqlite3.Connection, version: int) -> list[tuple]:
+    """(snapshot_id, wk) of every scored week holding rows at a stale version —
+    how a COMPLIANCE_VERSION bump self-heals, rescoring each frozen week
+    against the snapshot it originally referenced."""
+    return conn.execute(
+        "SELECT DISTINCT snapshot_id, wk FROM plan_compliance "
+        "WHERE compliance_version != ? ORDER BY wk", (version,)).fetchall()
+
+
+def compliance_coverage(conn: sqlite3.Connection, version: int) -> dict:
+    """The compliance section --verify-archive reports: snapshot count, scored
+    rows/weeks, stale-version leftovers, latest scored date."""
+    snapshots = conn.execute("SELECT COUNT(*) FROM plan_snapshots").fetchone()[0]
+    rows, latest = conn.execute(
+        "SELECT COUNT(*), MAX(date) FROM plan_compliance").fetchone()
+    weeks = conn.execute(
+        "SELECT COUNT(DISTINCT wk) FROM plan_compliance").fetchone()[0]
+    stale = conn.execute(
+        "SELECT COUNT(*) FROM plan_compliance WHERE compliance_version != ?",
+        (version,)).fetchone()[0]
+    return {"snapshots": snapshots, "rows": rows, "weeks_scored": weeks,
+            "stale": stale, "latest_scored": latest}
 
 
 def metrics_coverage(conn: sqlite3.Connection, version: int) -> dict:

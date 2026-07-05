@@ -128,6 +128,50 @@ def validate_insights(ins: dict, e: list[str]) -> None:
                   "{week, riegelSec: num|null, garminSec: num|null}", e)
 
 
+_COMPLIANCE_STATUSES = {"done", "partial", "missed", "swapped", "unplanned", "pending"}
+
+
+def validate_compliance(comp: dict, e: list[str]) -> None:
+    """Shape-check the OPTIONAL `compliance` block (coach-loop design D5).
+    Like insights, it is only ever emitted whole — a failure here means the
+    engine or the contract changed, and the message names the member."""
+    check(_num(comp.get("complianceVersion")),
+          "compliance.complianceVersion must be numeric", e)
+    days = comp.get("days")
+    check(isinstance(days, list) and len(days) > 0,
+          "compliance.days must be a non-empty list", e)
+    for d in days if isinstance(days, list) else []:
+        label = d.get("date", "?") if isinstance(d, dict) else "?"
+        if not isinstance(d, dict):
+            check(False, "compliance.days entries must be objects", e)
+            continue
+        check(isinstance(d.get("date"), str) and len(d.get("date") or "") == 10,
+              f"compliance.days {label} date must be YYYY-MM-DD", e)
+        check(d.get("status") in _COMPLIANCE_STATUSES,
+              f"compliance.days {label} invalid status {d.get('status')!r}", e)
+        check(d.get("plannedKind") in (None, "run", "strength", "cross"),
+              f"compliance.days {label} invalid plannedKind {d.get('plannedKind')!r}", e)
+        check(d.get("reason") in (None, "distance", "intensity"),
+              f"compliance.days {label} invalid reason {d.get('reason')!r}", e)
+        check(d.get("plannedKind") is not None or d.get("status") == "unplanned",
+              f"compliance.days {label} without plannedKind must be status unplanned", e)
+        for k in ("plannedKm", "actualKm", "actualPaceS", "actualHr"):
+            if k in d and d[k] is not None:
+                check(_num(d[k]), f"compliance.days {label} {k} must be numeric", e)
+    weeks = comp.get("weeks")
+    check(isinstance(weeks, list) and len(weeks) > 0,
+          "compliance.weeks must be a non-empty list", e)
+    for w in weeks if isinstance(weeks, list) else []:
+        label = w.get("wk", "?") if isinstance(w, dict) else "?"
+        if not isinstance(w, dict):
+            check(False, "compliance.weeks entries must be objects", e)
+            continue
+        for k in ("wk", "mon", "sun"):
+            check(isinstance(w.get(k), str), f"compliance.weeks {label} {k} must be a string", e)
+        for k in ("plannedKm", "actualKm", "runsPlanned", "runsDone"):
+            check(_num(w.get(k)), f"compliance.weeks {label} {k} must be numeric", e)
+
+
 def validate(d: dict) -> list[str]:
     e: list[str] = []
     h = d.get("history", {})
@@ -197,6 +241,15 @@ def validate(d: dict) -> list[str]:
             validate_insights(ins, e)
         else:
             check(False, "insights must be an object when present", e)
+
+    # compliance block (coach-loop) — OPTIONAL and independent of insights:
+    # pre-coach-loop files stay valid, but an emitted block must hold shape
+    comp = d.get("compliance")
+    if comp is not None:
+        if isinstance(comp, dict):
+            validate_compliance(comp, e)
+        else:
+            check(False, "compliance must be an object when present", e)
 
     # per-run drill-down detail (present once the sync has run Task 2)
     for r in d.get("recentRuns", []):

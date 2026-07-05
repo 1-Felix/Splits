@@ -16,11 +16,14 @@ __pycache__
 garmin-data.js
 plan-data.js
 activity-archive.db*
+coach-briefing.md
 
-# dev-only / not needed at runtime
+# dev-only / not needed at runtime (plan-dump.mjs IS runtime: the sync's
+# compliance step reads the plan through it)
 openspec
 docs
 tools
+!tools/plan-dump.mjs
 test_*.py
 test_*.mjs
 *.md

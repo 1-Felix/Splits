@@ -63,6 +63,7 @@
 .wk-day    { font-size: var(--fs-sm); font-weight: var(--fw-extrabold); letter-spacing: .04em; }
 .wk-head-r { display: flex; align-items: center; gap: 6px; }
 .wk-dot    { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.wk-comp   { font-size: var(--fs-sm); font-weight: var(--fw-extrabold); line-height: 1; }  /* compliance mark ✓ ⇄ ◐ ✕ */
 .wk-chev   { font-size: var(--fs-2xs); color: var(--sub); }
 .wk-icon   { width: 26px; height: 26px; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; margin: var(--sp-2) 0; flex: none; }
 .wk-title  { font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.2; }

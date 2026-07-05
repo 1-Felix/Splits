@@ -174,6 +174,7 @@
         <div class="wk-head">
           <span class="wk-day">{{ d.day }}</span>
           <span class="wk-head-r">
+            <sc-for list="{{ d.comp }}" as="c" hint-placeholder-count="0"><span class="wk-comp" style="color:{{ c.fg }}" title="{{ c.word }}">{{ c.t }}</span></sc-for>
             <span class="wk-dot" style="background:{{ d.dot }}"></span>
             <span class="wk-chev">{{ d.chevron }}</span>
           </span>
@@ -188,6 +189,7 @@
             <sc-for list="{{ dv.segments }}" as="s" hint-placeholder-count="0">
               <div class="wk-seg"><span class="wk-seg-l">{{ s.label }}</span><span class="wk-seg-v">{{ s.val }}</span><span class="wk-seg-r">{{ s.rest }}</span></div>
             </sc-for>
+            <sc-for list="{{ dv.compRow }}" as="cr" hint-placeholder-count="0"><div class="wk-extra"><span class="wk-lbl">Status</span> {{ cr.t }}</div></sc-for>
             <sc-for list="{{ dv.extraRow }}" as="x" hint-placeholder-count="0"><div class="wk-extra"><span class="wk-lbl">Also</span> {{ x.t }}</div></sc-for>
             <sc-for list="{{ dv.fuelRow }}" as="f" hint-placeholder-count="0"><div class="wk-extra"><span class="wk-lbl">Fuel</span> {{ f.t }}</div></sc-for>
             <sc-for list="{{ dv.noteRow }}" as="n" hint-placeholder-count="0"><div class="wk-note">{{ n.t }}</div></sc-for>
@@ -227,6 +229,12 @@
         <div style="height:5px;background:var(--line);border-radius:var(--r-pill);margin-top:var(--sp-2);overflow:hidden">
           <div style="height:100%;width:{{ w.barPct }}%;background:{{ w.phaseColor }};border-radius:var(--r-pill)"></div>
         </div>
+        <sc-for list="{{ w.actual }}" as="a" hint-placeholder-count="0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:var(--fs-2xs);font-weight:700;margin-top:var(--sp-1)">
+            <span style="font-family:'JetBrains Mono';color:{{ a.color }}">{{ a.km }}</span>
+            <span style="color:var(--sub)">{{ a.runs }}</span>
+          </div>
+        </sc-for>
         <div style="font-size:var(--fs-2xs);color:var(--sub);line-height:1.3;font-weight:500">{{ w.focus }}</div>
       </div>
     </sc-for>
@@ -939,6 +947,34 @@ class Component extends DCLogic {
     };
     const loadColors = { Easy:'var(--sub)', Moderate:'var(--accent2)', Hard:'var(--warn)' };
 
+    // compliance marks (coach-loop) — joined by date / week label from the
+    // sync's `compliance` block; a data file without it renders no marks
+    // anywhere (pending days carry no mark either — absence of news is calm).
+    const comp = D.compliance || null;
+    const compByDate = {}, compByWk = {};
+    if (comp) {
+      (comp.days || []).forEach(cd => { if (cd.plannedKind) compByDate[cd.date] = cd; });
+      (comp.weeks || []).forEach(cw => { compByWk[cw.wk] = cw; });
+    }
+    const compGlyph = {
+      done:    { t:'✓', fg:'var(--good)', word:'done' },
+      swapped: { t:'⇄', fg:'var(--good)', word:'swapped — done on another day' },
+      partial: { t:'◐', fg:'var(--warn)', word:'partial' },
+      missed:  { t:'✕', fg:'var(--warn)', word:'missed' }
+    };
+    const compReason = { distance:'shorter than planned', intensity:'ran too hard for the intent' };
+    const compRowFor = (cd) => {
+      if (!cd || !compGlyph[cd.status]) return [];
+      let t = compGlyph[cd.status].word;
+      if (cd.reason) t += ' — ' + (compReason[cd.reason] || cd.reason);
+      if (cd.actualKm != null) {
+        t += ': ' + cd.actualKm + ' km';
+        if (cd.actualPaceS) t += ' @ ' + this.fmtPace(cd.actualPaceS) + '/km';
+        if (cd.actualHr) t += ' · HR ' + cd.actualHr;
+      }
+      return [{ t }];
+    };
+
     // training block (forward arc) — from plan-data.js D.block; each week carries an
     // optional `days` plan. The current week auto-highlights from its mon/sun range vs
     // the live date; the viewer can select any week to load its days into THIS WEEK.
@@ -955,7 +991,15 @@ class Component extends DCLogic {
 
     const block = blockData.map((b, i) => {
       const cur = i === currentWeekIndex, past = displayToday > b.sun, active = i === activeWeekIndex;
-      return { wk:b.wk, label:b.label, km:b.km, long:b.long, focus:b.focus,
+      const cw = compByWk[b.wk];
+      const actual = cw ? [{
+        km: cw.actualKm + '/' + cw.plannedKm + ' km',
+        runs: cw.runsDone + '/' + cw.runsPlanned + ' runs',
+        color: displayToday > b.sun
+          ? (cw.actualKm >= cw.plannedKm * 0.9 ? 'var(--good)' : 'var(--warn)')
+          : 'var(--sub)'   // an open week being mid-flight is not a warning
+      }] : [];
+      return { wk:b.wk, label:b.label, km:b.km, long:b.long, focus:b.focus, actual,
         phaseColor: phaseColor[b.phase]||'var(--accent)', barPct: Math.round(b.km/blockMax*100),
         bg: cur?'var(--panel2)':'var(--panel)', border: (cur||active)?'var(--accent)':'var(--line)',
         ring: (active && !cur) ? '0 0 0 2px var(--accent)' : 'none',
@@ -975,14 +1019,16 @@ class Component extends DCLogic {
       const dayId = activeWeekIndex + ':' + d.day;
       const expanded = this.state.expandedDay === dayId;
       const paceText = d.pace ? (d.pace + (d.zone ? ' · ' + d.zone : '')) : '';
+      const cd = compByDate[d.date];
       return { day:d.day, title:d.title, detail:d.detail, icon:k.icon, iconBg:k.iconBg, iconFg:k.iconFg, dot:st==='upcoming'?'var(--line)':k.dot,
         bg: today?'var(--panel2)':'var(--panel)', border: today?'var(--accent)':'var(--line)', opacity: st==='done'?'.62':'1',
         loadLabel: today?'TODAY':d.load.toUpperCase(), loadColor: today?'var(--accent)':loadColors[d.load],
         paceChip: paceText ? [{ t: paceText }] : [],
+        comp: (cd && compGlyph[cd.status]) ? [compGlyph[cd.status]] : [],
         chevron: expanded ? '▾' : '▸', ariaExpanded: String(expanded),
         toggle: () => this.toggleDay(dayId),
         onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.toggleDay(dayId); } },
-        detailRows: expanded ? [ this.dayDetail(d) ] : [] }; });
+        detailRows: expanded ? [ Object.assign(this.dayDetail(d), { compRow: compRowFor(cd) }) ] : [] }; });
 
     // active-week meta + header controls. Detailed weeks show derived counts; un-detailed
     // weeks show the block summary and render a placeholder instead of day cards.

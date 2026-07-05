@@ -39,7 +39,9 @@ from dotenv import load_dotenv
 from garminconnect import Garmin
 
 import activity_archive
+import coach_briefing
 import insight_metrics
+import plan_compliance
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -728,6 +730,22 @@ def fetch_insights() -> dict | None:
     return safe(assemble, None, "insights assembly")
 
 
+def fetch_compliance() -> dict | None:
+    """The assembled compliance block, or None (key omitted entirely). A fail
+    domain INDEPENDENT of insights (coach-loop design D5): a plan problem
+    drops this block while insights survives, and vice versa."""
+    def assemble():
+        loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+        if not loaded:
+            return None
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            return plan_compliance.assemble_compliance(conn, loaded[1], TODAY)
+        finally:
+            conn.close()
+    return safe(assemble, None, "compliance assembly")
+
+
 def build_data(client, acts: list[dict], pred_doc: dict | None = None) -> dict:
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
 
@@ -745,6 +763,10 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None) -> dict:
             predictions["trend"] = trend
         log(f"✓ insights assembled ({len(insights['efficiency']['monthly'])} months, "
             f"{len(insights['trajectory']['weekly'])} weeks)")
+    compliance = fetch_compliance()
+    if compliance:
+        log(f"✓ compliance assembled ({len(compliance['days'])} days, "
+            f"{len(compliance['weeks'])} weeks)")
 
     data = {
         "profile": fetch_profile(client, vo2_current),
@@ -769,6 +791,8 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None) -> dict:
     }
     if insights:
         data["insights"] = insights
+    if compliance:
+        data["compliance"] = compliance
     return data
 
 
@@ -846,6 +870,51 @@ def metrics_step(client, pred_doc) -> None:
         log("✓ metrics: " + ", ".join(parts))
     finally:
         conn.close()
+
+
+def compliance_step() -> None:
+    """Bank today's plan snapshot and rescore compliance (coach-loop design
+    D2/D3). Runs AFTER the archive step (it matches against archived
+    activities) and BEFORE build_data (the block must land in garmin-data.js);
+    only ever inside safe() — a plan problem is a warning, never a failed
+    sync."""
+    loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+    if not loaded:
+        return
+    raw, plan = loaded
+    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        stats = plan_compliance.run_compliance(conn, raw, plan, TODAY, max_hr)
+        # Ratchet the coverage expectation --verify-archive checks against:
+        # scored weeks only ever accumulate, so a shrink is a regression.
+        weeks_now = activity_archive.compliance_coverage(
+            conn, plan_compliance.COMPLIANCE_VERSION)["weeks_scored"]
+        prev = activity_archive.get_meta(conn, "expected_compliance_weeks")
+        if weeks_now > int(prev or 0):
+            activity_archive.set_meta(conn, "expected_compliance_weeks", weeks_now)
+        parts = [f"{stats['weeks_scored']} weeks scored"]
+        if stats["weeks_healed"]:
+            parts.append(f"{stats['weeks_healed']} stale weeks healed")
+        log("✓ compliance: " + ", ".join(parts))
+    finally:
+        conn.close()
+
+
+def briefing_step(data: dict) -> None:
+    """Render coach-briefing.md into the data dir (coach-loop design D6).
+    Runs strictly AFTER garmin-data.js is written and only ever inside
+    safe() — a briefing problem can never affect the contract file."""
+    loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+    if not loaded:
+        return
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        text = coach_briefing.render_briefing(conn, loaded[1], data, TODAY)
+    finally:
+        conn.close()
+    coach_briefing.write_briefing(DATA_DIR / "coach-briefing.md", text)
+    log("✓ coach briefing written")
 
 
 def wellness_step(readiness: dict) -> None:
@@ -959,6 +1028,12 @@ def verify_archive() -> int:
         log(f"  predictions: {mcov['prediction_rows']} daily rows"
             + (f"  ({mcov['prediction_earliest']} → {mcov['prediction_latest']})"
                if mcov["prediction_rows"] else ""))
+
+        ccov = activity_archive.compliance_coverage(conn, plan_compliance.COMPLIANCE_VERSION)
+        log(f"  compliance : {ccov['snapshots']} plan snapshots, "
+            f"{ccov['rows']} rows over {ccov['weeks_scored']} weeks"
+            + (f" (latest {ccov['latest_scored']})" if ccov["latest_scored"] else "")
+            + (f", {ccov['stale']} stale-version rows" if ccov["stale"] else ""))
         try:
             ins = insight_metrics.assemble_insights(conn, TODAY)
             with_data = sum(1 for m in ins["efficiency"]["monthly"]
@@ -990,6 +1065,16 @@ def verify_archive() -> int:
         if mcov["at_version"] and mcov["missing"] > 0:
             failures.append(f"metrics coverage regressed: {mcov['missing']} detailed runs "
                             f"without a v{insight_metrics.METRICS_VERSION} row")
+        # Compliance coverage regressions (coach-loop). An empty table is a
+        # pre-coach-loop archive, not a regression — but stale-version rows
+        # after a sync, or fewer scored weeks than the ratchet, are.
+        if ccov["stale"]:
+            failures.append(f"compliance coverage regressed: {ccov['stale']} rows at a "
+                            f"stale version (sync should have rescored them)")
+        exp_weeks = activity_archive.get_meta(conn, "expected_compliance_weeks")
+        if exp_weeks and ccov["weeks_scored"] < int(exp_weeks):
+            failures.append(f"compliance coverage regressed: {ccov['weeks_scored']} scored "
+                            f"weeks < expected {exp_weeks}")
         for f in failures:
             warn(f"VERIFY FAILED — {f}")
         if not failures:
@@ -1017,18 +1102,21 @@ def main() -> None:
         run_backfill(client)
         return
 
-    # Order per insight-metrics design D8: the archive and metrics steps run
-    # BEFORE build_data so the insights include today's run — but each one is
-    # safe()-wrapped, so garmin-data.js is written with every existing key
-    # even if archive, metrics and insights all fail.
+    # Order per insight-metrics design D8 + coach-loop design D6: archive,
+    # metrics and compliance run BEFORE build_data so insights include today's
+    # run and the compliance block lands in the contract; the briefing renders
+    # strictly AFTER the write. Every step is safe()-wrapped, so garmin-data.js
+    # is written with every existing key even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
+    safe(compliance_step, None, "compliance step")
     data = build_data(client, acts, pred_doc)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
+    safe(lambda: briefing_step(data), None, "coach briefing")
     safe(lambda: wellness_step(data["readiness"]), None, "wellness banking")
 
 

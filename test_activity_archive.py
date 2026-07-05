@@ -120,7 +120,7 @@ def test_corrupt_db_quarantined_and_recreated():
 
 def test_meta_and_coverage():
     conn = arch.open_archive(_tmp())
-    assert arch.get_meta(conn, "schema_version") == "2"
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     arch.set_meta(conn, "expected_activity_count", 536)
     assert arch.get_meta(conn, "expected_activity_count") == "536"
 
@@ -187,19 +187,20 @@ def _make_v1_db(d):
     conn.close()
 
 
-def test_v1_to_v2_migration_preserves_data():
+def test_v1_migration_preserves_data():
     d = _tmp()
     _make_v1_db(d)
-    conn = arch.open_archive(d)  # migration happens on open
-    assert arch.get_meta(conn, "schema_version") == "2", "version stamped forward"
+    conn = arch.open_archive(d)  # migration happens on open (v1 → current)
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION), \
+        "version stamped forward"
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1, \
         "v1 rows untouched by the migration"
     assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 0
     assert arch.race_predictions_empty(conn) is True
     conn.close()
 
-    conn = arch.open_archive(d)  # idempotent re-open at v2
-    assert arch.get_meta(conn, "schema_version") == "2"
+    conn = arch.open_archive(d)  # idempotent re-open at the current version
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
     conn.close()
 
@@ -472,6 +473,113 @@ def test_verify_archive_metrics_coverage_paths():
         assert sg.verify_archive() == 1, "stale-version leftovers → regression"
     finally:
         sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# schema v3 (coach-loop): migration + snapshot/compliance accessors
+# ──────────────────────────────────────────────────────────────────────────────
+# The v2 additions as they shipped in stage 2 — frozen so the migration test
+# exercises a genuine v2 file.
+_V2_ADDITIONS = """
+CREATE TABLE run_metrics (
+  activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+  metrics_version INTEGER NOT NULL, start_time_local TEXT NOT NULL,
+  is_treadmill INTEGER NOT NULL,
+  best_1k_s REAL, best_mile_s REAL, best_5k_s REAL, best_10k_s REAL,
+  best_half_s REAL, refhr_time_s REAL, refhr_dist_m REAL,
+  refpace_time_s REAL, refpace_cadence_x_time REAL, computed_at TEXT NOT NULL
+);
+CREATE TABLE race_predictions (
+  date TEXT PRIMARY KEY, time_5k_s REAL, time_10k_s REAL, half_s REAL,
+  marathon_s REAL, raw_json TEXT NOT NULL, source TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+UPDATE archive_meta SET value = '2' WHERE key = 'schema_version';
+INSERT INTO run_metrics VALUES (1, 1, '2024-05-12 09:00:00', 0,
+  300, 500, 1700, 3700, NULL, 600, 1800, 400, 62000, 'x');
+"""
+
+
+def test_v2_to_v3_migration_preserves_data():
+    d = _tmp()
+    _make_v1_db(d)
+    import sqlite3
+    conn = sqlite3.connect(arch.archive_path(d))
+    conn.executescript(_V2_ADDITIONS)
+    conn.commit()
+    conn.close()
+
+    conn = arch.open_archive(d)  # v2 → v3 on open
+    assert arch.get_meta(conn, "schema_version") == "3"
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1, \
+        "v2 derived rows untouched"
+    assert conn.execute("SELECT COUNT(*) FROM plan_snapshots").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM plan_compliance").fetchone()[0] == 0
+    conn.close()
+
+    conn = arch.open_archive(d)  # idempotent re-open at v3
+    assert arch.get_meta(conn, "schema_version") == "3"
+    assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1
+    conn.close()
+
+
+def test_plan_snapshot_dedupe():
+    conn = arch.open_archive(_tmp())
+    a = arch.bank_plan_snapshot(conn, "export const planData = 1;", {"block": []}, "2026-07-05")
+    b = arch.bank_plan_snapshot(conn, "export const planData = 1;", {"block": []}, "2026-07-06")
+    assert a == b, "identical text → the existing snapshot id"
+    assert conn.execute("SELECT COUNT(*) FROM plan_snapshots").fetchone()[0] == 1
+    c = arch.bank_plan_snapshot(conn, "export const planData = 2;", {"block": [1]}, "2026-07-07")
+    assert c != a
+    assert arch.snapshot_plan(conn, c) == {"block": [1]}
+    assert arch.snapshot_plan(conn, 999) is None
+    conn.close()
+
+
+def _crow(date, wk="Wk 1", status="done", version=1, snapshot_id=1, kind="run"):
+    return {"date": date, "wk": wk, "snapshot_id": snapshot_id,
+            "compliance_version": version, "planned_kind": kind,
+            "planned_km": 5, "planned_load": "Easy", "planned_title": "Easy Run",
+            "status": status, "reason": None, "actual_km": None,
+            "actual_pace_s": None, "actual_hr": None, "activity_id": None}
+
+
+def test_replace_compliance_week_is_scoped_and_idempotent():
+    conn = arch.open_archive(_tmp())
+    arch.replace_compliance_week(conn, "2026-06-29", "2026-07-05",
+                                 [_crow("2026-07-01"), _crow("2026-07-03")])
+    arch.replace_compliance_week(conn, "2026-07-06", "2026-07-12",
+                                 [_crow("2026-07-08", wk="Wk 2")])
+    # replacing week 1 leaves week 2 untouched and fully swaps week 1's rows
+    arch.replace_compliance_week(conn, "2026-06-29", "2026-07-05",
+                                 [_crow("2026-07-01", status="missed")])
+    rows = arch.compliance_rows(conn)
+    assert [r["date"] for r in rows] == ["2026-07-01", "2026-07-08"]
+    assert rows[0]["status"] == "missed"
+    assert rows[1]["wk"] == "Wk 2"
+    # unplanned rows sort after the planned row of the same date
+    arch.replace_compliance_week(conn, "2026-07-06", "2026-07-12", [
+        {**_crow("2026-07-08", wk="Wk 2"), "planned_kind": None, "status": "unplanned"},
+        _crow("2026-07-08", wk="Wk 2"),
+    ])
+    rows = arch.compliance_rows(conn, since_date="2026-07-06")
+    assert rows[0]["planned_kind"] == "run" and rows[1]["planned_kind"] is None
+    conn.close()
+
+
+def test_stale_compliance_weeks_and_coverage():
+    conn = arch.open_archive(_tmp())
+    arch.bank_plan_snapshot(conn, "raw", {"block": []}, "2026-07-05")
+    arch.replace_compliance_week(conn, "2026-06-29", "2026-07-05",
+                                 [_crow("2026-07-01", version=1)])
+    arch.replace_compliance_week(conn, "2026-07-06", "2026-07-12",
+                                 [_crow("2026-07-08", wk="Wk 2", version=2)])
+    assert arch.stale_compliance_weeks(conn, 2) == [(1, "Wk 1")]
+    cov = arch.compliance_coverage(conn, 2)
+    assert cov == {"snapshots": 1, "rows": 2, "weeks_scored": 2, "stale": 1,
+                   "latest_scored": "2026-07-08"}
+    conn.close()
 
 
 if __name__ == "__main__":

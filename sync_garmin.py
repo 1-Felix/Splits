@@ -25,16 +25,20 @@ Auth notes:
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 from statistics import mean
 
 from dotenv import load_dotenv
 from garminconnect import Garmin
+
+import activity_archive
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -343,10 +347,10 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[di
     return out
 
 
-def fetch_run_detail(client, activity) -> dict | None:
-    """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
-    activity id so re-syncs only fetch genuinely new runs."""
-    aid = activity.get("activityId")
+def _fetch_raw_detail(client, aid) -> dict | None:
+    """RAW `get_activity_details` payload, cache-first
+    (`.garmin_cache/detail-<id>.json`). Shared by the dashboard's recent-run
+    drill-down and the archive — the archive stores exactly this payload."""
     if not aid:
         return None
     CACHE_DIR.mkdir(exist_ok=True)
@@ -357,9 +361,17 @@ def fetch_run_detail(client, activity) -> dict | None:
     if not det:                      # cache miss OR corrupt cache
         det = safe(lambda: client.get_activity_details(aid, maxchart=2000, maxpoly=0),
                    None, f"detail {aid}")
-        if not det:
-            return None
-        cache.write_text(json.dumps(det, ensure_ascii=False), encoding="utf-8")
+        if det:
+            cache.write_text(json.dumps(det, ensure_ascii=False), encoding="utf-8")
+    return det
+
+
+def fetch_run_detail(client, activity) -> dict | None:
+    """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
+    activity id so re-syncs only fetch genuinely new runs."""
+    det = _fetch_raw_detail(client, activity.get("activityId"))
+    if not det:
+        return None
 
     idx = {d.get("key"): d.get("metricsIndex") for d in (det.get("metricDescriptors") or [])}
     rows = det.get("activityDetailMetrics") or []
@@ -694,8 +706,7 @@ def fetch_predictions(client, planned_goal: str = "1:59:59") -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. ASSEMBLE + WRITE
 # ──────────────────────────────────────────────────────────────────────────────
-def build_data(client) -> dict:
-    acts = load_activities(client)
+def build_data(client, acts: list[dict]) -> dict:
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
 
     monthly = fetch_monthly(client, acts)
@@ -758,12 +769,164 @@ def build_garmin_data_js(data: dict) -> str:
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 5. DURABLE ARCHIVE  (activity_archive.py — the dashboard never reads this;
+#    it is the foundation for the ROADMAP's insight-metrics stage)
+# ──────────────────────────────────────────────────────────────────────────────
+DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
+
+
+def archive_step(client, acts: list[dict], readiness: dict) -> None:
+    """Bank this sync's fetches into the durable archive. Runs AFTER
+    garmin-data.js is written and only ever inside safe() — an archive problem
+    is a warning, never a failed sync."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        added = activity_archive.upsert_activities(conn, acts)
+        topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
+        activity_archive.upsert_wellness(conn, TODAY.isoformat(), {
+            "resting_hr": readiness.get("restingHR"),
+            "hrv": readiness.get("hrv"),
+            "sleep_hours": readiness.get("sleepHours"),
+        }, readiness)
+        _record_expectations(conn)
+        log(f"✓ archive: +{added} activities, {topped} details topped up, wellness banked")
+    finally:
+        conn.close()
+
+
+def _archive_detail_topup(client, conn, limit: int) -> int:
+    """Fetch raw detail for archived activities missing it, newest first,
+    capped per sync; the per-activity cache makes re-runs free."""
+    topped = 0
+    for aid in activity_archive.missing_detail_ids(conn, limit=limit):
+        det = _fetch_raw_detail(client, aid)
+        if det and activity_archive.write_detail(conn, aid, det):
+            topped += 1
+    return topped
+
+
+def _record_expectations(conn) -> None:
+    """Ratchet the coverage expectations --verify-archive checks against: the
+    archive never deletes, so the count can only grow and the earliest date
+    can only move back — anything else is a regression."""
+    cov = activity_archive.coverage(conn)
+    prev = activity_archive.get_meta(conn, "expected_activity_count")
+    if cov["total"] > int(prev or 0):
+        activity_archive.set_meta(conn, "expected_activity_count", cov["total"])
+    prev_earliest = activity_archive.get_meta(conn, "expected_earliest")
+    if cov["earliest"] and (not prev_earliest or cov["earliest"] < prev_earliest):
+        activity_archive.set_meta(conn, "expected_earliest", cov["earliest"])
+    activity_archive.set_meta(conn, "last_append_at",
+                              dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+
+
+def run_backfill(client) -> None:
+    """One-time full-history pull into the archive: year-walk summaries back to
+    the account start (detected by two consecutive empty years, not hardcoded),
+    then detail for every row missing it. Idempotent and resumable — commits
+    are per activity, so interrupting never repeats completed work."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        log("… backfill: walking summaries back to the account start")
+        year, empty = TODAY.year, 0
+        while empty < 2:
+            start, end = f"{year}-01-01", f"{year}-12-31"
+            acts = safe(lambda: client.get_activities_by_date(start, end), [], f"backfill {year}") or []
+            if acts:
+                added = activity_archive.upsert_activities(conn, acts)
+                log(f"  {year}: {len(acts)} activities ({added} new)")
+                empty = 0
+            else:
+                log(f"  {year}: none")
+                empty += 1
+            year -= 1
+
+        missing = activity_archive.missing_detail_ids(conn, newest_first=True)
+        log(f"… backfill: fetching detail for {len(missing)} activities (throttled)")
+        done = 0
+        for i, aid in enumerate(missing, 1):
+            was_cached = (CACHE_DIR / f"detail-{aid}.json").exists()
+            det = _fetch_raw_detail(client, aid)
+            if det and activity_archive.write_detail(conn, aid, det):
+                done += 1
+            if i % 25 == 0:
+                log(f"  … {i}/{len(missing)} details")
+            if not was_cached:
+                time.sleep(0.7)          # gentle on Garmin during the bulk pull
+        log(f"✓ backfill detail pass: {done}/{len(missing)} fetched")
+
+        activity_archive.set_meta(conn, "backfill_completed_at",
+                                  dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+        _record_expectations(conn)
+        cov = activity_archive.coverage(conn)
+        log(f"✓ backfill complete: {cov['total']} activities "
+            f"({cov['with_detail']} with detail), earliest {cov['earliest']}")
+    finally:
+        conn.close()
+
+
+def verify_archive() -> int:
+    """Report archive coverage; exit non-zero (naming the reason) when it
+    regresses against the expectations recorded at backfill/append time."""
+    db = activity_archive.archive_path(DATA_DIR)
+    if not db.exists():
+        warn(f"no archive at {db} — run a sync or `--backfill` first")
+        return 2
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        cov = activity_archive.coverage(conn)
+        log(f"Archive: {db}  ({db.stat().st_size / 1e6:.1f} MB)")
+        log(f"  activities : {cov['total']}  ({cov['earliest']} → {cov['latest']})")
+        log(f"  detail     : {cov['with_detail']} with, {cov['without_detail']} missing")
+        log(f"  wellness   : {cov['wellness_rows']} daily rows")
+        log("  by year    : " + (", ".join(f"{y}: {n}" for y, n in sorted(cov["by_year"].items())) or "—"))
+        log("  by type    : " + (", ".join(f"{t}: {n}" for t, n in list(cov["by_type"].items())[:8]) or "—"))
+        for key in ("schema_version", "backfill_completed_at", "last_append_at"):
+            val = activity_archive.get_meta(conn, key)
+            if val:
+                log(f"  {key:<21}: {val}")
+
+        failures = []
+        expected = activity_archive.get_meta(conn, "expected_activity_count")
+        if expected and cov["total"] < int(expected):
+            failures.append(f"activity count regressed: {cov['total']} < expected {expected}")
+        exp_earliest = activity_archive.get_meta(conn, "expected_earliest")
+        if exp_earliest and (cov["earliest"] is None or cov["earliest"] > exp_earliest):
+            failures.append(f"earliest activity regressed: {cov['earliest']} > expected {exp_earliest}")
+        for f in failures:
+            warn(f"VERIFY FAILED — {f}")
+        if not failures:
+            log("✓ archive verification passed")
+        return 1 if failures else 0
+    finally:
+        conn.close()
+
+
 def main() -> None:
+    p = argparse.ArgumentParser(description="SPLITS Garmin sync")
+    p.add_argument("--backfill", action="store_true",
+                   help="pull the FULL account history into the activity archive "
+                        "(one-time; idempotent and resumable)")
+    p.add_argument("--verify-archive", action="store_true",
+                   help="report archive coverage and exit non-zero on regression "
+                        "(offline — no Garmin login)")
+    args = p.parse_args()
+
+    if args.verify_archive:
+        raise SystemExit(verify_archive())
+
     client = connect()
-    data = build_data(client)
+    if args.backfill:
+        run_backfill(client)
+        return
+
+    acts = load_activities(client)
+    data = build_data(client, acts)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
+    safe(lambda: archive_step(client, acts, data["readiness"]), None, "archive step")
 
 
 if __name__ == "__main__":

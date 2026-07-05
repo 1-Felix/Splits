@@ -15,6 +15,7 @@ __pycache__
 .garmin_cache
 garmin-data.js
 plan-data.js
+activity-archive.db*
 
 # dev-only / not needed at runtime
 openspec

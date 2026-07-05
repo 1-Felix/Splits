@@ -195,6 +195,36 @@ Reload the dashboard — it picks up the new telemetry automatically.
   HRV/RHR/sleep blend (handoff §4). Race predictions fall back to Riegel.
 - Raw API responses are cached per-day in `.garmin_cache/` so re-runs are cheap.
 
+## The activity archive (durable history)
+
+`garmin-data.js` is a rolling window — old data slides out of it. The **activity
+archive** (`activity-archive.db`, SQLite, in the same data directory) is the
+project's memory: every sync also upserts every fetched activity (all types, raw
+summary payload), tops up the raw per-activity detail (splits, HR/pace streams)
+a few at a time, and banks one wellness row per day (resting HR, HRV, sleep).
+Nothing is ever deleted, and an archive problem can never break the telemetry
+sync — it degrades to a warning. Nothing on the dashboard reads it yet; it is
+the foundation for the insight-metrics stage of `openspec/ROADMAP.md`.
+
+One-time **backfill** pulls your full account history (walks back year by year
+until it finds the account start; safe to interrupt and re-run):
+
+```bash
+# local
+python sync_garmin.py --backfill
+python sync_garmin.py --verify-archive   # counts by year/type, detail coverage, exit≠0 on regression
+
+# self-hosted (the canonical copy — inside the container, archive lands in /data)
+docker compose exec splits python3 sync_garmin.py --backfill
+docker compose exec splits python3 sync_garmin.py --verify-archive
+```
+
+**The server volume's copy is canonical; local copies are disposable.** The
+archive is entirely derived from Garmin, so any copy can be rebuilt with
+`--backfill` — don't sync archive files between machines (and don't run SQLite
+across an SMB mount). A corrupt database is quarantined as
+`activity-archive.db.corrupt-<date>` and recreated automatically.
+
 ## How the AI coach fits in
 
 No live API runs in the page. The data layer **is** the interface:

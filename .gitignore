@@ -17,6 +17,11 @@ plan-data.js
 # Records the plan version last pulled by `pnpm plan:pull`, for the plan:push guard.
 .plan-data.version
 
+# Durable activity archive — personal data, rebuildable via `python
+# sync_garmin.py --backfill`. The glob also covers SQLite journal files and
+# .corrupt-<date> quarantines.
+activity-archive.db*
+
 # Python
 __pycache__/
 *.pyc

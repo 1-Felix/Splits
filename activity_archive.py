@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -70,6 +70,33 @@ CREATE TABLE IF NOT EXISTS archive_meta (
 );
 """
 
+# Schema v2 (insight-metrics, design D2): derived tables only — the raw v1
+# tables above are untouched. `run_metrics` rows are a disposable cache of
+# deterministic computation keyed by the engine's METRICS_VERSION;
+# `race_predictions` banks Garmin's daily race-predictor document.
+SCHEMA_V2_SQL = """
+CREATE TABLE IF NOT EXISTS run_metrics (
+  activity_id      INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+  metrics_version  INTEGER NOT NULL,
+  start_time_local TEXT NOT NULL,
+  is_treadmill     INTEGER NOT NULL,
+  best_1k_s REAL, best_mile_s REAL, best_5k_s REAL,
+  best_10k_s REAL, best_half_s REAL,
+  refhr_time_s REAL, refhr_dist_m REAL,
+  refpace_time_s REAL, refpace_cadence_x_time REAL,
+  computed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_metrics_start ON run_metrics(start_time_local);
+
+CREATE TABLE IF NOT EXISTS race_predictions (
+  date TEXT PRIMARY KEY,
+  time_5k_s REAL, time_10k_s REAL, half_s REAL, marathon_s REAL,
+  raw_json TEXT NOT NULL,
+  source TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"""
+
 
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -100,7 +127,11 @@ def _open(db: Path) -> sqlite3.Connection:
     try:
         conn.execute("PRAGMA journal_mode=DELETE")  # trips early on a corrupt file
         conn.executescript(SCHEMA_SQL)
-        if get_meta(conn, "schema_version") is None:
+        conn.executescript(SCHEMA_V2_SQL)
+        # Forward-only migration: v1→v2 is purely additive (CREATE IF NOT EXISTS
+        # above), so "migrating" is just stamping the version. Never downgrade.
+        current = get_meta(conn, "schema_version")
+        if current is None or int(current) < SCHEMA_VERSION:
             set_meta(conn, "schema_version", str(SCHEMA_VERSION))
         return conn
     except Exception:
@@ -224,6 +255,115 @@ def upsert_wellness(conn: sqlite3.Connection, date: str, values: dict, raw) -> N
          values.get("sleep_hours"), json.dumps(raw, ensure_ascii=False), _now()),
     )
     conn.commit()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# run metrics + race predictions (schema v2 — owned by the insight-metrics
+# engine; see insight_metrics.py for the algorithms that fill these tables)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# What counts as a run, in SQL — mirrors sync_garmin.is_run() (typeKey contains
+# a run word but isn't cycling; covers running/treadmill/trail/track/indoor/
+# obstacle/ultra).
+_RUN_TYPE_SQL = "(a.type_key LIKE '%run%' AND a.type_key NOT LIKE '%cycling%')"
+
+_RUN_METRICS_COLS = (
+    "activity_id", "metrics_version", "start_time_local", "is_treadmill",
+    "best_1k_s", "best_mile_s", "best_5k_s", "best_10k_s", "best_half_s",
+    "refhr_time_s", "refhr_dist_m", "refpace_time_s", "refpace_cadence_x_time",
+)
+
+
+def runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
+    """(activity_id, start_time_local, type_key) of every archived run that has
+    a detail payload but no run_metrics row at `version` — rows at a stale
+    version count as missing, which is how a METRICS_VERSION bump self-heals."""
+    return conn.execute(
+        f"""SELECT a.activity_id, a.start_time_local, a.type_key
+            FROM activities a
+            LEFT JOIN run_metrics m
+              ON m.activity_id = a.activity_id AND m.metrics_version = ?
+            WHERE a.detail_json IS NOT NULL
+              AND {_RUN_TYPE_SQL}
+              AND m.activity_id IS NULL
+            ORDER BY a.start_time_local""",
+        (version,),
+    ).fetchall()
+
+
+def detail_payload(conn: sqlite3.Connection, activity_id):
+    """The parsed raw detail payload for one activity, or None. Fetched one at
+    a time — payloads run to hundreds of KB, never load the whole table."""
+    row = conn.execute(
+        "SELECT detail_json FROM activities WHERE activity_id = ?", (activity_id,)
+    ).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def upsert_run_metrics(conn: sqlite3.Connection, row: dict) -> None:
+    """INSERT OR REPLACE keyed by activity_id — derived rows are disposable
+    (design D2), so a recompute at a newer version simply replaces the stale
+    row. Commits per call: an interrupted extraction never repeats done work."""
+    conn.execute(
+        f"INSERT OR REPLACE INTO run_metrics ({', '.join(_RUN_METRICS_COLS)}, computed_at) "
+        f"VALUES ({', '.join('?' * len(_RUN_METRICS_COLS))}, ?)",
+        tuple(row.get(c) for c in _RUN_METRICS_COLS) + (_now(),),
+    )
+    conn.commit()
+
+
+def upsert_race_prediction(conn: sqlite3.Connection, date: str, values: dict,
+                           raw, source: str) -> None:
+    """One row per local date; a later sync the same day refreshes it. `values`
+    carries the promoted seconds (time_5k_s/time_10k_s/half_s/marathon_s); the
+    raw document is kept so a parse fix can re-promote columns later."""
+    conn.execute(
+        """INSERT INTO race_predictions (date, time_5k_s, time_10k_s, half_s,
+                                         marathon_s, raw_json, source, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(date) DO UPDATE SET
+             time_5k_s  = excluded.time_5k_s,
+             time_10k_s = excluded.time_10k_s,
+             half_s     = excluded.half_s,
+             marathon_s = excluded.marathon_s,
+             raw_json   = excluded.raw_json,
+             source     = excluded.source,
+             updated_at = excluded.updated_at""",
+        (date, values.get("time_5k_s"), values.get("time_10k_s"),
+         values.get("half_s"), values.get("marathon_s"),
+         json.dumps(raw, ensure_ascii=False), source, _now()),
+    )
+    conn.commit()
+
+
+def race_predictions_empty(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM race_predictions LIMIT 1").fetchone() is None
+
+
+def metrics_coverage(conn: sqlite3.Connection, version: int) -> dict:
+    """The metrics section --verify-archive reports: detailed-run vs extracted
+    counts, stale-version leftovers, and race_predictions bounds."""
+    detailed_runs = conn.execute(
+        f"SELECT COUNT(*) FROM activities a WHERE a.detail_json IS NOT NULL AND {_RUN_TYPE_SQL}"
+    ).fetchone()[0]
+    at_version = conn.execute(
+        "SELECT COUNT(*) FROM run_metrics WHERE metrics_version = ?", (version,)
+    ).fetchone()[0]
+    stale = conn.execute(
+        "SELECT COUNT(*) FROM run_metrics WHERE metrics_version != ?", (version,)
+    ).fetchone()[0]
+    pred_count, pred_earliest, pred_latest = conn.execute(
+        "SELECT COUNT(*), MIN(date), MAX(date) FROM race_predictions"
+    ).fetchone()
+    return {
+        "detailed_runs": detailed_runs,
+        "at_version": at_version,
+        "missing": detailed_runs - at_version,
+        "stale": stale,
+        "prediction_rows": pred_count,
+        "prediction_earliest": pred_earliest,
+        "prediction_latest": pred_latest,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────

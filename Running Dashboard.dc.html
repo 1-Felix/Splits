@@ -83,10 +83,14 @@
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:var(--sp-5);margin-top:var(--sp-4);padding-top:var(--sp-4);border-top:1px solid var(--line)">
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-5);margin-top:var(--sp-4);padding-top:var(--sp-4);border-top:1px solid var(--line)">
         <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">CURRENT PB</div><div class="metric" style="font-size:var(--fs-lg);margin-top:var(--sp-0)">{{ race.pb }}</div></div>
         <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">MODEL PREDICTS</div><div class="metric" style="font-size:var(--fs-lg);margin-top:var(--sp-0);color:var(--accent2)">{{ pred.halfNow }}</div></div>
         <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">NEEDED PACE</div><div class="metric" style="font-size:var(--fs-lg);margin-top:var(--sp-0)">{{ race.goalPace }}<span style="font-size:var(--fs-xs);color:var(--sub)">/km</span></div></div>
+        <sc-for list="{{ traj }}" as="tj" hint-placeholder-count="0">
+          <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">DEMONSTRATED · RIEGEL</div><div class="metric" style="font-size:var(--fs-lg);margin-top:var(--sp-0)">{{ tj.riegel }}<span style="font-size:var(--fs-xs);color:var(--sub)"> {{ tj.gap }}</span></div></div>
+          <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">TREND</div><div class="metric" style="font-size:var(--fs-lg);margin-top:var(--sp-0);color:{{ tj.trendColor }}">{{ tj.trend }}</div></div>
+        </sc-for>
       </div>
     </div>
 
@@ -400,6 +404,80 @@
       </sc-for>
       </div>
     </div>
+
+    <!-- ===== INSIGHTS (insight-metrics stage 2) — hidden until the sync emits
+         the archive-computed `insights` block; pre-engine data files render
+         none of this and the page behaves exactly as before ===== -->
+    <sc-if value="{{ hasInsights }}">
+
+    <!-- PACE @ REFERENCE HR -->
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Pace @ {{ eff.bandLabel }}</div><div class="card-sub">Aerobic efficiency · pooled samples · gaps = too little in-band time</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent2)">{{ eff.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ eff.delta }}</div></div>
+      </div>
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ eff.navLabel }}" onKeyDown="{{ eff.onKey }}" onMouseLeave="{{ eff.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
+        <sc-for list="{{ eff.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
+        <sc-for list="{{ eff.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
+        <sc-for list="{{ eff.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent2)"></circle></sc-for>
+        <sc-for list="{{ eff.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insEff" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ eff.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ eff.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
+      </svg>
+      <sc-for list="{{ eff.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="insEff" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
+    </div>
+
+    <!-- CADENCE @ REFERENCE PACE -->
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Cadence @ {{ cadRef.bandLabel }}</div><div class="card-sub">Form at easy pace · pooled samples · gaps = too little in-band time</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cadRef.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ cadRef.delta }}</div></div>
+      </div>
+      <div style="position:relative">
+      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cadRef.navLabel }}" onKeyDown="{{ cadRef.onKey }}" onMouseLeave="{{ cadRef.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
+        <sc-for list="{{ cadRef.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
+        <sc-for list="{{ cadRef.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
+        <sc-for list="{{ cadRef.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent)"></circle></sc-for>
+        <sc-for list="{{ cadRef.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insCad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
+        <sc-for list="{{ cadRef.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
+        <sc-for list="{{ cadRef.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
+      </svg>
+      <sc-for list="{{ cadRef.card }}" as="cd" hint-placeholder-count="0">
+        <div data-card="insCad" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
+          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
+        </div>
+      </sc-for>
+      </div>
+    </div>
+
+    <!-- RECORDS FEED -->
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Records</div><div class="card-sub">Fastest efforts inside any outdoor run · from the archive</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ recs.count }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">recent</div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;margin-top:var(--sp-2)">
+        <sc-for list="{{ recs.rows }}" as="rec" hint-placeholder-count="0">
+          <div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">
+            <span style="min-width:46px;text-align:center;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ rec.dist }}</span>
+            <span style="font-family:'JetBrains Mono';font-weight:700">{{ rec.newTime }}</span>
+            <span style="color:var(--sub);font-weight:500">was {{ rec.oldTime }}</span>
+            <span style="margin-left:auto;color:var(--sub);font-size:var(--fs-xs);font-weight:600">{{ rec.date }}</span>
+          </div>
+        </sc-for>
+        <sc-for list="{{ recs.empty }}" as="emp" hint-placeholder-count="0">
+          <div style="padding:var(--sp-4) 0;color:var(--sub);font-size:var(--fs-sm);font-weight:500;line-height:1.5">{{ emp.t }}</div>
+        </sc-for>
+      </div>
+    </div>
+
+    </sc-if>
   </section>
 
   <!-- ===== HEATMAP ===== -->
@@ -784,6 +862,7 @@ class Component extends DCLogic {
   }
 
   fmtPace(sec){ const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
+  fmtHMS(sec){ sec=Math.round(sec); const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60; return h ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0'); }
   mDate(iso){ const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const d=new Date(iso); return M[d.getMonth()]+' '+d.getDate(); }
   daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
   // local calendar date as YYYY-MM-DD (the live "display-today")
@@ -840,11 +919,16 @@ class Component extends DCLogic {
     const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
     const kmNow = H.weeklyKm[H.weeklyKm.length-1], kmPrev = H.weeklyKm[H.weeklyKm.length-5];
     const form = +(H.ctl[H.ctl.length-1]-H.atl[H.atl.length-1]).toFixed(0);
+    // predictions.trend now carries the engine's verdict ("closing ≈8s/wk") —
+    // colour it by direction; legacy/empty values fall back to neutral.
+    const predTrend = D.predictions.trend || '';
+    const predTrendColor = predTrend.indexOf('closing') === 0 ? 'var(--good)'
+      : predTrend.indexOf('opening') === 0 ? 'var(--warn)' : 'var(--sub)';
     const kpis = [
       { label:'VO₂ MAX', value:vo2Now.toFixed(1), unit:'', sub:'Top 5% for age', delta:'+'+(vo2Now-vo2Prev).toFixed(1), deltaColor:'var(--good)' },
       { label:'WEEKLY VOLUME', value:Math.round(kmNow), unit:'km', sub:'4-wk avg '+Math.round((H.weeklyKm.slice(-4).reduce((a,b)=>a+b,0)/4)), delta:(kmNow>=kmPrev?'+':'')+Math.round(kmNow-kmPrev)+'km', deltaColor:'var(--sub)' },
       { label:'FORM', value:(form>0?'+':'')+form, unit:'tsb', sub:form>0?'Fresh & ready':'Carrying fatigue', delta:'rising', deltaColor:'var(--good)' },
-      { label:'HALF PREDICTION', value:D.predictions.halfNow.slice(0,4), unit:'', sub:'goal '+D.race.goalTime.slice(0,4), delta:D.predictions.trend, deltaColor:'var(--good)' }
+      { label:'HALF PREDICTION', value:D.predictions.halfNow.slice(0,4), unit:'', sub:'goal '+D.race.goalTime.slice(0,4), delta:predTrend, deltaColor:predTrendColor }
     ];
 
     // week plan
@@ -1096,8 +1180,99 @@ class Component extends DCLogic {
         detailRows: (expanded && expandable) ? [this.runDetail(r)] : [] };
     });
 
+    // ---- insight-metrics surfaces (stage 2) — everything below renders only
+    // when the sync has emitted the archive-computed `insights` block; older
+    // data files leave hasInsights false and the page is exactly as before.
+    const INS = D.insights || null;
+    const hasInsights = !!INS;
+    let eff = {}, cadRef = {}, recs = {}, traj = [];
+    if (INS) {
+      const mKey = (k) => { const p = k.split('-'); return M[+p[1]-1] + ' ' + p[0].slice(2); };
+      const buildMonthly = (chartId, monthly, valKey, fmtVal, color) => {
+        // like line(), but null months break the path into segments — a gap in
+        // the drawing, never a fabricated point (insight-metrics design D10)
+        const H2 = 150, w = 600, pad = 6, padT = 14, padB = 12;
+        const vals = monthly.map(m => m[valKey]);
+        const valid = vals.filter(v => v != null);
+        let mn = Math.min.apply(null, valid), mx = Math.max.apply(null, valid);
+        const rr = (mx - mn) || 1; mn -= rr * 0.14; mx += rr * 0.14;
+        const n = vals.length;
+        const X = i => pad + (n <= 1 ? 0.5 : i / (n - 1)) * (w - 2 * pad);
+        const Y = v => padT + (1 - (v - mn) / ((mx - mn) || 1)) * (H2 - padT - padB);
+        const segs = []; let seg = [];
+        vals.forEach((v, i) => {
+          if (v == null) { if (seg.length) segs.push(seg); seg = []; return; }
+          seg.push(X(i).toFixed(1) + ' ' + Y(v).toFixed(1));
+        });
+        if (seg.length) segs.push(seg);
+        const obj = {
+          grid: [padT, padT + (H2 - padT - padB) / 2, H2 - padB],
+          paths: segs.filter(s => s.length > 1).map(s => 'M' + s.join(' L')),
+          pdots: []
+        };
+        const pts = [];
+        monthly.forEach((m, i) => {
+          if (m[valKey] == null) return;
+          obj.pdots.push({ x: +X(i).toFixed(1), y: +Y(m[valKey]).toFixed(1) });
+          pts.push({ x: X(i), y: Y(m[valKey]), dotColor: color,
+            aria: mKey(m.month) + ', ' + fmtVal(m[valKey]) + ', ' + m.inBandMin + ' minutes in band',
+            lines: [
+              { t: mKey(m.month), em: false },
+              { t: fmtVal(m[valKey]), em: true },
+              { t: m.inBandMin + ' min in band', em: false }
+            ] });
+        });
+        this.attachOverlay(obj, this.hoverLayer(chartId, pts));
+        obj.onLeave = () => this.leaveChart(chartId);
+        obj.onKey = (e) => this.chartKey(chartId, pts.length, e);
+        obj.firstV = valid.length ? valid[0] : null;
+        obj.lastV = valid.length ? valid[valid.length - 1] : null;
+        obj.last = obj.lastV != null ? fmtVal(obj.lastV) : '—';
+        return obj;
+      };
+      eff = buildMonthly('insEff', INS.efficiency.monthly, 'paceSecPerKm', (v) => this.fmtPace(v) + ' /km', 'var(--accent2)');
+      eff.bandLabel = INS.efficiency.refHrBand[0] + '–' + INS.efficiency.refHrBand[1] + ' bpm';
+      eff.delta = (eff.firstV != null && eff.lastV != null && eff.firstV !== eff.lastV)
+        ? ((eff.lastV < eff.firstV ? '−' : '+') + this.fmtPace(Math.abs(eff.firstV - eff.lastV)) + ' /km all-time') : '';
+      eff.navLabel = 'Pace at reference heart rate, monthly. Arrow keys to inspect; gaps are months without enough in-band time.';
+      cadRef = buildMonthly('insCad', INS.cadence.monthly, 'spm', (v) => v + ' spm', 'var(--accent)');
+      cadRef.bandLabel = this.fmtPace(INS.cadence.refPaceBand[0]) + '–' + this.fmtPace(INS.cadence.refPaceBand[1]) + ' /km';
+      cadRef.delta = (cadRef.firstV != null && cadRef.lastV != null && cadRef.firstV !== cadRef.lastV)
+        ? ((cadRef.lastV >= cadRef.firstV ? '+' : '−') + Math.abs(cadRef.lastV - cadRef.firstV) + ' spm all-time') : '';
+      cadRef.navLabel = 'Cadence at reference pace, monthly. Arrow keys to inspect.';
+
+      const DL = { '1k': '1K', 'mile': 'MILE', '5k': '5K', '10k': '10K', 'half': 'HALF' };
+      const feed = INS.recordsFeed || [];
+      recs = {
+        count: feed.length,
+        rows: feed.map(ev => ({ dist: DL[ev.distance] || String(ev.distance).toUpperCase(),
+          newTime: this.fmtHMS(ev.newSec), oldTime: this.fmtHMS(ev.oldSec), date: this.mDate(ev.date) })),
+        empty: feed.length ? [] : [{ t: 'No records have fallen recently — steady weeks are building the base the next one comes from.' }]
+      };
+
+      // hero-card trajectory row: latest demonstrated (Riegel) half, the gap
+      // to Garmin's model, and the engine's trend verdict
+      const weekly = INS.trajectory.weekly || [];
+      let lastR = null, lastG = null;
+      for (let i = weekly.length - 1; i >= 0; i--) {
+        if (lastR == null && weekly[i].riegelSec != null) lastR = weekly[i].riegelSec;
+        if (lastG == null && weekly[i].garminSec != null) lastG = weekly[i].garminSec;
+        if (lastR != null && lastG != null) break;
+      }
+      if (lastR != null) {
+        const gap = lastG != null ? lastR - lastG : null;
+        const arrow = predTrend.indexOf('closing') === 0 ? '↘ ' : predTrend.indexOf('opening') === 0 ? '↗ ' : predTrend ? '→ ' : '';
+        traj = [{
+          riegel: this.fmtHMS(lastR),
+          gap: gap != null ? ((gap >= 0 ? '+' : '−') + this.fmtHMS(Math.abs(gap)) + ' vs model') : '',
+          trend: predTrend ? arrow + predTrend : '—',
+          trendColor: predTrendColor
+        }];
+      }
+    }
+
     let liveText = '';
-    { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, sleep:sleepObj, heat:heat, ring:ringObj };
+    { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, sleep:sleepObj, heat:heat, ring:ringObj, insEff:eff, insCad:cadRef };
       if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
 
     // sync freshness — telemetry is anchored to D.today (the sync date); compare
@@ -1135,6 +1310,7 @@ class Component extends DCLogic {
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
       historyWindow:'30-month history · synced ' + syncDateLabel, vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
+      hasInsights, eff, cadRef, recs, traj,
       liveText
     };
   }

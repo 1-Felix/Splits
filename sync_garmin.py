@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 from garminconnect import Garmin
 
 import activity_archive
+import insight_metrics
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -690,23 +691,44 @@ def fetch_personal_bests(client) -> dict:
     return out
 
 
-def fetch_predictions(client, planned_goal: str = "1:59:59") -> dict:
+def fetch_raw_predictions(client) -> dict:
+    """The raw race-predictor document, fetched once and shared by the
+    telemetry block AND the archive's predictor banking (zero extra calls,
+    design D7)."""
     doc = safe(lambda: client.get_race_predictions(), {}, "get_race_predictions") or {}
     if isinstance(doc, list):
         doc = doc[-1] if doc else {}
+    return doc
+
+
+def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
     return {
-        "fiveK": fmt_hms(doc.get("time5K")),
-        "tenK": fmt_hms(doc.get("time10K")),
-        "halfNow": fmt_hms(doc.get("timeHalfMarathon")),
+        "fiveK": fmt_hms(pred_doc.get("time5K")),
+        "tenK": fmt_hms(pred_doc.get("time10K")),
+        "halfNow": fmt_hms(pred_doc.get("timeHalfMarathon")),
         "halfGoal": planned_goal,
-        "trend": "",  # filled by build_data once we have last-vs-now
+        "trend": "",  # filled from the insights trajectory when available
     }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. ASSEMBLE + WRITE
 # ──────────────────────────────────────────────────────────────────────────────
-def build_data(client, acts: list[dict]) -> dict:
+def fetch_insights() -> dict | None:
+    """The assembled insights block from the archive (design D1 phase 2), or
+    None — in which case the caller omits the key entirely. Never a partial
+    block: assemble_insights raises on any problem and safe() maps that to
+    None (design D8)."""
+    def assemble():
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            return insight_metrics.assemble_insights(conn, TODAY)
+        finally:
+            conn.close()
+    return safe(assemble, None, "insights assembly")
+
+
+def build_data(client, acts: list[dict], pred_doc: dict | None = None) -> dict:
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
 
     monthly = fetch_monthly(client, acts)
@@ -715,9 +737,16 @@ def build_data(client, acts: list[dict]) -> dict:
     sleep = fetch_sleep(client)
     vo2_current = monthly["vo2max"][-1] if monthly["vo2max"] else None
 
-    predictions = fetch_predictions(client)
+    predictions = fetch_predictions(pred_doc or {})
+    insights = fetch_insights()
+    if insights:
+        trend = insight_metrics.trend_verdict(insights["trajectory"]["weekly"])
+        if trend:
+            predictions["trend"] = trend
+        log(f"✓ insights assembled ({len(insights['efficiency']['monthly'])} months, "
+            f"{len(insights['trajectory']['weekly'])} weeks)")
 
-    return {
+    data = {
         "profile": fetch_profile(client, vo2_current),
         "today": TODAY.isoformat(),
         "readiness": fetch_readiness(client, sleep, max_hr),
@@ -738,6 +767,9 @@ def build_data(client, acts: list[dict]) -> dict:
         },
         "heatmapKm": fetch_heatmap(acts),
     }
+    if insights:
+        data["insights"] = insights
+    return data
 
 
 def validate(data: dict) -> None:
@@ -770,27 +802,64 @@ def build_garmin_data_js(data: dict) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. DURABLE ARCHIVE  (activity_archive.py — the dashboard never reads this;
-#    it is the foundation for the ROADMAP's insight-metrics stage)
+# 5. DURABLE ARCHIVE + METRICS  (activity_archive.py / insight_metrics.py).
+#    Order per insight-metrics design D8: archive → metrics → build → write.
+#    Every step here runs ONLY inside safe() — telemetry keys are written even
+#    if archive, metrics and insights all fail.
 # ──────────────────────────────────────────────────────────────────────────────
 DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
 
 
-def archive_step(client, acts: list[dict], readiness: dict) -> None:
-    """Bank this sync's fetches into the durable archive. Runs AFTER
-    garmin-data.js is written and only ever inside safe() — an archive problem
-    is a warning, never a failed sync."""
+def archive_step(client, acts: list[dict]) -> None:
+    """Bank this sync's activity fetches into the durable archive. Runs BEFORE
+    build_data (the insights must include today's run — design D8) and only
+    ever inside safe() — an archive problem is a warning, never a failed sync."""
     conn = activity_archive.open_archive(DATA_DIR)
     try:
         added = activity_archive.upsert_activities(conn, acts)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
+        _record_expectations(conn)
+        log(f"✓ archive: +{added} activities, {topped} details topped up")
+    finally:
+        conn.close()
+
+
+def metrics_step(client, pred_doc) -> None:
+    """Phase-1 metrics work (insight_metrics design D1/D7): extract run_metrics
+    for anything new or stale-versioned, then bank today's race prediction —
+    auto-backfilling the whole predictor history the first time the table is
+    seen empty. Only ever runs inside safe()."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        extracted = insight_metrics.extract_run_metrics(conn)
+        backfilled = 0
+        if activity_archive.race_predictions_empty(conn):
+            earliest = conn.execute(
+                "SELECT MIN(start_time_local) FROM activities").fetchone()[0]
+            if earliest:
+                backfilled = insight_metrics.backfill_predictions(conn, client, earliest)
+        banked = insight_metrics.bank_prediction(conn, pred_doc, TODAY)
+        parts = [f"+{extracted} runs extracted"]
+        if backfilled:
+            parts.append(f"predictor history backfilled ({backfilled} days)")
+        parts.append("prediction banked" if banked else "no prediction to bank")
+        log("✓ metrics: " + ", ".join(parts))
+    finally:
+        conn.close()
+
+
+def wellness_step(readiness: dict) -> None:
+    """Bank today's wellness row. Readiness is computed inside build_data, so
+    this runs after the write — unlike the activity banking, nothing downstream
+    needs it in the same sync. Only ever inside safe()."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
         activity_archive.upsert_wellness(conn, TODAY.isoformat(), {
             "resting_hr": readiness.get("restingHR"),
             "hrv": readiness.get("hrv"),
             "sleep_hours": readiness.get("sleepHours"),
         }, readiness)
-        _record_expectations(conn)
-        log(f"✓ archive: +{added} activities, {topped} details topped up, wellness banked")
+        log("✓ archive: wellness banked")
     finally:
         conn.close()
 
@@ -882,6 +951,24 @@ def verify_archive() -> int:
         log(f"  wellness   : {cov['wellness_rows']} daily rows")
         log("  by year    : " + (", ".join(f"{y}: {n}" for y, n in sorted(cov["by_year"].items())) or "—"))
         log("  by type    : " + (", ".join(f"{t}: {n}" for t, n in list(cov["by_type"].items())[:8]) or "—"))
+
+        mcov = activity_archive.metrics_coverage(conn, insight_metrics.METRICS_VERSION)
+        log(f"  metrics    : {mcov['at_version']}/{mcov['detailed_runs']} detailed runs at "
+            f"v{insight_metrics.METRICS_VERSION}"
+            + (f", {mcov['stale']} stale-version rows" if mcov["stale"] else ""))
+        log(f"  predictions: {mcov['prediction_rows']} daily rows"
+            + (f"  ({mcov['prediction_earliest']} → {mcov['prediction_latest']})"
+               if mcov["prediction_rows"] else ""))
+        try:
+            ins = insight_metrics.assemble_insights(conn, TODAY)
+            with_data = sum(1 for m in ins["efficiency"]["monthly"]
+                            if m["paceSecPerKm"] is not None)
+            log(f"  insights   : {len(ins['efficiency']['monthly'])} months "
+                f"({with_data} with data), {len(ins['trajectory']['weekly'])} weeks, "
+                f"{len(ins['recordsFeed'])} recent records")
+        except Exception as ex:  # noqa: BLE001 — verify reports, it doesn't crash
+            log(f"  insights   : not assemblable ({type(ex).__name__}: {ex})")
+
         for key in ("schema_version", "backfill_completed_at", "last_append_at"):
             val = activity_archive.get_meta(conn, key)
             if val:
@@ -894,6 +981,15 @@ def verify_archive() -> int:
         exp_earliest = activity_archive.get_meta(conn, "expected_earliest")
         if exp_earliest and (cov["earliest"] is None or cov["earliest"] > exp_earliest):
             failures.append(f"earliest activity regressed: {cov['earliest']} > expected {exp_earliest}")
+        # Metrics coverage regressions (design D11). A completely empty
+        # run_metrics table is a pre-engine archive, not a regression — but
+        # stale-version leftovers or a partial extraction after a sync are.
+        if mcov["stale"]:
+            failures.append(f"metrics coverage regressed: {mcov['stale']} run_metrics rows "
+                            f"at a stale version (sync should have recomputed them)")
+        if mcov["at_version"] and mcov["missing"] > 0:
+            failures.append(f"metrics coverage regressed: {mcov['missing']} detailed runs "
+                            f"without a v{insight_metrics.METRICS_VERSION} row")
         for f in failures:
             warn(f"VERIFY FAILED — {f}")
         if not failures:
@@ -921,12 +1017,19 @@ def main() -> None:
         run_backfill(client)
         return
 
+    # Order per insight-metrics design D8: the archive and metrics steps run
+    # BEFORE build_data so the insights include today's run — but each one is
+    # safe()-wrapped, so garmin-data.js is written with every existing key
+    # even if archive, metrics and insights all fail.
     acts = load_activities(client)
-    data = build_data(client, acts)
+    safe(lambda: archive_step(client, acts), None, "archive step")
+    pred_doc = fetch_raw_predictions(client)
+    safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
+    data = build_data(client, acts, pred_doc)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
-    safe(lambda: archive_step(client, acts, data["readiness"]), None, "archive step")
+    safe(lambda: wellness_step(data["readiness"]), None, "wellness banking")
 
 
 if __name__ == "__main__":

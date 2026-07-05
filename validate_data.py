@@ -54,6 +54,80 @@ def check(cond: bool, msg: str, errors: list[str]) -> None:
         errors.append(msg)
 
 
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def validate_insights(ins: dict, e: list[str]) -> None:
+    """Shape-check the OPTIONAL `insights` block (insight-metrics design D9).
+    The block is only ever emitted whole — a failure here means the engine or
+    the contract changed, and the message names the offending member."""
+    check(_num(ins.get("metricsVersion")), "insights.metricsVersion must be numeric", e)
+
+    for section, band_key, val_key in (("efficiency", "refHrBand", "paceSecPerKm"),
+                                       ("cadence", "refPaceBand", "spm")):
+        s = ins.get(section)
+        if not isinstance(s, dict):
+            check(False, f"insights.{section} must be an object", e)
+            continue
+        band = s.get(band_key)
+        check(isinstance(band, list) and len(band) == 2 and all(_num(v) for v in band),
+              f"insights.{section}.{band_key} must be [lo, hi]", e)
+        monthly = s.get("monthly")
+        check(isinstance(monthly, list) and len(monthly) > 0,
+              f"insights.{section}.monthly must be a non-empty list", e)
+        for m in monthly if isinstance(monthly, list) else []:
+            label = m.get("month", "?") if isinstance(m, dict) else "?"
+            if not isinstance(m, dict):
+                check(False, f"insights.{section}.monthly entries must be objects", e)
+                continue
+            check(isinstance(m.get("month"), str) and len(m["month"] or "") == 7,
+                  f"insights.{section}.monthly {label} month must be 'YYYY-MM'", e)
+            check(m.get(val_key) is None or _num(m.get(val_key)),
+                  f"insights.{section}.monthly {label} {val_key} must be numeric or null", e)
+            check(_num(m.get("inBandMin")),
+                  f"insights.{section}.monthly {label} inBandMin must be numeric", e)
+
+    be = ins.get("bestEfforts")
+    if not isinstance(be, dict):
+        check(False, "insights.bestEfforts must be an object", e)
+    else:
+        for table in ("allTime", "last90d"):
+            t = be.get(table)
+            if not isinstance(t, dict):
+                check(False, f"insights.bestEfforts.{table} must be an object", e)
+                continue
+            for key in ("oneK", "mile", "fiveK", "tenK", "half"):
+                check(key in t, f"insights.bestEfforts.{table} missing '{key}'", e)
+                v = t.get(key)
+                check(v is None or (isinstance(v, dict) and _num(v.get("sec"))
+                                    and isinstance(v.get("date"), str)),
+                      f"insights.bestEfforts.{table}.{key} must be null or {{sec, date}}", e)
+
+    feed = ins.get("recordsFeed")
+    check(isinstance(feed, list), "insights.recordsFeed must be a list", e)
+    for ev in feed if isinstance(feed, list) else []:
+        ok = (isinstance(ev, dict) and isinstance(ev.get("date"), str)
+              and isinstance(ev.get("distance"), str)
+              and _num(ev.get("oldSec")) and _num(ev.get("newSec")))
+        check(ok, f"insights.recordsFeed entry {ev!r} must be {{date, distance, oldSec, newSec}}", e)
+
+    traj = ins.get("trajectory")
+    if not isinstance(traj, dict):
+        check(False, "insights.trajectory must be an object", e)
+        return
+    check(_num(traj.get("goalSec")), "insights.trajectory.goalSec must be numeric", e)
+    weekly = traj.get("weekly")
+    check(isinstance(weekly, list), "insights.trajectory.weekly must be a list", e)
+    for w in weekly if isinstance(weekly, list) else []:
+        label = w.get("week", "?") if isinstance(w, dict) else "?"
+        ok = (isinstance(w, dict) and isinstance(w.get("week"), str)
+              and (w.get("riegelSec") is None or _num(w.get("riegelSec")))
+              and (w.get("garminSec") is None or _num(w.get("garminSec"))))
+        check(ok, f"insights.trajectory.weekly {label} must be "
+                  "{week, riegelSec: num|null, garminSec: num|null}", e)
+
+
 def validate(d: dict) -> list[str]:
     e: list[str] = []
     h = d.get("history", {})
@@ -114,6 +188,15 @@ def validate(d: dict) -> list[str]:
     # pace stored as integer seconds, not a formatted string
     for r in d.get("recentRuns", []):
         check(isinstance(r.get("pace"), (int, float)), f"recentRuns pace must be int seconds (got {r.get('pace')!r})", e)
+
+    # insights block (insight-metrics) — OPTIONAL: pre-engine files stay valid,
+    # but when the sync emits it, the shape must hold
+    ins = d.get("insights")
+    if ins is not None:
+        if isinstance(ins, dict):
+            validate_insights(ins, e)
+        else:
+            check(False, "insights must be an object when present", e)
 
     # per-run drill-down detail (present once the sync has run Task 2)
     for r in d.get("recentRuns", []):

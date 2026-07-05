@@ -133,14 +133,16 @@
 
 ## 11. Deploy to the homeserver
 
-- [ ] 11.1 Merge to `main` → CI image; pull + recreate the container on the
-      same volume
-- [ ] 11.2 Trigger a sync in the container; then
+- [x] 11.1 Merge to `main` → CI image; pull + recreate the container on the
+      same volume (commit 36cc8f1, image pulled + recreated 2026-07-05)
+- [x] 11.2 Trigger a sync in the container; then
       `docker compose exec splits python3 sync_garmin.py --verify-archive` —
-      metrics coverage ≈ detail coverage (536-activity baseline), predictions
-      backfilled to 2024, insights extents sane
-- [ ] 11.3 Spot-check the live dashboard: trend on the prediction card,
-      records feed, both trend charts with honest gaps
+      162/162 detailed runs at v1 (536-activity baseline intact), 785 daily
+      prediction rows back to 2024-05-12, insights 27 months / 48 weeks /
+      10 records, exit 0
+- [x] 11.3 Spot-check the live dashboard: hero card shows RIEGEL 2:14:28
+      +15:12 vs model · ↘ closing ≈131s/wk, records feed populated, both
+      trend charts render with honest gaps
 - [ ] 11.4 After the next nightly sync: `run_metrics` grew with any new run,
       today's prediction row banked, insights refreshed — stage 2 steady state
       confirmed

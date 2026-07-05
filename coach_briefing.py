@@ -355,13 +355,18 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
 
 def write_briefing(path, text: str) -> None:
     """Atomic publish: temp file in the same dir, then rename over the target —
-    a reader (or a crash) can never observe a half-written briefing."""
+    a reader (or a crash) can never observe a half-written briefing.
+
+    mkstemp creates the temp 0600 and the container runs as root, which would
+    publish a briefing unreadable over the LAN share — chmod to 0644 first so
+    it reads like its sibling data files."""
     path = Path(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".coach-briefing-",
                                suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
         try:

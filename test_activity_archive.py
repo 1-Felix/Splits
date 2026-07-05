@@ -509,8 +509,8 @@ def test_v2_to_v3_migration_preserves_data():
     conn.commit()
     conn.close()
 
-    conn = arch.open_archive(d)  # v2 → v3 on open
-    assert arch.get_meta(conn, "schema_version") == "3"
+    conn = arch.open_archive(d)  # v2 → current on open
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1, \
         "v2 derived rows untouched"
@@ -518,8 +518,8 @@ def test_v2_to_v3_migration_preserves_data():
     assert conn.execute("SELECT COUNT(*) FROM plan_compliance").fetchone()[0] == 0
     conn.close()
 
-    conn = arch.open_archive(d)  # idempotent re-open at v3
-    assert arch.get_meta(conn, "schema_version") == "3"
+    conn = arch.open_archive(d)  # idempotent re-open at the current version
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1
     conn.close()
 
@@ -580,6 +580,159 @@ def test_stale_compliance_weeks_and_coverage():
     assert cov == {"snapshots": 1, "rows": 2, "weeks_scored": 2, "stale": 1,
                    "latest_scored": "2026-07-08"}
     conn.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# schema v4 (progress-views): distilled-detail column + accessors + sync pass
+# ──────────────────────────────────────────────────────────────────────────────
+# The v3 additions as they shipped in stage 4 — frozen so the migration test
+# exercises a genuine v3 file.
+_V3_ADDITIONS = """
+CREATE TABLE plan_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sha256 TEXT NOT NULL UNIQUE,
+  first_seen_date TEXT NOT NULL, plan_json TEXT NOT NULL
+);
+CREATE TABLE plan_compliance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, wk TEXT,
+  snapshot_id INTEGER NOT NULL REFERENCES plan_snapshots(id),
+  compliance_version INTEGER NOT NULL, planned_kind TEXT, planned_km REAL,
+  planned_load TEXT, planned_title TEXT, status TEXT NOT NULL, reason TEXT,
+  actual_km REAL, actual_pace_s REAL, actual_hr INTEGER, activity_id INTEGER,
+  updated_at TEXT NOT NULL
+);
+UPDATE archive_meta SET value = '3' WHERE key = 'schema_version';
+"""
+
+
+def test_v3_to_v4_migration_is_additive():
+    d = _tmp()
+    _make_v1_db(d)
+    import sqlite3
+    conn = sqlite3.connect(arch.archive_path(d))
+    conn.executescript(_V2_ADDITIONS)
+    conn.executescript(_V3_ADDITIONS)
+    conn.commit()
+    conn.close()
+
+    conn = arch.open_archive(d)  # v3 → v4 on open
+    assert arch.get_meta(conn, "schema_version") == "4"
+    aid, detail, distilled = conn.execute(
+        "SELECT activity_id, detail_json, detail_distilled_json FROM activities"
+    ).fetchone()
+    assert aid == 1 and detail is not None and distilled is None, \
+        "v3 rows untouched; the new column starts NULL"
+    assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1
+    conn.close()
+
+    # an "old reader" (SQL naming only pre-v4 columns) works unchanged
+    conn = sqlite3.connect(arch.archive_path(d))
+    rows = conn.execute(
+        "SELECT activity_id, start_time_local, detail_json FROM activities").fetchall()
+    assert len(rows) == 1
+    conn.close()
+
+    conn = arch.open_archive(d)  # idempotent re-open at v4
+    assert arch.get_meta(conn, "schema_version") == "4"
+    conn.close()
+
+
+def test_write_distilled_and_missing_list():
+    import json
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [
+        _act(1, start="2026-07-01 08:00:00"),
+        _act(2, start="2026-07-02 08:00:00"),
+        _act(3, start="2026-07-03 08:00:00", type_key="strength_training"),
+        _act(4, start="2026-07-04 08:00:00"),
+    ])
+    for aid in (1, 2, 3):
+        arch.write_detail(conn, aid, {"d": 1})
+    assert arch.runs_missing_distilled(conn) == [1, 2], \
+        "runs with raw detail only, oldest first; non-runs and detail-less skipped"
+
+    assert arch.write_distilled(conn, 1, None) is False, "empty distill refused"
+    assert arch.write_distilled(conn, 999, {"splits": []}) is False, "unknown id: no row"
+    assert arch.write_distilled(conn, 1, {"splits": [], "driftBpm": 3}) is True
+    assert arch.runs_missing_distilled(conn) == [2], "distilled run drops off the list"
+    # distilled is derived and disposable — a recompute replaces, never duplicates
+    assert arch.write_distilled(conn, 1, {"splits": [], "driftBpm": 5}) is True
+    stored = json.loads(conn.execute(
+        "SELECT detail_distilled_json FROM activities WHERE activity_id = 1"
+    ).fetchone()[0])
+    assert stored["driftBpm"] == 5
+    assert arch.summary_payload(conn, 1)["activityId"] == 1
+    assert arch.summary_payload(conn, 999) is None
+    conn.close()
+
+
+def test_distill_on_topup_and_recovery_pass():
+    """progress-views 2.3 + 2.4 — a topped-up run gains distilled detail in the
+    same sync; the recovery pass heals pre-v4 rows from stored payloads with no
+    client anywhere near it; raw payloads stay byte-identical."""
+    import json
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        sg.archive_step(_FakeClient(), [_act(1), _act(2, start="2026-07-02 08:00:00")])
+        conn = arch.open_archive(d)
+        assert arch.distilled_coverage(conn) == \
+            {"detailed_runs": 2, "distilled": 2, "missing": 0}, \
+            "topped-up runs distilled within the same archive step"
+        assert arch.get_meta(conn, "expected_distilled_runs") == "2", "ratchet recorded"
+
+        # the stored copy IS the recent-run contract from the same distiller
+        stored = json.loads(conn.execute(
+            "SELECT detail_distilled_json FROM activities WHERE activity_id = 1"
+        ).fetchone()[0])
+        fresh = sg.fetch_run_detail(_FakeClient(), _act(1))
+        assert stored == fresh, "one distiller, two callers"
+
+        # recovery: blank one row's distilled copy (a pre-v4 archive in
+        # miniature) and heal it from the stored raw payload
+        raw_before = conn.execute(
+            "SELECT detail_json FROM activities WHERE activity_id = 2").fetchone()[0]
+        conn.execute(
+            "UPDATE activities SET detail_distilled_json = NULL WHERE activity_id = 2")
+        conn.commit()
+        assert sg._distill_pass(conn) == 1, "recovery pass heals the gap"
+        assert sg._distill_pass(conn) == 0, "idempotent — second pass finds nothing"
+        raw_after = conn.execute(
+            "SELECT detail_json FROM activities WHERE activity_id = 2").fetchone()[0]
+        assert raw_after == raw_before, "raw payload untouched by distillation"
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_verify_archive_distilled_coverage_paths():
+    """progress-views 2.5 — verify exits non-zero when distillation falls
+    behind raw detail; a fully pre-v4 archive (nothing distilled) still passes."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        conn = arch.open_archive(d)
+        arch.upsert_activities(conn, [_act(1), _act(2, start="2026-07-02 08:00:00")])
+        arch.write_detail(conn, 1, {"d": 1})
+        arch.write_detail(conn, 2, {"d": 1})
+        conn.close()
+        assert sg.verify_archive() == 0, "pre-v4 archive (no distilled rows) passes"
+
+        conn = arch.open_archive(d)
+        arch.write_distilled(conn, 1, {"splits": []})
+        conn.close()
+        assert sg.verify_archive() == 1, "partial distillation → regression"
+
+        conn = arch.open_archive(d)
+        arch.write_distilled(conn, 2, {"splits": []})
+        conn.close()
+        assert sg.verify_archive() == 0, "full distilled coverage passes"
+
+        conn = arch.open_archive(d)
+        arch.set_meta(conn, "expected_distilled_runs", 5)
+        conn.close()
+        assert sg.verify_archive() == 1, "count below the ratchet → regression"
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
 
 
 if __name__ == "__main__":

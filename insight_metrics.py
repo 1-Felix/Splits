@@ -262,18 +262,71 @@ def monthly_series(conn, today: dt.date) -> tuple[list[dict], list[dict]]:
     return efficiency, cadence
 
 
-def best_effort_table(conn, since: str | None = None) -> dict:
-    """{oneK: {sec, date} | None, …} — outdoor only (records territory,
-    design D5); `since` bounds it to a rolling window (last90d)."""
+def best_effort_table(conn, since: str | None = None,
+                      until: str | None = None) -> dict:
+    """{oneK: {sec, date, activityId} | None, …} — outdoor only (records
+    territory, design D5); `since`/`until` bound it to a window (last90d, a
+    calendar year). activityId lets the records wall click through to the run
+    the record fell in (progress-views design D4)."""
     out = {}
     for col, key in EFFORT_KEYS.items():
         row = conn.execute(
-            f"""SELECT {col}, substr(start_time_local, 1, 10) FROM run_metrics
+            f"""SELECT {col}, substr(start_time_local, 1, 10), activity_id
+                FROM run_metrics
                 WHERE metrics_version = ? AND is_treadmill = 0
-                  AND {col} IS NOT NULL AND start_time_local >= ?
+                  AND {col} IS NOT NULL
+                  AND start_time_local >= ? AND start_time_local < ?
                 ORDER BY {col} ASC, start_time_local ASC LIMIT 1""",
-            (METRICS_VERSION, since or "")).fetchone()
-        out[key] = {"sec": round(row[0]), "date": row[1]} if row else None
+            (METRICS_VERSION, since or "", until or "9999")).fetchone()
+        out[key] = ({"sec": round(row[0]), "date": row[1], "activityId": row[2]}
+                    if row else None)
+    return out
+
+
+def best_efforts_by_year(conn) -> dict:
+    """{year: effort table} for every calendar year holding an outdoor run
+    with metrics — the same outdoor-only records policy through the same
+    table function, so the policy lives in exactly one place (progress-views
+    design D4). Distances a year never covered are null, never extrapolated."""
+    years = [r[0] for r in conn.execute(
+        """SELECT DISTINCT substr(start_time_local, 1, 4) FROM run_metrics
+           WHERE metrics_version = ? AND is_treadmill = 0
+           ORDER BY 1""", (METRICS_VERSION,))]
+    return {y: best_effort_table(conn, since=f"{y}-01-01",
+                                 until=f"{int(y) + 1:04d}-01-01")
+            for y in years}
+
+
+def yoy_series(conn, today: dt.date) -> dict:
+    """{year: [monthly aggregates]} over the archive's promoted columns
+    (progress-views design D4): distance km, run count, and aggregate pace
+    (total time over total distance) per calendar month. Months with no runs
+    carry zero count/distance and a null pace; the current year carries only
+    elapsed months. Volume is volume — treadmill runs count here (the
+    outdoor-only policy is records territory)."""
+    rows = conn.execute(
+        f"""SELECT substr(a.start_time_local, 1, 4) AS y,
+                   CAST(substr(a.start_time_local, 6, 2) AS INTEGER) AS m,
+                   COUNT(*), SUM(a.distance_m), SUM(a.duration_s)
+            FROM activities a
+            WHERE {activity_archive._RUN_TYPE_SQL}
+            GROUP BY y, m""").fetchall()
+    by_month = {(y, m): (cnt, dist or 0.0, dur or 0.0)
+                for y, m, cnt, dist, dur in rows}
+    if not by_month:
+        return {}
+    out = {}
+    for year in range(min(int(y) for y, _ in by_month), today.year + 1):
+        months = []
+        for m in range(1, (today.month if year == today.year else 12) + 1):
+            cnt, dist, dur = by_month.get((f"{year:04d}", m), (0, 0.0, 0.0))
+            months.append({
+                "month": m,
+                "km": round(dist / 1000.0, 1),
+                "runs": cnt,
+                "paceSecPerKm": round(dur / (dist / 1000.0)) if dist else None,
+            })
+        out[str(year)] = months
     return out
 
 
@@ -373,10 +426,12 @@ def assemble_insights(conn, today: dt.date | None = None) -> dict:
             "allTime": best_effort_table(conn),
             "last90d": best_effort_table(
                 conn, since=(today - dt.timedelta(days=90)).isoformat()),
+            "byYear": best_efforts_by_year(conn),
         },
         "recordsFeed": records_feed(conn),
         "trajectory": {"goalSec": GOAL_HALF_S,
                        "weekly": weekly_trajectory(conn, today)},
+        "yoy": yoy_series(conn, today),
     }
 
 

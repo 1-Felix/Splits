@@ -29,19 +29,27 @@ records falling — and a plan that adapts to what actually happened.
   sync. Around **Nov 2026** the window slides past May 2024 and starts dropping
   the earliest history — archive before then and it never matters.
 
-## Architecture principle (unchanged)
+## Architecture principle (rescoped 2026-07-05, stage 3a)
 
-The dashboard's golden rule stays: it imports one merged `running-data.js` and
-talks to no API. The durable layer sits **behind** the sync:
+The golden rule was rescoped when the dashboard went multi-page — the rule's
+*reason* (race-morning resilience) attaches to the cockpit, not to every page:
+
+- **The cockpit (`/`) renders complete from static files** — one merged
+  `running-data.js`, no fetch it can't lose.
+- **Deep views may talk to the read-only archive API** (`/api/archive/…` in
+  `serve.mjs` — a window, not an engine: it SELECTs stored rows, never derives)
+  and must degrade to an honest "archive offline" state, never a broken page.
+
+All derivation still lives in the deterministic sync:
 
 ```
 nightly sync (Python, deterministic — no AI)
-├─▶ archive: append every new activity + detail (SQLite in /data, backfilled to 2024)
-├─▶ metrics engine: efficiency, best efforts, records, plan-vs-actual
-├─▶ garmin-data.js  ──────────────▶ dashboard (windowed view, as today)
+├─▶ archive: append every new activity + raw detail + distilled detail (SQLite in /data)
+├─▶ metrics engine: efficiency, best efforts (incl. by-year), yoy, records, plan-vs-actual
+├─▶ garmin-data.js  ──────────────▶ cockpit `/` (static-only) + /progress (static-first)
 └─▶ coach-briefing.md  ← pre-digested state for the coach
-                │
-                ▼
+                │                        ▲
+                ▼                        │ read-only /api/archive (drill-downs)
    /coach in Claude Code (subscription, no API) — reads briefing,
    discusses, edits plan-data.js (the live symlink / volume file)
 ```
@@ -82,10 +90,24 @@ Deterministic metrics engine over the archive, surfaced into `garmin-data.js`:
 - **Honest race trajectory** — Riegel-from-best-efforts vs Garmin's predictor,
   tracked weekly: is the gap to the goal (sub-2:00 half) closing?
 
-### 3. `progress-views` — room to explore *(post-race is fine)*
-The dashboard need not stay one page. A cockpit (today/this week — the current
-page) plus progress views: records wall, efficiency story, year-over-year
-comparisons, archive browser / run comparison.
+### 3. `progress-views` — room to explore *(reframed 2026-07-05: the refactor
+the dashboard deserved — grow the weekend project into a running companion)*
+
+Split into three sub-stages; 3a is the architectural investment the rest ride on.
+
+- **3a — the refactor + two views** *(built 2026-07-05; ships with the
+  progress-views change)*: multi-page shell (cockpit `/` + `/progress`, shared
+  `topbar.js` behavior, theme persisted via `localStorage`), the read-only
+  archive API (`node:sqlite`, Node 24, distilled detail stored at sync time —
+  archive schema v4), the cockpit diet (long-game sections move to `/progress`;
+  the heatmap stays), and two views proving it: the **records wall**
+  (all-time / 90 d / by-year, click-through to any archived run) and
+  **year-over-year** monthly volume.
+- **3b — archive browser + run comparison** *(post-race)*: browse/filter all
+  archived activities over the list endpoint; compare runs side by side —
+  natural first use: compare Sonthofen to the tune-up races.
+- **3c — block retrospectives** *(post-race)*: what each training block
+  actually did, from `plan_snapshots` × `plan_compliance` × the archive.
 
 ### 4. `coach-loop` — the companion closes the loop
 Plan-vs-actual compliance scoring in the sync (matched sessions, pace/zone

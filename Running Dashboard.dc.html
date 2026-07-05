@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="./support.js"></script>
+<!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
+     before support.js mounts on DOMContentLoaded, so the persisted theme is
+     readable at component init — no default-theme flash -->
+<script type="module" src="./topbar.js"></script>
 </head>
 <body>
 <x-dc>
@@ -39,7 +43,12 @@
       <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
       <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">{{ greeting }}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:var(--sp-4)">
+    <div class="topbar-actions">
+      <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="2">
+          <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
+        </sc-for>
+      </nav>
       <button onClick="{{ sync.onClick }}" title="{{ sync.title }}" aria-label="{{ sync.title }}" style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600;background:transparent;cursor:pointer;font-family:inherit">
         <span style="{{ sync.dotStyle }}"></span>
         {{ sync.label }}
@@ -240,138 +249,8 @@
     </sc-for>
   </section>
 
-  <!-- ===== VOLUME (wide) ===== -->
-  <div class="section-head">
-    <h2>THE LONG GAME</h2>
-    <div class="rule"></div>
-    <span class="meta">{{ historyWindow }}</span>
-  </div>
-
-  <div class="card" style="margin-bottom:var(--sp-4)">
-    <div class="card-head" style="margin-bottom:var(--sp-2)">
-      <div>
-        <div class="card-title">Weekly volume</div>
-        <div class="card-sub">Last 26 weeks · building to peak, taper begins</div>
-      </div>
-      <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:var(--fs-sm);color:var(--sub)"> km</span></div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">this week</div></div>
-    </div>
-    <div style="position:relative">
-    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" tabIndex="0" role="img" aria-label="{{ vol.navLabel }}" onKeyDown="{{ vol.onKey }}" onMouseLeave="{{ vol.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-      <sc-for list="{{ vol.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-      <sc-for list="{{ vol.bars }}" as="b" hint-placeholder-count="26"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:{{ b.fill }}"></rect></sc-for>
-      <sc-for list="{{ vol.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="vol" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-      <sc-for list="{{ vol.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
-      <sc-for list="{{ vol.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-    </svg>
-    <sc-for list="{{ vol.card }}" as="cd" hint-placeholder-count="0">
-      <div data-card="vol" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-        <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-      </div>
-    </sc-for>
-    </div>
-  </div>
-
-  <!-- ===== CHART GRID ===== -->
+  <!-- ===== CHART GRID (this-week surfaces — the long-game charts live on /progress) ===== -->
   <section id="sec-charts" class="chart-grid">
-
-    <!-- VO2 -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · 30 months</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ vo2.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ vo2.navLabel }}" onKeyDown="{{ vo2.onKey }}" onMouseLeave="{{ vo2.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ vo2.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ vo2.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ vo2.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ vo2.lastX }}" cy="{{ vo2.lastY }}" r="4" style="fill:var(--accent)"></circle>
-        <sc-for list="{{ vo2.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="vo2" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ vo2.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ vo2.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ vo2.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="vo2" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
-
-    <!-- PACE -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Avg run pace</div><div class="card-sub">Dashed = goal {{ race.goalPace }}/km</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ pace.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ pace.navLabel }}" onKeyDown="{{ pace.onKey }}" onMouseLeave="{{ pace.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ pace.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <line x1="0" y1="{{ pace.goalY }}" x2="600" y2="{{ pace.goalY }}" style="stroke:var(--accent)" stroke-width="1.4" stroke-dasharray="5 5"></line>
-        <path d="{{ pace.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ pace.d }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ pace.lastX }}" cy="{{ pace.lastY }}" r="4" style="fill:var(--accent2)"></circle>
-        <sc-for list="{{ pace.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="pace" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ pace.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ pace.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ pace.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="pace" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
-
-    <!-- FITNESS / FATIGUE -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Fitness &amp; fatigue</div><div class="card-sub">Form (freshness) <span style="color:var(--accent)">{{ form.value }}</span></div></div>
-        <div style="display:flex;gap:var(--sp-3);font-size:var(--fs-xs);font-weight:700">
-          <span style="color:var(--accent)">● Fitness</span><span style="color:var(--accent2)">● Fatigue</span>
-        </div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ fit.navLabel }}" onKeyDown="{{ fit.onKey }}" onMouseLeave="{{ fit.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ fit.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ fit.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ fit.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <path d="{{ fit.atl }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"></path>
-        <sc-for list="{{ fit.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="fit" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ fit.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ fit.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ fit.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="fit" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
-
-    <!-- CADENCE -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Cadence</div><div class="card-sub">Steps / min · efficiency rising</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cad.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cad.navLabel }}" onKeyDown="{{ cad.onKey }}" onMouseLeave="{{ cad.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ cad.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ cad.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ cad.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ cad.lastX }}" cy="{{ cad.lastY }}" r="4" style="fill:var(--accent)"></circle>
-        <sc-for list="{{ cad.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="cad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ cad.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ cad.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ cad.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="cad" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
 
     <!-- HR ZONES -->
     <div class="card">
@@ -413,79 +292,6 @@
       </div>
     </div>
 
-    <!-- ===== INSIGHTS (insight-metrics stage 2) — hidden until the sync emits
-         the archive-computed `insights` block; pre-engine data files render
-         none of this and the page behaves exactly as before ===== -->
-    <sc-if value="{{ hasInsights }}">
-
-    <!-- PACE @ REFERENCE HR -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Pace @ {{ eff.bandLabel }}</div><div class="card-sub">Aerobic efficiency · pooled samples · gaps = too little in-band time</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent2)">{{ eff.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ eff.delta }}</div></div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ eff.navLabel }}" onKeyDown="{{ eff.onKey }}" onMouseLeave="{{ eff.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ eff.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <sc-for list="{{ eff.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
-        <sc-for list="{{ eff.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent2)"></circle></sc-for>
-        <sc-for list="{{ eff.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insEff" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ eff.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ eff.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ eff.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="insEff" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
-
-    <!-- CADENCE @ REFERENCE PACE -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Cadence @ {{ cadRef.bandLabel }}</div><div class="card-sub">Form at easy pace · pooled samples · gaps = too little in-band time</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cadRef.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ cadRef.delta }}</div></div>
-      </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cadRef.navLabel }}" onKeyDown="{{ cadRef.onKey }}" onMouseLeave="{{ cadRef.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ cadRef.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <sc-for list="{{ cadRef.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
-        <sc-for list="{{ cadRef.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent)"></circle></sc-for>
-        <sc-for list="{{ cadRef.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insCad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ cadRef.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ cadRef.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ cadRef.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="insCad" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
-    </div>
-
-    <!-- RECORDS FEED -->
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Records</div><div class="card-sub">Fastest efforts inside any outdoor run · from the archive</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ recs.count }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">recent</div></div>
-      </div>
-      <div style="display:flex;flex-direction:column;margin-top:var(--sp-2)">
-        <sc-for list="{{ recs.rows }}" as="rec" hint-placeholder-count="0">
-          <div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">
-            <span style="min-width:46px;text-align:center;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ rec.dist }}</span>
-            <span style="font-family:'JetBrains Mono';font-weight:700">{{ rec.newTime }}</span>
-            <span style="color:var(--sub);font-weight:500">was {{ rec.oldTime }}</span>
-            <span style="margin-left:auto;color:var(--sub);font-size:var(--fs-xs);font-weight:600">{{ rec.date }}</span>
-          </div>
-        </sc-for>
-        <sc-for list="{{ recs.empty }}" as="emp" hint-placeholder-count="0">
-          <div style="padding:var(--sp-4) 0;color:var(--sub);font-size:var(--fs-sm);font-weight:500;line-height:1.5">{{ emp.t }}</div>
-        </sc-for>
-      </div>
-    </div>
-
-    </sc-if>
   </section>
 
   <!-- ===== HEATMAP ===== -->
@@ -613,15 +419,13 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1340,&quot;height&quot;:1900}}">
 class Component extends DCLogic {
-  state = { theme: 'volt', data: null, expandedRun: null, expandedDay: null, selectedWeek: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
+  // theme, registry, sync machine, greeting and nav all live in topbar.js
+  // (shared across pages, design D8); this component only holds the state.
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, expandedRun: null, expandedDay: null, selectedWeek: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
 
-  THEMES = {
-    volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',z1:'#4DA3FF',z2:'#34D399',z3:'#C7F646',z4:'#FFB020',z5:'#FF6A4D'},
-    track:{bg:'#ECEAE3',panel:'#FFFFFF',panel2:'#F6F4EE',ink:'#181612',sub:'#6E6A60',line:'#E0DCD2',grid:'#ECE9E1',accent:'#E8472B',accent2:'#1F6FEB',accentFade:'rgba(232,71,43,.12)',good:'#1F9D57',warn:'#E8472B',hm0:'#E6E3DA',hm1:'rgba(232,71,43,.22)',hm2:'rgba(232,71,43,.42)',hm3:'rgba(232,71,43,.64)',hm4:'#E8472B',z1:'#1F6FEB',z2:'#1F9D57',z3:'#E8A11F',z4:'#E8642B',z5:'#E8472B'},
-    sunset:{bg:'#150F0C',panel:'#1E1612',panel2:'#261B15',ink:'#F8EFE7',sub:'#A89486',line:'#2C211A',grid:'#271C16',accent:'#FF7A3D',accent2:'#FFC24B',accentFade:'rgba(255,122,61,.15)',good:'#6BD49A',warn:'#FF5A4D',hm0:'#221813',hm1:'rgba(255,122,61,.24)',hm2:'rgba(255,122,61,.46)',hm3:'rgba(255,122,61,.7)',hm4:'#FF7A3D',z1:'#6BD49A',z2:'#FFC24B',z3:'#FF9F40',z4:'#FF7A3D',z5:'#FF5A4D'}
-  };
+  tb() { return window.SplitsTopbar; }
 
-  setTheme = (name) => { this.setState({ theme: name, hover: null }); };
+  setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name, hover: null }); };
   toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };
   // planned-workout detail (THIS WEEK) — mirrors toggleRun; id = weekIndex + ':' + day
   toggleDay = (id) => { this.setState({ expandedDay: this.state.expandedDay === id ? null : id, hover: null }); };
@@ -629,31 +433,9 @@ class Component extends DCLogic {
   selectWeek = (i) => { this.setState({ selectedWeek: i, expandedDay: null, hover: null }); };
   clearWeek = () => { this.setState({ selectedWeek: null, expandedDay: null, hover: null }); };
 
-  // ---- sync from the dashboard (POST /api/sync, reload on success) ----------
-  syncNow = () => {
-    if (this.state.syncState === 'syncing') return;
-    this.setState({ syncState: 'syncing', syncError: null });
-    fetch('./api/sync', { method: 'POST' })
-      .then((r) => r.json().then((b) => ({ status: r.status, ok: r.ok, b })).catch(() => ({ status: r.status, ok: r.ok, b: null })))
-      .then(({ status, ok, b }) => {
-        if (ok && b && b.ok) { window.location.reload(); return; }                    // fresh telemetry
-        if (status === 409 || (b && b.status === 'already-running')) { this.waitForSync(); return; }
-        const msg = (b && (b.error || b.status)) || (ok ? 'empty response' : 'request failed');
-        this.setState({ syncState: 'error', syncError: msg });
-      })
-      .catch((err) => this.setState({ syncState: 'error', syncError: String((err && err.message) || err) }));
-  };
-
-  // A sync (boot/nightly) is already running — show "Syncing…" and poll until it
-  // finishes, then reload to pick up the result.
-  waitForSync = () => {
-    this.setState({ syncState: 'syncing', syncError: null });
-    const poll = () => fetch('./api/status').then((r) => r.ok ? r.json() : null).then((s) => {
-      if (s && !s.syncing) { window.location.reload(); return; }
-      setTimeout(poll, 2000);
-    }).catch(() => this.setState({ syncState: 'error', syncError: 'lost connection to server' }));
-    setTimeout(poll, 2000);
-  };
+  // ---- sync pill (machine in topbar.js — one implementation, every page) ----
+  syncNow = () => { this.tb() && this.tb().syncNow(this); };
+  waitForSync = () => { this.tb() && this.tb().waitForSync(this); };
 
   // ---- datapoint hover/tap ----
   hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
@@ -724,8 +506,7 @@ class Component extends DCLogic {
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
     document.addEventListener('click', () => this.dismissHover());
     // last-sync indicator (absent when opened as a static file / no server API)
-    fetch('./api/status').then((r) => r.ok ? r.json() : null)
-      .then((s) => { if (s) { this.setState({ lastSync: s.lastSync, lastResult: s.lastResult, statusReady: true }); if (s.syncing) this.waitForSync(); } }).catch(() => {});
+    if (this.tb()) this.tb().initSyncStatus(this);
     // keep date-driven views live: re-render when the local day or the time-of-
     // day bucket (greeting) changes, so a page left open rolls over on its own.
     this._tick = setInterval(() => {
@@ -875,21 +656,17 @@ class Component extends DCLogic {
   daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
   // local calendar date as YYYY-MM-DD (the live "display-today")
   localISO(d){ const z=(n)=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
-  dayBucket(d){ const h=d.getHours(); return h<5?'night':h<12?'morning':h<18?'afternoon':'evening'; }
-  greetingText(d){ return {night:'Good night',morning:'Good morning',afternoon:'Good afternoon',evening:'Good evening'}[this.dayBucket(d)]; }
+  dayBucket(d){ return this.tb() ? this.tb().dayBucket(d) : 'morning'; }
+  greetingText(d){ return this.tb() ? this.tb().greetingText(d) : 'Hello'; }
 
   renderVals() {
     const D = this.state.data || this.buildData();
     const H = D.history;
-    const tv = this.THEMES[this.state.theme]; const rootStyle = {};
+    const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
-    const tprops = name => ({ name, pick: () => this.setTheme(name) });
-    const themes = [
-      { ...tprops('volt'), swatch:'#C7F646', ring: this.state.theme==='volt'?'#C7F646':'transparent' },
-      { ...tprops('track'), swatch:'#E8472B', ring: this.state.theme==='track'?'#E8472B':'transparent' },
-      { ...tprops('sunset'), swatch:'#FF7A3D', ring: this.state.theme==='sunset'?'#FF7A3D':'transparent' }
-    ];
+    const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
+    const nav = this.tb() ? this.tb().navModel('cockpit') : [];
 
     // race countdown — driven by the live local date (displayToday), not the
     // baked telemetry date, so it stays correct between syncs.
@@ -1046,103 +823,6 @@ class Component extends DCLogic {
     const weekLabel = activeWeek ? (activeWeek.wk + ' · ' + activeWeek.label) : '';
     const backToCurrent = viewingOther ? [{ onClick: this.clearWeek, onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.clearWeek(); } } }] : [];
 
-    // volume bars
-    const vmax = Math.max.apply(null, H.weeklyKm)*1.12;
-    const vw=600, vpadX=6, vN=H.weeklyKm.length, vslot=(vw-2*vpadX)/vN, vbw=vslot*0.6, vH=150, vpT=10, vpB=8;
-    const vol = {
-      lastKm: Math.round(kmNow),
-      grid:[vpT, vpT+(vH-vpT-vpB)/2, vH-vpB],
-      bars: H.weeklyKm.map((v,i)=>{ const bh=(v/vmax)*(vH-vpT-vpB); return { x:+(vpadX+vslot*i+(vslot-vbw)/2).toFixed(1), y:+(vH-vpB-bh).toFixed(1), w:+vbw.toFixed(1), h:+bh.toFixed(1), fill: i>=vN-2?'var(--accent2)':'var(--accent)' }; })
-    };
-    const volN = H.weeklyKm.length;
-    const volPts = vol.bars.map((b, i) => ({
-      x: b.x + b.w / 2, y: b.y, dotColor: 'var(--accent2)',
-      aria: 'Week ' + this.relLabel(i, volN, 'wk') + ', ' + H.weeklyKm[i].toFixed(1) + ' km',
-      lines: [
-        { t: this.relLabel(i, volN, 'wk'), em: false },
-        { t: H.weeklyKm[i].toFixed(1) + ' km', em: true },
-        { t: i > 0 ? ((H.weeklyKm[i] - H.weeklyKm[i-1] >= 0 ? '+' : '−') + Math.abs(Math.round(H.weeklyKm[i] - H.weeklyKm[i-1])) + ' vs prev') : 'first week', em: false }
-      ]
-    }));
-    this.attachOverlay(vol, this.hoverLayer('vol', volPts));
-    vol.onLeave = () => this.leaveChart('vol');
-    vol.onKey = (e) => this.chartKey('vol', volPts.length, e); vol.navLabel = 'Weekly volume over 26 weeks. Arrow keys to inspect.';
-
-    // vo2 line
-    const vo2 = this.line(H.vo2max, 150); vo2.last = vo2Now.toFixed(1); vo2.delta = '+'+(vo2Now-vo2Prev).toFixed(1)+' / 3mo';
-    const vo2pts = vo2.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'VO2 ' + H.vo2max[i].toFixed(1) + ', ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: 'VO₂ ' + H.vo2max[i].toFixed(1), em: true },
-        { t: i > 0 ? ((H.vo2max[i] - H.vo2max[i-1] >= 0 ? '+' : '−') + Math.abs(H.vo2max[i] - H.vo2max[i-1]).toFixed(1) + ' vs prev') : 'first month', em: false }
-      ]
-    }));
-    this.attachOverlay(vo2, this.hoverLayer('vo2', vo2pts));
-    vo2.onLeave = () => this.leaveChart('vo2');
-    vo2.onKey = (e) => this.chartKey('vo2', vo2pts.length, e); vo2.navLabel = 'VO2 max over 30 months, ' + vo2pts.length + ' points. Arrow keys to inspect.';
-
-    // pace line (lower better)
-    const goalP = D.race.goalPaceSecPerKm;
-    const pace = this.line(H.paceSecPerKm, 150, { include:[goalP], headroom:0.18 });
-    pace.last = this.fmtPace(H.paceSecPerKm[H.paceSecPerKm.length-1]);
-    pace.delta = '−'+this.fmtPace(H.paceSecPerKm[0]-H.paceSecPerKm[H.paceSecPerKm.length-1])+' /km';
-    pace.goalY = +pace.Y(goalP).toFixed(1);
-    const pacePts = pace.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent2)',
-      aria: 'Pace ' + this.fmtPace(H.paceSecPerKm[i]) + ' per km, ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: this.fmtPace(H.paceSecPerKm[i]) + ' /km', em: true },
-        { t: (() => { const g = H.paceSecPerKm[i] - goalP; return g === 0 ? 'on goal' : (g > 0 ? '+' : '−') + this.fmtPace(Math.abs(g)) + ' vs goal'; })(), em: false }
-      ]
-    }));
-    this.attachOverlay(pace, this.hoverLayer('pace', pacePts));
-    pace.onLeave = () => this.leaveChart('pace');
-    pace.onKey = (e) => this.chartKey('pace', pacePts.length, e); pace.navLabel = 'Average run pace over 30 months. Arrow keys to inspect.';
-
-    // fitness ctl + atl
-    const fall = H.ctl.concat(H.atl); const fmin=Math.min.apply(null,fall), fmax=Math.max.apply(null,fall);
-    const fit = this.line(H.ctl, 150, { min:fmin, max:fmax });
-    const fitAtl = this.line(H.atl, 150, { min:fmin, max:fmax }); fit.atl = fitAtl.d;
-    const formObj = { value:(form>0?'+':'')+form };
-    const fitN = H.ctl.length;
-    const fitPts = fit.pts.map((p, i) => {
-      const tsb = Math.round(H.ctl[i] - H.atl[i]);
-      return {
-        x: p[0], y: p[1],
-        dots: [
-          { x: +p[0].toFixed(2), y: +p[1].toFixed(2), color: 'var(--accent)' },
-          { x: +fitAtl.pts[i][0].toFixed(2), y: +fitAtl.pts[i][1].toFixed(2), color: 'var(--accent2)' }
-        ],
-        aria: 'Week ' + this.relLabel(i, fitN, 'wk') + ', fitness ' + Math.round(H.ctl[i]) + ', fatigue ' + Math.round(H.atl[i]),
-        lines: [
-          { t: this.relLabel(i, fitN, 'wk'), em: false },
-          { t: 'CTL ' + Math.round(H.ctl[i]) + ' / ATL ' + Math.round(H.atl[i]), em: true },
-          { t: 'Form ' + (tsb >= 0 ? '+' : '−') + Math.abs(tsb), em: false }
-        ]
-      };
-    });
-    this.attachOverlay(fit, this.hoverLayer('fit', fitPts));
-    fit.onLeave = () => this.leaveChart('fit');
-    fit.onKey = (e) => this.chartKey('fit', fitPts.length, e); fit.navLabel = 'Fitness and fatigue over 26 weeks. Arrow keys to inspect.';
-
-    // cadence
-    const cad = this.line(H.cadenceSpm, 150); cad.last = H.cadenceSpm[H.cadenceSpm.length-1]; cad.delta = '+'+(H.cadenceSpm[H.cadenceSpm.length-1]-H.cadenceSpm[0])+' spm';
-    const cadPts = cad.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'Cadence ' + H.cadenceSpm[i] + ' steps per minute, ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: H.cadenceSpm[i] + ' spm', em: true },
-        { t: i > 0 ? ((H.cadenceSpm[i] - H.cadenceSpm[i-1] >= 0 ? '+' : '−') + Math.abs(H.cadenceSpm[i] - H.cadenceSpm[i-1]) + ' vs prev') : 'first month', em: false }
-      ]
-    }));
-    this.attachOverlay(cad, this.hoverLayer('cad', cadPts));
-    cad.onLeave = () => this.leaveChart('cad');
-    cad.onKey = (e) => this.chartKey('cad', cadPts.length, e); cad.navLabel = 'Cadence over 30 months. Arrow keys to inspect.';
-
     // zones
     const ztot = D.hrZones.reduce((a,b)=>a+b.min,0); const zmax = Math.max.apply(null, D.hrZones.map(z=>z.min));
     const zones = { totalMin:ztot, easyPct:Math.round((D.hrZones[0].min+D.hrZones[1].min)/ztot*100),
@@ -1226,76 +906,12 @@ class Component extends DCLogic {
         detailRows: (expanded && expandable) ? [this.runDetail(r)] : [] };
     });
 
-    // ---- insight-metrics surfaces (stage 2) — everything below renders only
-    // when the sync has emitted the archive-computed `insights` block; older
-    // data files leave hasInsights false and the page is exactly as before.
+    // ---- insight-metrics surfaces — the monthly insight charts and records
+    // feed live on /progress now; the cockpit keeps only the hero trajectory
+    // row, which renders when the sync has emitted the `insights` block.
     const INS = D.insights || null;
-    const hasInsights = !!INS;
-    let eff = {}, cadRef = {}, recs = {}, traj = [];
+    let traj = [];
     if (INS) {
-      const mKey = (k) => { const p = k.split('-'); return M[+p[1]-1] + ' ' + p[0].slice(2); };
-      const buildMonthly = (chartId, monthly, valKey, fmtVal, color) => {
-        // like line(), but null months break the path into segments — a gap in
-        // the drawing, never a fabricated point (insight-metrics design D10)
-        const H2 = 150, w = 600, pad = 6, padT = 14, padB = 12;
-        const vals = monthly.map(m => m[valKey]);
-        const valid = vals.filter(v => v != null);
-        let mn = Math.min.apply(null, valid), mx = Math.max.apply(null, valid);
-        const rr = (mx - mn) || 1; mn -= rr * 0.14; mx += rr * 0.14;
-        const n = vals.length;
-        const X = i => pad + (n <= 1 ? 0.5 : i / (n - 1)) * (w - 2 * pad);
-        const Y = v => padT + (1 - (v - mn) / ((mx - mn) || 1)) * (H2 - padT - padB);
-        const segs = []; let seg = [];
-        vals.forEach((v, i) => {
-          if (v == null) { if (seg.length) segs.push(seg); seg = []; return; }
-          seg.push(X(i).toFixed(1) + ' ' + Y(v).toFixed(1));
-        });
-        if (seg.length) segs.push(seg);
-        const obj = {
-          grid: [padT, padT + (H2 - padT - padB) / 2, H2 - padB],
-          paths: segs.filter(s => s.length > 1).map(s => 'M' + s.join(' L')),
-          pdots: []
-        };
-        const pts = [];
-        monthly.forEach((m, i) => {
-          if (m[valKey] == null) return;
-          obj.pdots.push({ x: +X(i).toFixed(1), y: +Y(m[valKey]).toFixed(1) });
-          pts.push({ x: X(i), y: Y(m[valKey]), dotColor: color,
-            aria: mKey(m.month) + ', ' + fmtVal(m[valKey]) + ', ' + m.inBandMin + ' minutes in band',
-            lines: [
-              { t: mKey(m.month), em: false },
-              { t: fmtVal(m[valKey]), em: true },
-              { t: m.inBandMin + ' min in band', em: false }
-            ] });
-        });
-        this.attachOverlay(obj, this.hoverLayer(chartId, pts));
-        obj.onLeave = () => this.leaveChart(chartId);
-        obj.onKey = (e) => this.chartKey(chartId, pts.length, e);
-        obj.firstV = valid.length ? valid[0] : null;
-        obj.lastV = valid.length ? valid[valid.length - 1] : null;
-        obj.last = obj.lastV != null ? fmtVal(obj.lastV) : '—';
-        return obj;
-      };
-      eff = buildMonthly('insEff', INS.efficiency.monthly, 'paceSecPerKm', (v) => this.fmtPace(v) + ' /km', 'var(--accent2)');
-      eff.bandLabel = INS.efficiency.refHrBand[0] + '–' + INS.efficiency.refHrBand[1] + ' bpm';
-      eff.delta = (eff.firstV != null && eff.lastV != null && eff.firstV !== eff.lastV)
-        ? ((eff.lastV < eff.firstV ? '−' : '+') + this.fmtPace(Math.abs(eff.firstV - eff.lastV)) + ' /km all-time') : '';
-      eff.navLabel = 'Pace at reference heart rate, monthly. Arrow keys to inspect; gaps are months without enough in-band time.';
-      cadRef = buildMonthly('insCad', INS.cadence.monthly, 'spm', (v) => v + ' spm', 'var(--accent)');
-      cadRef.bandLabel = this.fmtPace(INS.cadence.refPaceBand[0]) + '–' + this.fmtPace(INS.cadence.refPaceBand[1]) + ' /km';
-      cadRef.delta = (cadRef.firstV != null && cadRef.lastV != null && cadRef.firstV !== cadRef.lastV)
-        ? ((cadRef.lastV >= cadRef.firstV ? '+' : '−') + Math.abs(cadRef.lastV - cadRef.firstV) + ' spm all-time') : '';
-      cadRef.navLabel = 'Cadence at reference pace, monthly. Arrow keys to inspect.';
-
-      const DL = { '1k': '1K', 'mile': 'MILE', '5k': '5K', '10k': '10K', 'half': 'HALF' };
-      const feed = INS.recordsFeed || [];
-      recs = {
-        count: feed.length,
-        rows: feed.map(ev => ({ dist: DL[ev.distance] || String(ev.distance).toUpperCase(),
-          newTime: this.fmtHMS(ev.newSec), oldTime: this.fmtHMS(ev.oldSec), date: this.mDate(ev.date) })),
-        empty: feed.length ? [] : [{ t: 'No records have fallen recently — steady weeks are building the base the next one comes from.' }]
-      };
-
       // hero-card trajectory row: latest demonstrated (Riegel) half, the gap
       // to Garmin's model, and the engine's trend verdict
       const weekly = INS.trajectory.weekly || [];
@@ -1318,45 +934,26 @@ class Component extends DCLogic {
     }
 
     let liveText = '';
-    { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, sleep:sleepObj, heat:heat, ring:ringObj, insEff:eff, insCad:cadRef };
+    { const h = this.state.hover; const reg = { sleep:sleepObj, heat:heat, ring:ringObj };
       if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
 
-    // sync freshness — telemetry is anchored to D.today (the sync date); compare
-    // it to the live date for the "synced N days ago" label + staleness colour.
-    const syncAgeDays = Math.max(0, this.daysBetween(D.today, displayToday));
-    const syncDateLabel = this.mDate(D.today);
-    const freshLabel = syncAgeDays <= 0 ? 'today' : syncAgeDays === 1 ? 'yesterday' : syncAgeDays + ' days ago';
-    const stale = syncAgeDays >= 2;
-    const ss = this.state.syncState;
-    const lr = this.state.lastResult;
-    // a background (boot/nightly) sync that failed and the user hasn't overridden
-    // this session → prompt to connect Garmin rather than a normal "synced" pill.
-    const bootFailed = ss === 'idle' && lr && lr.ok === false;
-    const noData = !this.state.lastSync;   // garmin-data.js never written = first run
-    const bootErr = bootFailed ? String(lr.error || 'could not reach Garmin').split('\n')[0] : '';
-    const problem = ss === 'error' || bootFailed || stale;
-    const sync = {
-      onClick: this.syncNow,
-      label: ss === 'syncing' ? 'Syncing…'
-        : ss === 'error' ? 'Sync failed — retry'
-        : bootFailed ? (noData ? 'Connect Garmin' : 'Sync failed — retry')
-        : 'Garmin · ' + freshLabel,
-      title: (ss === 'error' && this.state.syncError) ? ('Sync failed: ' + this.state.syncError + ' — click to retry')
-        : bootFailed ? ((noData ? 'Not connected — ' : 'Last sync failed: ') + bootErr + ' — check credentials, then click to retry')
-        : ('Telemetry synced ' + syncDateLabel + ' (' + freshLabel + ') — click to sync now'),
-      dotStyle: 'width:6px;height:6px;border-radius:50%;background:' +
-        (ss === 'syncing' ? 'var(--accent)' : problem ? 'var(--warn)' : 'var(--good)') +
-        (ss === 'syncing' ? ';animation:pulse 1s infinite' : '')
-    };
+    // sync freshness — the pill model lives in topbar.js (shared across pages);
+    // telemetry is anchored to D.today (the sync date) vs the live date.
+    const pill = this.tb() ? this.tb().syncPillModel({
+      syncState: this.state.syncState, syncError: this.state.syncError,
+      lastSync: this.state.lastSync, lastResult: this.state.lastResult,
+      syncedOn: D.today, today: displayToday,
+    }) : { label: '', title: '', dotStyle: '', dateLabel: this.mDate(D.today) };
+    const sync = { onClick: this.syncNow, label: pill.label, title: pill.title, dotStyle: pill.dotStyle };
 
     return {
-      rootStyle, themes, initial:D.profile.name[0],
+      rootStyle, themes, nav, initial:D.profile.name[0],
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
-      historyWindow:'30-month history · synced ' + syncDateLabel, vol, vo2, pace, fit, form:formObj, cad, zones, sleep:sleepObj, heat, runs,
-      hasInsights, eff, cadRef, recs, traj,
+      zones, sleep:sleepObj, heat, runs,
+      traj,
       liveText
     };
   }

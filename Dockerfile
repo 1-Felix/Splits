@@ -2,8 +2,9 @@
 #
 # garminconnect>=0.3.6 needs Python >=3.12, so we base on python:3.12 and bring in
 # just the Node runtime binary (serve.mjs is zero-dependency — no npm / node_modules
-# needed at runtime). Both stages are Debian bookworm, so the binary is compatible.
-FROM node:22-bookworm-slim AS node
+# needed at runtime; the archive API uses the built-in node:sqlite, stable in Node 24).
+# Both stages are Debian bookworm, so the binary is compatible.
+FROM node:24-bookworm-slim AS node
 FROM python:3.12-slim-bookworm
 
 # Node runtime (binary only) + tzdata (so TZ and the nightly schedule work) + certs.

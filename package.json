@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "SPLITS — a high-contrast running training dashboard fed by Garmin data.",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "node serve.mjs",
     "start": "node serve.mjs",

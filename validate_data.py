@@ -88,21 +88,60 @@ def validate_insights(ins: dict, e: list[str]) -> None:
             check(_num(m.get("inBandMin")),
                   f"insights.{section}.monthly {label} inBandMin must be numeric", e)
 
+    def _check_effort_table(t, label: str, need_activity_id: bool = False) -> None:
+        if not isinstance(t, dict):
+            check(False, f"insights.bestEfforts.{label} must be an object", e)
+            return
+        for key in ("oneK", "mile", "fiveK", "tenK", "half"):
+            check(key in t, f"insights.bestEfforts.{label} missing '{key}'", e)
+            v = t.get(key)
+            check(v is None or (isinstance(v, dict) and _num(v.get("sec"))
+                                and isinstance(v.get("date"), str)),
+                  f"insights.bestEfforts.{label}.{key} must be null or {{sec, date}}", e)
+            if need_activity_id and isinstance(v, dict):
+                check(v.get("activityId") is not None,
+                      f"insights.bestEfforts.{label}.{key} must carry activityId", e)
+
     be = ins.get("bestEfforts")
     if not isinstance(be, dict):
         check(False, "insights.bestEfforts must be an object", e)
     else:
         for table in ("allTime", "last90d"):
-            t = be.get(table)
-            if not isinstance(t, dict):
-                check(False, f"insights.bestEfforts.{table} must be an object", e)
-                continue
-            for key in ("oneK", "mile", "fiveK", "tenK", "half"):
-                check(key in t, f"insights.bestEfforts.{table} missing '{key}'", e)
-                v = t.get(key)
-                check(v is None or (isinstance(v, dict) and _num(v.get("sec"))
-                                    and isinstance(v.get("date"), str)),
-                      f"insights.bestEfforts.{table}.{key} must be null or {{sec, date}}", e)
+            _check_effort_table(be.get(table), table)
+        # byYear (progress-views) — OPTIONAL: pre-3a blocks stay valid, but an
+        # emitted table must hold shape AND carry the click-through activityId
+        by_year = be.get("byYear")
+        if by_year is not None:
+            if not isinstance(by_year, dict):
+                check(False, "insights.bestEfforts.byYear must be an object", e)
+            else:
+                for year, t in by_year.items():
+                    check(isinstance(year, str) and len(year) == 4 and year.isdigit(),
+                          f"insights.bestEfforts.byYear key {year!r} must be 'YYYY'", e)
+                    _check_effort_table(t, f"byYear.{year}", need_activity_id=True)
+
+    # yoy (progress-views) — OPTIONAL: pre-3a blocks stay valid
+    yoy = ins.get("yoy")
+    if yoy is not None:
+        if not isinstance(yoy, dict):
+            check(False, "insights.yoy must be an object", e)
+        else:
+            for year, months in yoy.items():
+                check(isinstance(year, str) and len(year) == 4 and year.isdigit(),
+                      f"insights.yoy key {year!r} must be 'YYYY'", e)
+                check(isinstance(months, list) and 1 <= len(months) <= 12,
+                      f"insights.yoy.{year} must be a list of 1–12 months", e)
+                for m in months if isinstance(months, list) else []:
+                    label = m.get("month", "?") if isinstance(m, dict) else "?"
+                    ok = (isinstance(m, dict)
+                          and isinstance(m.get("month"), int)
+                          and not isinstance(m.get("month"), bool)
+                          and 1 <= m["month"] <= 12
+                          and _num(m.get("km")) and _num(m.get("runs"))
+                          and (m.get("paceSecPerKm") is None
+                               or _num(m.get("paceSecPerKm"))))
+                    check(ok, f"insights.yoy.{year} month {label} must be "
+                              "{month 1-12, km, runs, paceSecPerKm: num|null}", e)
 
     feed = ins.get("recordsFeed")
     check(isinstance(feed, list), "insights.recordsFeed must be a list", e)

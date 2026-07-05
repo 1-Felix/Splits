@@ -10,7 +10,9 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 
 | File | What it is |
 |------|------------|
-| `Running Dashboard.dc.html` | **The dashboard.** A Claude Design component rendered by `support.js`; imports `running-data.js`. |
+| `Running Dashboard.dc.html` | **The cockpit** (served at `/`). Today / this week / this block: hero, KPIs, plan, heatmap, recent runs. Renders complete from static files alone — no API. |
+| `progress.dc.html` | **The progress page** (served at `/progress`). The long game: weekly volume, the 30-month chart grid, the records wall (all-time / 90 d / by year, click-through to any archived run), and year-over-year volume. |
+| `topbar.js` | **Shared topbar behavior** — theme registry + `localStorage` persistence, the sync-pill state machine, greeting, and the page nav model. Markup is duplicated per page; behavior lives here once. |
 | `dashboard.css` | The dashboard's visual language — design tokens, semantic component classes, and the responsive `@media` layer. |
 | `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
@@ -21,7 +23,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
-| `serve.mjs` | Zero-dependency web server: serves the dashboard, serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status`, and runs the boot + nightly sync. |
+| `serve.mjs` | Zero-dependency web server: serves the pages behind clean routes (`/`, `/progress`), serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status` + the read-only archive API (`GET /api/archive/…`, via the Node 24 built-in `node:sqlite`), and runs the boot + nightly sync. |
 | `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
 | `.github/workflows/docker-publish.yml` | CI that builds and pushes `ghcr.io/1-felix/splits` on `main` and on version tags. |
 | `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
@@ -87,10 +89,12 @@ can't authenticate, the dashboard still comes up on demo/last data with a "conne
 Garmin" prompt — it never crash-loops.
 
 **Security posture.** This is built for a single user on a trusted home network: the
-**Sync now** endpoint (`POST /api/sync`) is unauthenticated and your credentials sit
-in plain text in `.env` — the normal self-host bargain. If you expose the port beyond
-your LAN, put it behind an authenticating reverse proxy, bind the published port to
-`127.0.0.1`, and/or use Docker secrets for the credentials.
+**Sync now** endpoint (`POST /api/sync`) is unauthenticated, the read-only archive
+endpoints (`GET /api/archive/…`) expose your full training history to anyone on the
+LAN (the same trust level as the already-served `garmin-data.js`), and your
+credentials sit in plain text in `.env` — the normal self-host bargain. If you expose
+the port beyond your LAN, put it behind an authenticating reverse proxy, bind the
+published port to `127.0.0.1`, and/or use Docker secrets for the credentials.
 
 **Image source.** The committed compose pulls `ghcr.io/1-felix/splits:latest` (built
 by CI for `linux/amd64`). To build from source instead, uncomment `build: .` in the
@@ -106,6 +110,7 @@ compose file.
 | `SYNC_ON_BOOT` | `on` | Sync once at startup if telemetry is missing/stale. `off` to disable. |
 | `ATHLETE_NAME` / `ATHLETE_AGE` / `ATHLETE_MAX_HR` | — | Profile overrides Garmin doesn't always expose. |
 | `SPLITS_PLAN_TOKEN` | — | Secret that enables `PUT /api/plan` (plan push). Unset ⇒ no write endpoint. See below. |
+| `SPLITS_ARCHIVE_DIR` | `SPLITS_DATA_DIR` | Where the archive API reads `activity-archive.db`. Set it in dev when the data dir is a network mount — SQLite over SMB is unsupported. |
 
 ## Keeping your plan in sync
 
@@ -162,9 +167,14 @@ the folder** — don't open the file directly (a `file://` URL blocks the import
 the page falls back to built-in demo data):
 
 ```bash
-pnpm dev          # → http://localhost:8000/Running%20Dashboard.dc.html
+pnpm dev          # → http://localhost:8000/  (cockpit; /progress for the long game)
 # (no install needed — serve.mjs is dependency-free. PORT=3000 pnpm dev to change port.)
 ```
+
+**Node ≥ 24 expected** (declared in `package.json` engines): the archive API uses the
+built-in `node:sqlite`, stable in 24. On an older Node the server still boots and
+every page serves — only the `/api/archive/…` endpoints answer 503 (and record
+click-throughs on `/progress` show their "archive offline" state).
 
 `support.js` pulls React from a CDN at runtime, so the first load needs network
 access. Switch visual themes with the three swatches top-right (Volt is default).
@@ -201,10 +211,34 @@ Reload the dashboard — it picks up the new telemetry automatically.
 archive** (`activity-archive.db`, SQLite, in the same data directory) is the
 project's memory: every sync also upserts every fetched activity (all types, raw
 summary payload), tops up the raw per-activity detail (splits, HR/pace streams)
-a few at a time, and banks one wellness row per day (resting HR, HRV, sleep).
-Nothing is ever deleted, and an archive problem can never break the telemetry
-sync — it degrades to a warning. Nothing on the dashboard reads it yet; it is
-the foundation for the insight-metrics stage of `openspec/ROADMAP.md`.
+a few at a time, distills each run's detail into the dashboard's drill-down
+shape (stored alongside the raw payload), and banks one wellness row per day
+(resting HR, HRV, sleep). Nothing is ever deleted, and an archive problem can
+never break the telemetry sync — it degrades to a warning.
+
+**The archive API** (`serve.mjs`) is the browser's read-only window into it:
+
+- `GET /api/archive/activities` — archived activities from the promoted columns
+  only, filterable (`type`, `year`, `from`/`to`), paginated (`limit` ≤ 100,
+  `offset`), newest-first.
+- `GET /api/archive/activities/:id` — one activity's summary plus its stored
+  distilled detail, exactly the shape recent runs use in `garmin-data.js`, so
+  the drill-down UI opens any archived run. Raw Garmin payloads never leave the
+  server.
+
+The API is a *window, not an engine*: it performs no derivation — everything it
+returns was computed by the deterministic Python sync. It opens the database
+read-only per request and fails soft: a missing/locked database (or a Node
+without `node:sqlite`) means a 503 on these endpoints while every page and the
+rest of the API keep working. The cockpit never touches it; `/progress` needs
+it only for record click-throughs and degrades to an honest "archive offline"
+state without it.
+
+**Dev against a mounted data dir:** running SQLite over an SMB/network mount is
+unsupported. If your `SPLITS_DATA_DIR` is a mount, point `SPLITS_ARCHIVE_DIR` at
+a local directory holding a disposable archive copy (rebuildable with
+`--backfill`) — data files keep coming from the mount while the archive API
+reads locally.
 
 One-time **backfill** pulls your full account history (walks back year by year
 until it finds the account start; safe to interrupt and re-run):

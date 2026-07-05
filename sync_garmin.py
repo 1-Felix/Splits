@@ -373,6 +373,14 @@ def fetch_run_detail(client, activity) -> dict | None:
     """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
     activity id so re-syncs only fetch genuinely new runs."""
     det = _fetch_raw_detail(client, activity.get("activityId"))
+    return distill_run_detail(det, activity)
+
+
+def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
+    """Distill a RAW `get_activity_details` payload + its raw activity summary
+    into the recent-run `detail` contract of garmin-data.js. Pure over its
+    inputs — one distiller, two callers: fetch_run_detail (fresh from the API)
+    and the archive's distillation pass (stored payloads, no network)."""
     if not det:
         return None
 
@@ -842,8 +850,10 @@ def archive_step(client, acts: list[dict]) -> None:
     try:
         added = activity_archive.upsert_activities(conn, acts)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
+        distilled = _distill_pass(conn)
         _record_expectations(conn)
-        log(f"✓ archive: +{added} activities, {topped} details topped up")
+        log(f"✓ archive: +{added} activities, {topped} details topped up"
+            + (f", {distilled} runs distilled" if distilled else ""))
     finally:
         conn.close()
 
@@ -944,6 +954,21 @@ def _archive_detail_topup(client, conn, limit: int) -> int:
     return topped
 
 
+def _distill_pass(conn) -> int:
+    """Distill every archived run holding raw detail but no distilled copy —
+    both this sync's topped-up runs and (as the recovery pass) runs archived
+    before schema v4. Stored payloads in, no network; idempotent — a second
+    pass finds nothing to do. Raw payloads are never modified."""
+    done = 0
+    for aid in activity_archive.runs_missing_distilled(conn):
+        distilled = distill_run_detail(
+            activity_archive.detail_payload(conn, aid),
+            activity_archive.summary_payload(conn, aid) or {})
+        if distilled and activity_archive.write_distilled(conn, aid, distilled):
+            done += 1
+    return done
+
+
 def _record_expectations(conn) -> None:
     """Ratchet the coverage expectations --verify-archive checks against: the
     archive never deletes, so the count can only grow and the earliest date
@@ -955,6 +980,12 @@ def _record_expectations(conn) -> None:
     prev_earliest = activity_archive.get_meta(conn, "expected_earliest")
     if cov["earliest"] and (not prev_earliest or cov["earliest"] < prev_earliest):
         activity_archive.set_meta(conn, "expected_earliest", cov["earliest"])
+    # Distilled runs only ever accumulate (raw detail is never deleted and the
+    # pass re-runs each sync), so a shrink is a regression.
+    dcov = activity_archive.distilled_coverage(conn)
+    prev_distilled = activity_archive.get_meta(conn, "expected_distilled_runs")
+    if dcov["distilled"] > int(prev_distilled or 0):
+        activity_archive.set_meta(conn, "expected_distilled_runs", dcov["distilled"])
     activity_archive.set_meta(conn, "last_append_at",
                               dt.datetime.now().astimezone().isoformat(timespec="seconds"))
 
@@ -994,6 +1025,10 @@ def run_backfill(client) -> None:
                 time.sleep(0.7)          # gentle on Garmin during the bulk pull
         log(f"✓ backfill detail pass: {done}/{len(missing)} fetched")
 
+        distilled = _distill_pass(conn)
+        if distilled:
+            log(f"✓ backfill distill pass: {distilled} runs distilled")
+
         activity_archive.set_meta(conn, "backfill_completed_at",
                                   dt.datetime.now().astimezone().isoformat(timespec="seconds"))
         _record_expectations(conn)
@@ -1020,6 +1055,10 @@ def verify_archive() -> int:
         log(f"  wellness   : {cov['wellness_rows']} daily rows")
         log("  by year    : " + (", ".join(f"{y}: {n}" for y, n in sorted(cov["by_year"].items())) or "—"))
         log("  by type    : " + (", ".join(f"{t}: {n}" for t, n in list(cov["by_type"].items())[:8]) or "—"))
+
+        dcov = activity_archive.distilled_coverage(conn)
+        log(f"  distilled  : {dcov['distilled']}/{dcov['detailed_runs']} detailed runs"
+            + (f", {dcov['missing']} missing" if dcov["missing"] else ""))
 
         mcov = activity_archive.metrics_coverage(conn, insight_metrics.METRICS_VERSION)
         log(f"  metrics    : {mcov['at_version']}/{mcov['detailed_runs']} detailed runs at "
@@ -1056,6 +1095,17 @@ def verify_archive() -> int:
         exp_earliest = activity_archive.get_meta(conn, "expected_earliest")
         if exp_earliest and (cov["earliest"] is None or cov["earliest"] > exp_earliest):
             failures.append(f"earliest activity regressed: {cov['earliest']} > expected {exp_earliest}")
+        # Distilled coverage regressions (progress-views design D5). A fully
+        # undistilled archive is pre-v4, not a regression — but a partial pass,
+        # or a count below the ratchet, means distillation fell behind the raw
+        # detail it derives from.
+        if dcov["distilled"] and dcov["missing"] > 0:
+            failures.append(f"distilled coverage regressed: {dcov['missing']} detailed runs "
+                            f"without distilled detail (sync should have distilled them)")
+        exp_distilled = activity_archive.get_meta(conn, "expected_distilled_runs")
+        if exp_distilled and dcov["distilled"] < int(exp_distilled):
+            failures.append(f"distilled coverage regressed: {dcov['distilled']} distilled "
+                            f"runs < expected {exp_distilled}")
         # Metrics coverage regressions (design D11). A completely empty
         # run_metrics table is a pre-engine archive, not a regression — but
         # stale-version leftovers or a partial extraction after a sync are.

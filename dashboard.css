@@ -37,6 +37,7 @@
 
 /* ---- top bar ---- */
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-6); }
+.topbar-actions { display: flex; align-items: center; gap: var(--sp-4); }  /* nav · sync pill · themes · avatar */
 
 /* ---- hero layout ---- */
 .hero-grid   { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
@@ -122,7 +123,8 @@
   .stats-grid  { grid-template-columns: repeat(2, 1fr); }
   .week-grid   { grid-template-columns: 1fr; }
   .drill-grid  { grid-template-columns: 1fr; }
-  .topbar      { flex-wrap: wrap; gap: var(--sp-3); }
+  .topbar         { flex-wrap: wrap; gap: var(--sp-3); }
+  .topbar-actions { flex-wrap: wrap; gap: var(--sp-2); }
 
   /* week strip → compact full-width agenda cards (Task 9 already stacks them 1-per-row) */
   .day { min-height: 0; }

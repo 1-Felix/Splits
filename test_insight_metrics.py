@@ -304,7 +304,7 @@ def test_records_progression_and_treadmill_exclusion():
     ], "newest first; baseline and treadmill runs never appear"
 
     best = im.best_effort_table(conn)
-    assert best["fiveK"] == {"sec": 1620, "date": "2026-04-05"}, \
+    assert best["fiveK"] == {"sec": 1620, "date": "2026-04-05", "activityId": 5}, \
         "treadmill 1600 must not hold the record"
     assert best["half"] is None, "no half effort yet → null"
 
@@ -383,9 +383,61 @@ def test_assemble_insights_shape_and_no_partials():
     assert ins["efficiency"]["refHrBand"] == list(im.REF_HR_BAND)
     assert ins["cadence"]["refPaceBand"] == list(im.REF_PACE_BAND)
     assert ins["bestEfforts"]["allTime"]["tenK"]["sec"] == 3600
+    assert ins["bestEfforts"]["byYear"]["2026"]["tenK"]["activityId"] == 1
     assert ins["recordsFeed"] == []
     assert ins["trajectory"]["goalSec"] == 7199
     assert ins["trajectory"]["weekly"][0]["riegelSec"] is not None
+    assert ins["yoy"] == {}, "no archived activities in this fixture → empty yoy"
+    conn.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# progress-views 3.1/3.2 — by-year best efforts + year-over-year aggregates
+# ──────────────────────────────────────────────────────────────────────────────
+def test_best_efforts_by_year_slicing_and_treadmill_exclusion():
+    conn = arch.open_archive(_tmp())
+    _seed_metrics(conn, 1, "2024-06-01 08:00:00", best_1k_s=305.0)
+    _seed_metrics(conn, 2, "2025-03-01 08:00:00", best_1k_s=298.0, best_5k_s=1700.0)
+    _seed_metrics(conn, 3, "2025-09-01 08:00:00", best_1k_s=290.0, treadmill=1)
+    _seed_metrics(conn, 4, "2026-04-05 08:00:00", best_5k_s=1650.0)
+
+    by = im.best_efforts_by_year(conn)
+    assert sorted(by) == ["2024", "2025", "2026"], "one table per year with outdoor runs"
+    assert by["2024"]["oneK"] == {"sec": 305, "date": "2024-06-01", "activityId": 1}
+    assert by["2024"]["fiveK"] is None, "distance never covered in a year → null"
+    assert by["2025"]["oneK"] == {"sec": 298, "date": "2025-03-01", "activityId": 2}, \
+        "the treadmill 290 must not hold the year record"
+    assert by["2026"]["oneK"] is None
+    assert by["2026"]["fiveK"]["activityId"] == 4, "entries carry the click-through id"
+    conn.close()
+
+
+def test_yoy_series_sums_and_honesty():
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [
+        {"activityId": 1, "startTimeLocal": "2025-01-05 08:00:00",
+         "activityType": {"typeKey": "running"}, "distance": 10000.0, "duration": 3000.0},
+        {"activityId": 2, "startTimeLocal": "2025-01-20 08:00:00",
+         "activityType": {"typeKey": "treadmill_running"}, "distance": 5000.0,
+         "duration": 1500.0},
+        {"activityId": 3, "startTimeLocal": "2025-03-10 08:00:00",
+         "activityType": {"typeKey": "strength_training"}, "distance": 0.0,
+         "duration": 3600.0},
+        {"activityId": 4, "startTimeLocal": "2026-02-14 08:00:00",
+         "activityType": {"typeKey": "running"}, "distance": 21100.0, "duration": 7200.0},
+    ])
+    yoy = im.yoy_series(conn, TODAY)
+    assert sorted(yoy) == ["2025", "2026"]
+    assert len(yoy["2025"]) == 12, "a past year carries all 12 months"
+    assert len(yoy["2026"]) == 7, "the current year carries only elapsed months"
+    assert yoy["2025"][0] == {"month": 1, "km": 15.0, "runs": 2, "paceSecPerKm": 300}, \
+        "sums match the archive; treadmill counts toward volume (records ≠ volume)"
+    assert yoy["2025"][2] == {"month": 3, "km": 0.0, "runs": 0, "paceSecPerKm": None}, \
+        "a strength session is not a run; an empty month is zero/zero/null"
+    assert yoy["2026"][1] == {"month": 2, "km": 21.1, "runs": 1,
+                              "paceSecPerKm": round(7200 / 21.1)}
+    assert im.yoy_series(arch.open_archive(_tmp()), TODAY) == {}, \
+        "an archive without runs → empty yoy"
     conn.close()
 
 
@@ -497,6 +549,49 @@ def test_validate_truncated_block_names_the_member():
     assert any("bestEfforts.allTime missing 'tenK'" in m for m in e), e
     assert any("paceSecPerKm must be numeric or null" in m for m in e), e
     assert any("trajectory.weekly" in m for m in e), e
+
+
+def test_validate_pre_3a_block_stays_valid():
+    ins = _valid_block()
+    del ins["bestEfforts"]["byYear"]
+    del ins["yoy"]
+    e = []
+    vd.validate_insights(ins, e)
+    assert e == [], f"a pre-3a block (no byYear/yoy) must stay valid: {e}"
+
+
+def test_validate_malformed_byyear_and_yoy_named():
+    ins = _valid_block()
+    ins["bestEfforts"]["byYear"] = {"2026": {
+        "oneK": {"sec": 290, "date": "2026-05-03"},   # activityId missing
+        "mile": None, "fiveK": None, "tenK": None, "half": None}}
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("byYear.2026.oneK must carry activityId" in m for m in e), e
+
+    ins = _valid_block()
+    ins["bestEfforts"]["byYear"] = "2026"
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("byYear must be an object" in m for m in e), e
+
+    ins = _valid_block()
+    ins["yoy"] = {"2026": [{"month": 13, "km": 1.0, "runs": 1, "paceSecPerKm": None}]}
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("insights.yoy.2026 month 13" in m for m in e), e
+
+    ins = _valid_block()
+    ins["yoy"] = {"26": [{"month": 1, "km": 1.0, "runs": 1, "paceSecPerKm": None}]}
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("insights.yoy key '26' must be 'YYYY'" in m for m in e), e
+
+    ins = _valid_block()
+    ins["yoy"] = "not-a-dict"
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("insights.yoy must be an object" in m for m in e), e
 
 
 # ──────────────────────────────────────────────────────────────────────────────

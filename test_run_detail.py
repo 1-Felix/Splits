@@ -79,6 +79,23 @@ def test_fetch_run_detail_shape():
     assert len(d["hrSeries"]) == 4
 
 
+def test_distill_one_implementation_two_callers():
+    """progress-views 2.1 — the fresh-fetch path and the stored-payload path
+    share one distiller: the same raw payload + summary give identical output."""
+    cache = sg.CACHE_DIR / "detail-998.json"
+    if cache.exists():
+        cache.unlink()
+    act = {"activityId": 998, "hrTimeInZone_2": 60, "hrTimeInZone_4": 240,
+           "maxTemperature": 22, "aerobicTrainingEffect": 3.1,
+           "activityTrainingLoad": 130.2, "elevationGain": 40.0}
+    client = _FakeDetailClient()
+    via_fetch = sg.fetch_run_detail(client, act)          # fresh-fetch caller
+    raw = client.get_activity_details(998)                # what the archive stores
+    via_stored = sg.distill_run_detail(raw, act)          # stored-payload caller
+    assert via_fetch == via_stored, "one distiller, two callers — outputs must match"
+    assert sg.distill_run_detail(None, act) is None, "no raw payload → no detail"
+
+
 def test_load_activities_refetches_recent():
     """A run added later the same day must appear on the next sync without clearing the
     cache, while the immutable history is still served from cache (not re-pulled)."""

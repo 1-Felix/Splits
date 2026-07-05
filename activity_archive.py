@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -134,6 +134,18 @@ CREATE INDEX IF NOT EXISTS idx_plan_compliance_date ON plan_compliance(date);
 """
 
 
+# Schema v4 (progress-views, design D5): ONE additive column on activities —
+# the run's distilled detail, byte-for-byte the recent-run `detail` contract of
+# garmin-data.js, pre-computed by the sync's distiller so the archive API can
+# serve it verbatim. detail_json stays the untouched source of truth; the
+# distilled copy is derived and always recomputable from it. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so idempotency comes from the pragma check.
+def _apply_schema_v4(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(activities)")}
+    if "detail_distilled_json" not in cols:
+        conn.execute("ALTER TABLE activities ADD COLUMN detail_distilled_json TEXT")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -165,9 +177,10 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_SQL)
         conn.executescript(SCHEMA_V2_SQL)
         conn.executescript(SCHEMA_V3_SQL)
-        # Forward-only migration: v1→v2→v3 is purely additive (CREATE IF NOT
-        # EXISTS above), so "migrating" is just stamping the version. Never
-        # downgrade.
+        _apply_schema_v4(conn)
+        # Forward-only migration: v1→v2→v3→v4 is purely additive (CREATE IF
+        # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
+        # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
         if current is None or int(current) < SCHEMA_VERSION:
             set_meta(conn, "schema_version", str(SCHEMA_VERSION))
@@ -483,6 +496,59 @@ def metrics_coverage(conn: sqlite3.Connection, version: int) -> dict:
         "prediction_earliest": pred_earliest,
         "prediction_latest": pred_latest,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# distilled run detail (schema v4 — filled by sync_garmin's distiller; the
+# archive API serves detail_distilled_json verbatim, never the raw payloads)
+# ──────────────────────────────────────────────────────────────────────────────
+def write_distilled(conn: sqlite3.Connection, activity_id, distilled) -> bool:
+    """Store a run's distilled detail. Unlike raw detail (write-once), the
+    distilled copy is derived and disposable — a recompute simply replaces it.
+    Empty payloads are refused; commits per call so an interrupted pass never
+    loses completed work."""
+    if not distilled:
+        return False
+    cur = conn.execute(
+        "UPDATE activities SET detail_distilled_json = ? WHERE activity_id = ?",
+        (json.dumps(distilled, ensure_ascii=False), activity_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def runs_missing_distilled(conn: sqlite3.Connection) -> list:
+    """activity_ids of archived runs holding raw detail but no distilled copy —
+    the distillation pass's work list, oldest first."""
+    rows = conn.execute(
+        f"""SELECT a.activity_id FROM activities a
+            WHERE a.detail_json IS NOT NULL
+              AND a.detail_distilled_json IS NULL
+              AND {_RUN_TYPE_SQL}
+            ORDER BY a.start_time_local""").fetchall()
+    return [r[0] for r in rows]
+
+
+def summary_payload(conn: sqlite3.Connection, activity_id):
+    """The parsed raw summary payload for one activity, or None — the
+    distiller needs it alongside the detail payload (zones, temp, TE, load)."""
+    row = conn.execute(
+        "SELECT summary_json FROM activities WHERE activity_id = ?", (activity_id,)
+    ).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def distilled_coverage(conn: sqlite3.Connection) -> dict:
+    """The distilled section --verify-archive reports: runs holding raw detail
+    vs runs holding the distilled copy."""
+    detailed_runs = conn.execute(
+        f"SELECT COUNT(*) FROM activities a "
+        f"WHERE a.detail_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
+    distilled = conn.execute(
+        f"SELECT COUNT(*) FROM activities a "
+        f"WHERE a.detail_distilled_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
+    return {"detailed_runs": detailed_runs, "distilled": distilled,
+            "missing": detailed_runs - distilled}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

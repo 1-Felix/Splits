@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 process.env.PORT = process.env.AUDIT_PORT || "8123";
 const PORT = process.env.PORT;
 const PAGE = `http://localhost:${PORT}/Running%20Dashboard.dc.html`;
+const PROGRESS = `http://localhost:${PORT}/progress`;
 const BASELINE = new URL("./style-baseline.json", import.meta.url);
 
 await import("../serve.mjs"); // side-effect: server.listen(PORT)
@@ -41,6 +42,24 @@ const LAYOUT = {
   "#sec-week2":  { 1200: 7, 768: [2, 6], 390: 1 },
   "#sec-charts": { 1200: [2, 4], 768: [1, 2], 390: 1 },
   "#sec-split":  { 1200: 2, 768: 1, 390: 1 },
+};
+
+// /progress (progress-views 8.1): the relocated chart grid reflows like the
+// cockpit's; the records wall and yoy sections are insight-fed, so they are
+// asserted only when the served data file carries them (pre-3a data hides
+// them by design — graceful absence, not a layout failure).
+const PROGRESS_LAYOUT = {
+  "#sec-charts": { 1200: [2, 4], 768: [1, 2], 390: 1 },
+};
+const PROGRESS_OPTIONAL = ["#sec-records", "#sec-yoy"];
+
+// Topbar parity (design D8): markup is duplicated per page, so these computed
+// styles must stay identical between the cockpit and /progress.
+const TOPBAR_PARITY = {
+  "header.topbar": ["display", "align-items", "justify-content", "padding", "margin", "border-bottom-width"],
+  "header.topbar .topbar-actions": ["display", "align-items", "gap", "flex-wrap"],
+  "header.topbar nav": ["display", "gap", "padding", "border-top-left-radius", "font-size"],
+  "header.topbar nav a": ["font-size", "font-weight", "padding", "text-decoration-line"],
 };
 
 function trackCount(v) {
@@ -119,6 +138,49 @@ if (mode === "baseline") {
       if (!headOk || !rowOk) code = 1;
       console.log(`${headOk ? "ok " : "FAIL"} 390 .runs-head display=${head?.display} (expect none/absent)`);
       console.log(`${rowOk ? "ok " : "FAIL"} 390 .runs-row display=${row?.display} (expect not grid)`);
+    }
+    const cockpitScrollW = await page.evaluate(() => document.documentElement.scrollWidth);
+    const cockpitNoOverflow = cockpitScrollW <= width + 1;
+    if (!cockpitNoOverflow) code = 1;
+    console.log(`${cockpitNoOverflow ? "ok " : "FAIL"} ${width} cockpit no horizontal overflow (scrollWidth=${cockpitScrollW})`);
+
+    // /progress at the same widths (progress-views 8.1)
+    await page.goto(PROGRESS, { waitUntil: "networkidle" });
+    await page.waitForSelector("#sec-charts");
+    for (const [sel, byW] of Object.entries(PROGRESS_LAYOUT)) {
+      const v = await read(page, sel, ["grid-template-columns"]);
+      const n = trackCount(v?.["grid-template-columns"]);
+      const ok = matchCount(n, byW[width]);
+      if (!ok) code = 1;
+      console.log(`${ok ? "ok " : "FAIL"} ${width} /progress ${sel} tracks=${n} expected=${JSON.stringify(byW[width])}`);
+    }
+    for (const sel of PROGRESS_OPTIONAL) {
+      const present = (await page.$(sel)) !== null;
+      console.log(`     ${width} /progress ${sel} ${present ? "present" : "absent (insight data not in the served file — allowed)"}`);
+    }
+    // the page body must never scroll horizontally (wide content scrolls in
+    // its own overflow container)
+    const scrollW = await page.evaluate(() => document.documentElement.scrollWidth);
+    const noOverflow = scrollW <= width + 1;
+    if (!noOverflow) code = 1;
+    console.log(`${noOverflow ? "ok " : "FAIL"} ${width} /progress no horizontal overflow (scrollWidth=${scrollW})`);
+  }
+
+  // topbar computed-style parity between the two pages (desktop)
+  await page.setViewportSize({ width: 1200, height: 1600 });
+  await page.goto(PAGE, { waitUntil: "networkidle" });
+  await page.waitForSelector("header.topbar");
+  const cockpitBar = {};
+  for (const [sel, props] of Object.entries(TOPBAR_PARITY)) cockpitBar[sel] = await read(page, sel, props);
+  await page.goto(PROGRESS, { waitUntil: "networkidle" });
+  await page.waitForSelector("header.topbar");
+  for (const [sel, props] of Object.entries(TOPBAR_PARITY)) {
+    const here = await read(page, sel, props);
+    for (const p of props) {
+      const a = cockpitBar[sel]?.[p], b = here?.[p];
+      const ok = a === b;
+      if (!ok) code = 1;
+      console.log(`${ok ? "ok " : "FAIL"} topbar parity ${sel} { ${p}: cockpit=${a} progress=${b} }`);
     }
   }
   console.log(code ? "LAYOUT: FAIL" : "LAYOUT: ALL PASS");

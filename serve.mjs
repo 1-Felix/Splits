@@ -24,7 +24,14 @@ import { hashPlan, validatePlanText } from "./plan-io.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const PORT = Number(process.env.PORT) || 8000;
-const ENTRY = "/Running%20Dashboard.dc.html";
+
+// Clean page routes (progress-views design D7): every page is its own
+// .dc.html served directly — no redirect chains. Adding a page is one file
+// plus one line here; the original file paths keep working as static files.
+const PAGES = {
+  "/": "/Running Dashboard.dc.html",
+  "/progress": "/progress.dc.html",
+};
 
 // Where personal data lives. The container sets SPLITS_DATA_DIR=/data (the
 // mounted volume); when unset, it falls back to the project dir so `pnpm dev`
@@ -54,6 +61,16 @@ const STALE_HOURS = Number(process.env.SYNC_STALE_HOURS || 18);
 const PLAN_TOKEN = process.env.SPLITS_PLAN_TOKEN || "";
 const PLAN_MAX_BYTES = 512 * 1024;
 let planSeq = 0;
+
+// Archive API (GET /api/archive/…). The database normally sits in the data dir;
+// SPLITS_ARCHIVE_DIR points dev-against-a-mounted-data-dir at a LOCAL archive
+// copy instead — SQLite over an SMB mount is unsupported (see README).
+const ARCHIVE_DIR = process.env.SPLITS_ARCHIVE_DIR
+  ? resolve(process.env.SPLITS_ARCHIVE_DIR)
+  : DATA_DIR;
+const ARCHIVE_DB = join(ARCHIVE_DIR, "activity-archive.db");
+const ARCHIVE_PAGE_DEFAULT = 50;
+const ARCHIVE_PAGE_MAX = 100;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -148,6 +165,117 @@ async function applyPlanPush(body, ifMatch) {
     throw e;
   }
   return { status: 200, body: { ok: true, bytes: Buffer.byteLength(body), weeks: v.weeks, version: hashPlan(body) } };
+}
+
+// ── archive API — a read-only window over activity-archive.db ────────────────
+// The API is a window, not an engine (progress-views design D2): it SELECTs
+// stored rows, renames fields, filters and paginates — every derived value it
+// returns was written by the Python sync. No domain formulas or policy here.
+//
+// node:sqlite is imported lazily so an older local Node still boots the server
+// and serves every page; only the archive routes 503. The database stays in
+// DELETE journal mode with the nightly sync as the single writer, so handles
+// are per-request read-only opens and SQLITE_BUSY is an honest 503 — the
+// server never holds a connection across the sync's write transactions.
+let DatabaseSync;   // resolved on first archive request; false = driver absent
+
+async function openArchive() {
+  if (DatabaseSync === undefined) {
+    DatabaseSync = await import("node:sqlite")
+      .then((m) => m.DatabaseSync)
+      .catch(() => false);
+  }
+  if (!DatabaseSync) throw new Error("runtime lacks node:sqlite (Node >= 24 expected)");
+  return new DatabaseSync(ARCHIVE_DB, { readOnly: true }); // throws if the file is missing
+}
+
+// Promoted columns only — raw summary_json / detail_json are never selected,
+// so no response can leak Garmin's raw shapes into the browser.
+const ARCHIVE_SUMMARY_COLS = `activity_id, start_time_local, type_key, name,
+  distance_m, duration_s, avg_hr, avg_cadence, elevation_gain_m`;
+
+function archiveSummaryRow(r) {
+  return {
+    activityId: r.activity_id,
+    startTimeLocal: r.start_time_local,
+    type: r.type_key,
+    name: r.name,
+    distanceM: r.distance_m,
+    durationS: r.duration_s,
+    avgHr: r.avg_hr,
+    avgCadence: r.avg_cadence,
+    elevationGainM: r.elevation_gain_m,
+  };
+}
+
+function listArchiveActivities(db, params) {
+  const where = [];
+  const args = [];
+  const type = params.get("type");
+  if (type) { where.push("type_key = ?"); args.push(type); }
+  const year = params.get("year");
+  if (year) { where.push("substr(start_time_local, 1, 4) = ?"); args.push(year); }
+  const from = params.get("from");
+  if (from) { where.push("substr(start_time_local, 1, 10) >= ?"); args.push(from); }
+  const to = params.get("to");
+  if (to) { where.push("substr(start_time_local, 1, 10) <= ?"); args.push(to); }
+  const cond = where.length ? "WHERE " + where.join(" AND ") : "";
+  const limit = Math.min(Math.max(Number(params.get("limit")) || ARCHIVE_PAGE_DEFAULT, 1), ARCHIVE_PAGE_MAX);
+  const offset = Math.max(Number(params.get("offset")) || 0, 0);
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM activities ${cond}`).get(...args).n;
+  const rows = db.prepare(
+    `SELECT ${ARCHIVE_SUMMARY_COLS} FROM activities ${cond}
+     ORDER BY start_time_local DESC, activity_id DESC LIMIT ? OFFSET ?`
+  ).all(...args, limit, offset);
+  return {
+    activities: rows.map(archiveSummaryRow),
+    total,
+    limit,
+    offset,
+    nextOffset: offset + rows.length < total ? offset + rows.length : null,
+  };
+}
+
+function getArchiveActivity(db, id) {
+  const r = db.prepare(
+    `SELECT ${ARCHIVE_SUMMARY_COLS}, max_hr, detail_distilled_json
+     FROM activities WHERE activity_id = ?`).get(id);
+  if (!r) return null;
+  return {
+    ...archiveSummaryRow(r),
+    maxHr: r.max_hr,
+    // stored verbatim — the sync's distiller wrote it; never recomputed here
+    detail: r.detail_distilled_json ? JSON.parse(r.detail_distilled_json) : null,
+  };
+}
+
+async function handleArchive(req, res, pathname, url) {
+  if (req.method !== "GET") { json(res, 405, { ok: false, error: "use GET" }); return; }
+  let db;
+  try {
+    db = await openArchive();
+  } catch {
+    // missing db / unopenable file / no driver — pages and other APIs keep working
+    json(res, 503, { ok: false, error: "archive unavailable" });
+    return;
+  }
+  try {
+    if (pathname === "/api/archive/activities") {
+      json(res, 200, listArchiveActivities(db, url.searchParams));
+      return;
+    }
+    const idStr = pathname.slice("/api/archive/activities/".length);
+    if (!/^\d+$/.test(idStr)) { json(res, 404, { ok: false, error: "unknown activity" }); return; }
+    const activity = getArchiveActivity(db, Number(idStr));
+    if (!activity) { json(res, 404, { ok: false, error: "unknown activity" }); return; }
+    json(res, 200, activity);
+  } catch {
+    // SQLITE_BUSY under the sync's write lock, or any other read failure:
+    // an honest 503, never a partial payload
+    json(res, 503, { ok: false, error: "archive unavailable" });
+  } finally {
+    if (db) try { db.close(); } catch { /* already closed */ }
+  }
 }
 
 // Last successful sync = mtime of the telemetry file (survives restarts because
@@ -255,6 +383,10 @@ const server = createServer(async (req, res) => {
       json(res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
       return;
     }
+    if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")) {
+      await handleArchive(req, res, pathname, url);
+      return;
+    }
 
     // ── plan push: replace the canonical plan-data.js. Gated on PLAN_TOKEN — when unset
     //    the route falls through to the static handler and 404s, as if it didn't exist.
@@ -285,11 +417,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (pathname === "/") {
-      res.writeHead(302, { Location: ENTRY });
-      res.end();
-      return;
-    }
+    // clean page routes serve their component file directly
+    if (PAGES[pathname]) pathname = PAGES[pathname];
 
     // ── data files come from the volume; everything else from the image ────────
     const baseDir = DATA_FILES.has(pathname) ? DATA_DIR : ROOT;
@@ -317,7 +446,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`SPLITS dashboard → http://localhost:${PORT}${ENTRY}`);
+  console.log(`SPLITS dashboard → http://localhost:${PORT}/`);
   console.log(`  data dir: ${DATA_DIR}`);
   bootSync();
   scheduleDailySync();

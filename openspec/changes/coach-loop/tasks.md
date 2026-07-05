@@ -174,16 +174,28 @@
 
 ## 10. Deploy to the homeserver
 
-- [ ] 10.1 Merge to `main` → CI image; pull + recreate the container on the
-      same volume
-- [ ] 10.2 Trigger a sync in the container; `--verify-archive` — v3 coverage,
-      snapshot banked, closed week scored, exit 0; `validate_data.py` green
-      on the emitted contract
-- [ ] 10.3 Spot-check the live dashboard: Wk 2 reads 32.4/32 km · 4/4 runs
-      with per-day marks; pre-coach-loop fallback still renders
-- [ ] 10.4 First real `/coach` session against the server-generated briefing:
-      one genuine weekly review end-to-end (adjustment + log entry), noting
-      anything the briefing lacked
-- [ ] 10.5 After the next nightly sync: new snapshot only if the plan changed,
-      the closing week finalized (any swap detected correctly), briefing
-      refreshed — steady state confirmed
+- [x] 10.1 Merged to `main` (b2a24ab + f3409f0) → CI images green; container
+      pulled + recreated on the same volume (twice — see 10.2's finding)
+- [x] 10.2 In-container sync: v3 migrated, snapshot banked, Wk 2 scored,
+      compliance block + briefing emitted; `--verify-archive` exit 0;
+      `validate_data.py` green against the canonical files (run through the
+      LAN symlinks — in-container it can't resolve `/data`, a pre-existing
+      limitation). Found + fixed en route: `mkstemp`'s 0600 + the root
+      container published the briefing unreadable over the share →
+      `write_briefing` now chmods 0644 before the rename (f3409f0)
+- [x] 10.3 Live dashboard spot-check (fresh context, 192.168.0.37:5732):
+      Wk 2 row reads 32.4/32 km · 4/4 runs, all seven day marks ✓, Sunday's
+      status row "done: 16 km @ 6:54/km · HR 148"
+      (splits-coachloop-live.png); demo fallback still renders mark-free
+- [x] 10.4 First session against the server-generated briefing (read over
+      the share, exactly as the ritual will): all sections populated; the
+      coach-log section quotes back the "Coach loop live" judgment written
+      through the ritual's own write contract earlier today — loop closure
+      observed end-to-end. Review verdict: Wk 2 fully compliant, staleness
+      notes already adjudicated (kept + logged), plan stands for Wk 3.
+      Nothing found missing from the briefing
+- [ ] 10.5 After the next nightly sync (2026-07-06, combined with the
+      stage-1/2 steady-state check): Wk 2 finalizes as the closed week
+      against its frozen snapshot, Wk 3 opens with pending days, briefing
+      refreshed, no new snapshot unless the plan changed — steady state
+      confirmed

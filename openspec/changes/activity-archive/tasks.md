@@ -78,9 +78,9 @@
 
 ## 7. Deploy to the homeserver
 
-- [ ] 7.1 Merge to `main` → CI publishes the image; pull + recreate the
+- [x] 7.1 Merge to `main` → CI publishes the image; pull + recreate the
       container with the same volume
-- [ ] 7.2 Run the canonical backfill in the container
+- [x] 7.2 Run the canonical backfill in the container
       (`docker compose exec splits python3 sync_garmin.py --backfill`) and
       verify (`… --verify-archive`)
 - [ ] 7.3 After the next nightly sync, confirm the archive appended (activity

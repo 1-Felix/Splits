@@ -126,3 +126,159 @@ grid, and SHALL communicate that the detailed sessions are authored closer to th
 - **WHEN** the viewer selects a block week that has a daily plan
 - **THEN** the "THIS WEEK" panel shows that week's day cards and not the placeholder
 
+### Requirement: Race-prediction card shows the honest trajectory
+The dashboard SHALL extend the race-prediction card with the trajectory
+verdict — the trend direction and rate from `predictions.trend` — and the
+current gap between the Riegel projection and Garmin's prediction, so the
+"is the gap closing?" answer is visible without leaving the page.
+
+#### Scenario: Trend and gap are visible
+- **WHEN** the data file carries `insights.trajectory` and a non-empty
+  `predictions.trend`
+- **THEN** the prediction card shows the trend verdict (direction and rate)
+  and the current Riegel-vs-Garmin gap alongside the existing predicted times
+
+### Requirement: Recent records are surfaced as a feed
+The dashboard SHALL render the records feed from `insights.recordsFeed` as a
+compact, humanized list (distance, new time, previous time, date), newest
+first.
+
+#### Scenario: A fallen record is announced
+- **WHEN** `insights.recordsFeed` contains an entry for the 5k
+- **THEN** the feed shows a humanized line naming the distance, the new time,
+  the previous best, and when it fell
+
+#### Scenario: A quiet period has a calm empty state
+- **WHEN** `insights.recordsFeed` is an empty array
+- **THEN** the feed area renders a neutral empty state and no error or broken
+  layout
+
+### Requirement: Progress trends render as monthly charts
+The dashboard SHALL render the efficiency (pace at reference HR) and cadence
+(cadence at reference pace) monthly series as two compact charts consistent
+with the page's existing chart and hover interaction patterns. Null months
+SHALL render as gaps, not as zero or interpolated points.
+
+#### Scenario: Trends render with honest gaps
+- **WHEN** `insights.efficiency.monthly` contains null months between valid
+  points
+- **THEN** the chart shows a visible gap for those months and continuous lines
+  only across consecutive valid points
+
+#### Scenario: Hovering reveals the numbers
+- **WHEN** the user hovers (or focuses) a month with a valid point
+- **THEN** the month and its value (pace or cadence) are shown, consistent
+  with the existing chart hover behavior
+
+### Requirement: Insight surfaces degrade gracefully when absent
+All insight surfaces SHALL render nothing — with no errors and no layout
+breakage — when the `insights` block is missing from the data file, keeping
+the dashboard fully functional against pre-engine data.
+
+#### Scenario: Pre-engine data file
+- **WHEN** the dashboard loads a `garmin-data.js` without an `insights` block
+- **THEN** the prediction card, records feed, and progress charts sections
+  show none of the new surfaces and the rest of the page behaves exactly as
+  before this change
+
+### Requirement: Days carry compliance marks
+The dashboard SHALL mark each day that has a compliance row — in THIS WEEK and
+in any selected block week — with its status (done / partial / missed /
+swapped / unplanned / pending), visually distinguishable at a glance and
+consistent with the page's existing chip and color language. A `partial` mark
+SHALL expose its reason (distance or intensity) on the day's detail.
+
+#### Scenario: A completed day is visibly done
+- **WHEN** the data file's `compliance.days` marks a rendered date `done`
+- **THEN** that day's card carries the done mark
+
+#### Scenario: A partial day explains itself
+- **WHEN** a rendered date is marked `partial` with reason `intensity`
+- **THEN** the day shows the partial mark and its detail view names intensity
+  as the reason
+
+### Requirement: Block week rows show plan-vs-actual aggregates
+The dashboard SHALL show, on each block week row that has compliance data, the
+week's actual running volume against its planned km and the sessions completed
+against sessions planned, without disturbing the existing row layout for weeks
+that have no compliance data.
+
+#### Scenario: A closed week reads at a glance
+- **WHEN** `compliance.weeks` carries a closed week with 32.4 actual of 32
+  planned km and 4 of 4 runs done
+- **THEN** that week's row shows the volume and session aggregates
+
+### Requirement: Compliance surfaces degrade gracefully when absent
+All compliance surfaces SHALL render nothing — no errors, no layout breakage,
+no placeholder noise — when the `compliance` block is missing from the data
+file, keeping the dashboard fully functional against pre-coach-loop data.
+
+#### Scenario: Pre-coach-loop data file
+- **WHEN** the dashboard loads a `garmin-data.js` without a `compliance` block
+- **THEN** day cards and week rows render exactly as before this change
+
+### Requirement: The dashboard is a multi-page shell with a shared topbar
+The dashboard SHALL be served as multiple pages behind clean routes — the
+cockpit at `/` and the progress page at `/progress` — each page carrying the
+shared topbar: navigation with the current page marked, the theme picker, the
+sync pill, and the greeting. Topbar behavior SHALL be implemented once in a
+shared module; adding a page SHALL NOT require changes to existing pages.
+The previous entry URL SHALL continue to serve the cockpit.
+
+#### Scenario: Navigating between pages
+- **WHEN** the viewer activates the Progress link in the cockpit's topbar
+- **THEN** the progress page loads with the same topbar, and its navigation
+  marks Progress as current
+
+#### Scenario: The old entry URL keeps working
+- **WHEN** a client requests the original dashboard file path
+- **THEN** the cockpit is served as before
+
+#### Scenario: Sync pill works from any page
+- **WHEN** the viewer triggers a sync from the progress page's topbar
+- **THEN** the sync starts and the pill reflects its state, identical to
+  cockpit behavior
+
+### Requirement: The chosen theme persists across pages and reloads
+The viewer's theme choice SHALL persist in browser storage and apply on every
+page from first paint. A viewer who has never chosen a theme SHALL get the
+default theme.
+
+#### Scenario: Theme survives navigation
+- **WHEN** the viewer picks a theme on the cockpit and navigates to `/progress`
+- **THEN** the progress page renders in the chosen theme with no flash of the
+  default theme
+
+#### Scenario: Theme survives a reload
+- **WHEN** the viewer reloads any page after picking a theme
+- **THEN** the page renders in the chosen theme
+
+### Requirement: The cockpit renders complete without any API
+The cockpit page SHALL render its full content from static files alone. No
+cockpit surface SHALL require an API response to display; API-dependent
+surfaces belong to non-cockpit pages. (The sync pill enriches with `/api/status`
+but the page SHALL be complete without it.)
+
+#### Scenario: Cockpit under total API failure
+- **WHEN** every `/api/*` route fails while static files serve
+- **THEN** the cockpit renders all of its sections with correct data from the
+  static files
+
+### Requirement: The cockpit is scoped to now
+The cockpit SHALL comprise the today/this-week/this-block surfaces — hero
+(race, readiness, coach), KPI tiles, THIS WEEK, the training-block panel, the
+activity heatmap, and recent activities with drill-down — and SHALL NOT carry
+the long-game surfaces (weekly volume; the monthly chart grid: VO₂ max,
+average pace, fitness/fatigue, cadence, pace at reference HR, cadence at
+reference pace; the records feed), which render on the progress page instead.
+
+#### Scenario: Long-game sections are on the progress page, not the cockpit
+- **WHEN** the cockpit renders
+- **THEN** it contains no weekly-volume, monthly-chart-grid, or records-feed
+  sections, and those sections render on `/progress`
+
+#### Scenario: Everything the cockpit keeps behaves as before
+- **WHEN** the cockpit renders after the diet
+- **THEN** the retained sections (including the heatmap and recent-run
+  drill-downs) render and interact exactly as before the split
+

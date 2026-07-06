@@ -2,7 +2,7 @@
 
 ## 1. Sequencing & runtime baseline
 
-- [ ] 1.1 Confirm the three in-flight changes (activity-archive, insight-metrics, coach-loop) passed the 2026-07-06 nightly check and are archived — this change's deltas land on top of them
+- [x] 1.1 Confirm the three in-flight changes (activity-archive, insight-metrics, coach-loop) passed the 2026-07-06 nightly check and are archived — this change's deltas land on top of them — nightly green (536 activities, distilled 162/162, schema v4, Wk 2 closed 7/7, Wk 3 open, briefing refreshed 04:01), all three archived 2026-07-06
 - [x] 1.2 Bump Dockerfile base to `node:24-bookworm-slim`; add `engines.node >= 24` to package.json; verify local Node ≥ 24 (or note the degraded-API caveat for dev) — local is 22.19, but `node:sqlite` is present (experimental) so the archive API works in dev with a warning
 
 ## 2. Archive: distilled detail (schema v4, design D5)

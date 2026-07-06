@@ -22,11 +22,17 @@ The repository SHALL provide a `docker-compose.yml` that runs the image, reads G
 - **THEN** compose still starts the container (creds resolve to empty) and the dashboard comes up in the graceful-degradation state rather than failing to launch
 
 ### Requirement: Personal data persists in a mounted volume
-`garmin-data.js`, `plan-data.js`, the auth token cache, and the raw API cache SHALL be stored in a mounted data volume so they survive container restarts and image upgrades. Application code SHALL ship in the image and SHALL NOT be required in the volume.
+`garmin-data.js`, `plan-data.js`, the activity archive database, the auth token cache, and the raw API cache SHALL be stored in a mounted data volume so they survive container restarts and image upgrades. Application code SHALL ship in the image and SHALL NOT be required in the volume.
 
 #### Scenario: Data survives a restart
 - **WHEN** the container is recreated (e.g., after an image upgrade) with the same volume attached
-- **THEN** previously synced telemetry, the plan, and the cached token are still present and used
+- **THEN** previously synced telemetry, the plan, the cached token, and the
+  activity archive are still present and used
+
+#### Scenario: The archive accumulates across image upgrades
+- **WHEN** the image is upgraded and the container recreated with the same volume
+- **THEN** the activity archive retains all previously archived activities and
+  wellness records, and subsequent syncs continue appending to it
 
 ### Requirement: App/data split in serving and writing
 The web server SHALL serve `garmin-data.js` and `plan-data.js` from the configured data directory, and the sync SHALL write its output there via configuration. Outside the container (local dev), both SHALL fall back to the project directory so `pnpm dev` and a manual `python sync_garmin.py` keep working unchanged.
@@ -60,4 +66,23 @@ A CI workflow SHALL build and publish the image to `ghcr.io/1-felix/splits` on p
 #### Scenario: Publish a tagged release
 - **WHEN** a version tag is pushed
 - **THEN** CI builds and pushes an image tagged with that version
+
+### Requirement: The server runtime provides a built-in SQLite driver
+The image SHALL provide a Node runtime with a stable built-in SQLite driver
+(`node:sqlite`, Node 24 or later) so the archive API runs without adding any
+npm dependency. The web server SHALL remain zero-dependency. On a runtime
+without the driver (e.g. an older local Node), the server SHALL still boot and
+serve all pages while archive endpoints degrade per the archive-api spec, and
+the expected Node version SHALL be declared in `package.json` engines and the
+README.
+
+#### Scenario: The container serves the archive API dependency-free
+- **WHEN** the published image runs
+- **THEN** archive endpoints work using the runtime's built-in SQLite driver
+  and the server has no production npm dependencies
+
+#### Scenario: An older local runtime degrades, not breaks
+- **WHEN** a developer runs `pnpm dev` on a Node without `node:sqlite`
+- **THEN** the server boots, both pages serve, and only archive endpoints
+  return 503
 

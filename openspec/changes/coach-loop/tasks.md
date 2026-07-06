@@ -194,7 +194,7 @@
       observed end-to-end. Review verdict: Wk 2 fully compliant, staleness
       notes already adjudicated (kept + logged), plan stands for Wk 3.
       Nothing found missing from the briefing
-- [ ] 10.5 After the next nightly sync (2026-07-06, combined with the
+- [x] 10.5 After the next nightly sync (2026-07-06, combined with the
       stage-1/2 steady-state check): Wk 2 finalizes as the closed week
       against its frozen snapshot, Wk 3 opens with pending days, briefing
       refreshed, no new snapshot unless the plan changed — steady state

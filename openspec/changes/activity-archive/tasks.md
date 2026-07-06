@@ -83,5 +83,5 @@
 - [x] 7.2 Run the canonical backfill in the container
       (`docker compose exec splits python3 sync_garmin.py --backfill`) and
       verify (`… --verify-archive`)
-- [ ] 7.3 After the next nightly sync, confirm the archive appended (activity
+- [x] 7.3 After the next nightly sync, confirm the archive appended (activity
       count unchanged or grown, new wellness row, dashboard untouched)

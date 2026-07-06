@@ -143,6 +143,6 @@
 - [x] 11.3 Spot-check the live dashboard: hero card shows RIEGEL 2:14:28
       +15:12 vs model · ↘ closing ≈131s/wk, records feed populated, both
       trend charts render with honest gaps
-- [ ] 11.4 After the next nightly sync: `run_metrics` grew with any new run,
+- [x] 11.4 After the next nightly sync: `run_metrics` grew with any new run,
       today's prediction row banked, insights refreshed — stage 2 steady state
       confirmed

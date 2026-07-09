@@ -22,9 +22,17 @@ no modes.
    log, and profile constants.
 2. **The live plan** — `plan-data.js` (same resolution order). This is the
    file you own and may edit.
-3. If the briefing is missing or stale (check its date header), say so and
-   offer to run `python sync_garmin.py` first; you can fall back to reading
-   `garmin-data.js` directly, but say that you did.
+3. **Freshness gate.** Compare the briefing's date header and `garmin-data.js`
+   `today` / last-sync against the real date, and check whether today's
+   already-completed sessions are reflected. If anything is behind — the data
+   predates today, or a run you know happened isn't in it — say so and **offer**
+   a fresh sync (`python sync_garmin.py` at home, or the dashboard's manual-sync
+   button); run it only on the athlete's go. Do NOT sync silently or as a
+   mandatory init step: measurement stays deterministic and athlete-triggered,
+   the sync is a heavy Garmin-API/DB write that shouldn't be a side effect of a
+   read, and the away-from-home path has no Garmin credentials. If you proceed
+   without syncing, you may read `garmin-data.js` directly as the freshest
+   source — but say that you did.
 
 ## 2. Adapt to what you find
 

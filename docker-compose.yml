@@ -23,7 +23,7 @@ services:
 
       # ── locale / schedule ───────────────────────────────────────────────────
       TZ: ${TZ:-Europe/Berlin}             # your timezone — drives clock + nightly sync
-      SYNC_AT: ${SYNC_AT:-04:00}           # daily auto-sync (local time); "off" to disable
+      SYNC_AT: ${SYNC_AT:-08:00}           # daily auto-sync (local time; after wake, so Garmin has finalised last night's sleep + readiness); "off" to disable
       # SYNC_ON_BOOT: "on"                 # sync once at startup if telemetry is missing/stale
 
       # ── profile overrides (optional; uncomment to set) ──────────────────────

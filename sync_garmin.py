@@ -542,9 +542,13 @@ def compute_fitness_fatigue(acts: list[dict], max_hr: int, weeks: int = WEEKS) -
 
 
 def fetch_sleep(client, nights: int = SLEEP_NIGHTS) -> list[dict]:
+    # Window ENDS on TODAY, so the most recent slot is last night. Garmin only
+    # finalises last night's sleep once you wake, so the sync must run after
+    # wake-up (SYNC_AT in the compose) or that slot comes back empty — see the
+    # non-zero fallback in fetch_readiness.
     out = []
     for i in range(nights):
-        d = (TODAY - dt.timedelta(days=nights - i)).isoformat()
+        d = (TODAY - dt.timedelta(days=nights - 1 - i)).isoformat()
         rec = safe(lambda: client.get_sleep_data(d), {}, f"get_sleep_data {d}") or {}
         dto = rec.get("dailySleepDTO") or {}
         secs = dto.get("sleepTimeSeconds") or 0
@@ -590,7 +594,10 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
     tr_list = safe(lambda: client.get_training_readiness(today), [], "get_training_readiness") or []
     tr = tr_list[0] if isinstance(tr_list, list) and tr_list else (tr_list if isinstance(tr_list, dict) else {})
 
-    last = sleep[-1] if sleep else {}
+    # Most recent night that actually has sleep logged: if the sync still runs
+    # before Garmin finalises last night, use the latest real night rather than
+    # reporting 0 h — readiness must reflect true rest, not sync timing.
+    last = next((s for s in reversed(sleep) if s.get("hours")), {})
     hrv = last.get("hrv") or 0
     sleep_h = last.get("hours") or 0.0
     rhr = safe(lambda: _parse_rhr(client.get_rhr_day(today)), None, "rhr(readiness)") or 46

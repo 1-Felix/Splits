@@ -45,7 +45,7 @@
 
 ## 7. Run it, and spec sync
 
-- [ ] 7.1 Run `--backfill-wellness` against the live account overnight; record the real call count, wall time, and any rate-limit behaviour in the change's notes
-- [ ] 7.2 Verify coverage from 2024-05-12 to today; confirm the onboarding window's HRV baselines are null rather than zero
-- [ ] 7.3 Confirm `garmin-data.js` is byte-identical before and after (this change ships no payload change)
-- [ ] 7.4 Update `openspec/specs/activity-archive/spec.md` from the delta; note in `README.md` that wellness raw payloads are archived and how to backfill
+- [x] 7.1 Run `--backfill-wellness` against the live account overnight; record the real call count, wall time, and any rate-limit behaviour in the change's notes
+- [x] 7.2 Verify coverage from 2024-05-12 to today; confirm the onboarding window's HRV baselines are null rather than zero
+- [x] 7.3 Confirm `garmin-data.js` is byte-identical before and after (this change ships no payload change)
+- [x] 7.4 Update `openspec/specs/activity-archive/spec.md` from the delta; note in `README.md` that wellness raw payloads are archived and how to backfill

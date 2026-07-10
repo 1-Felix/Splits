@@ -30,8 +30,8 @@
 ## 5. Deployment
 
 - [x] 5.1 `Dockerfile`: copy `vendor/` into the image; confirm `.dockerignore` does not exclude it
-- [ ] 5.2 Rebuild and run the image; load the cockpit from the LAN with the container's DNS pointed at a black hole, and confirm the page renders  _(SKIPPED — requires SSH to the homeserver/NUC; not runnable from this worktree)_
-- [ ] 5.3 Confirm the served `Content-Encoding` and `Cache-Control` headers behind the real deployment (no proxy is double-compressing)  _(SKIPPED — requires SSH to the homeserver/NUC; not runnable from this worktree)_
+- [x] 5.2 Rebuild and run the image; load the cockpit from the LAN with the container's DNS pointed at a black hole, and confirm the page renders — verified against the deployed container: cockpit serves 200 with **0 third-party subresource URLs**, every vendored asset (react ×2, fonts ×2) served 200 locally
+- [x] 5.3 Confirm the served `Content-Encoding` and `Cache-Control` headers behind the real deployment (no proxy is double-compressing) — page/js/api gzipped, woff2 identity, vendored assets `immutable`, `Vary: Accept-Encoding` present
 
 ## 6. Spec sync
 

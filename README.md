@@ -253,6 +253,24 @@ docker compose exec splits python3 sync_garmin.py --backfill
 docker compose exec splits python3 sync_garmin.py --verify-archive
 ```
 
+A second one-time **wellness backfill** pulls every night's raw sleep and HRV
+payload back to your first activity (~2 Garmin calls per date, resumable, safe to
+interrupt). Every normal sync then banks its whole fourteen-night sleep window —
+payloads it was already fetching and throwing away.
+
+```bash
+docker compose exec splits python3 sync_garmin.py --backfill-wellness
+docker compose exec splits python3 sync_garmin.py --backfill-wellness --since 2025-01-01  # spread it out
+```
+
+The raw payloads are stored, not just the numbers we read today: Garmin's sleep
+document has grown from 7 top-level keys in 2024 to 18 now, so anything derived
+at fetch time and discarded is lost forever. `daily_wellness.fetched_at` separates
+*"we asked and the watch recorded nothing"* from *"we never asked"* — without it a
+chart cannot tell a real gap from a missing fetch. `--verify-archive` reports
+wellness gaps always, and fails on them only once the backfill has recorded
+completion.
+
 **The server volume's copy is canonical; local copies are disposable.** The
 archive is entirely derived from Garmin, so any copy can be rebuilt with
 `--backfill` — don't sync archive files between machines (and don't run SQLite

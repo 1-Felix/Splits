@@ -1,5 +1,6 @@
 """Unit tests for activity_archive.py (temp dir, no Garmin network)."""
 import importlib.util
+import json
 import tempfile
 from pathlib import Path
 
@@ -320,7 +321,8 @@ def test_archive_step_banks_everything():
         acts = [_act(1), _act(2, start="2026-07-02 08:00:00")]
         readiness = {"restingHR": 47, "hrv": 55, "sleepHours": 7.5, "score": 41}
         sg.archive_step(_FakeClient(), acts)
-        sg.wellness_step(readiness)
+        # empty sleep window: today's readiness row is still banked (fetch_sleep failed)
+        sg.wellness_step(_FakeClient(), readiness, [])
     finally:
         sg.DATA_DIR, sg.CACHE_DIR = orig
 
@@ -396,7 +398,8 @@ def test_metrics_failsoft_and_insights_omitted():
     sg.activity_archive.open_archive = boom
     try:
         assert sg.safe(lambda: sg.metrics_step(_FakeClient(), {}), None, "metrics step") is None
-        assert sg.safe(lambda: sg.wellness_step({}), None, "wellness banking") is None
+        assert sg.safe(lambda: sg.wellness_step(_FakeClient(), {}, []), None,
+                       "wellness banking") is None
         assert sg.fetch_insights() is None, "failed assembly → no insights, never a partial"
     finally:
         sg.activity_archive.open_archive = orig
@@ -614,8 +617,9 @@ def test_v3_to_v4_migration_is_additive():
     conn.commit()
     conn.close()
 
-    conn = arch.open_archive(d)  # v3 → v4 on open
-    assert arch.get_meta(conn, "schema_version") == "4"
+    conn = arch.open_archive(d)  # v3 → current on open; the v4 column is what this test guards
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION), \
+        "version stamped forward"
     aid, detail, distilled = conn.execute(
         "SELECT activity_id, detail_json, detail_distilled_json FROM activities"
     ).fetchone()
@@ -631,8 +635,8 @@ def test_v3_to_v4_migration_is_additive():
     assert len(rows) == 1
     conn.close()
 
-    conn = arch.open_archive(d)  # idempotent re-open at v4
-    assert arch.get_meta(conn, "schema_version") == "4"
+    conn = arch.open_archive(d)  # idempotent re-open at the current version
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     conn.close()
 
 
@@ -733,6 +737,129 @@ def test_verify_archive_distilled_coverage_paths():
         assert sg.verify_archive() == 1, "count below the ratchet → regression"
     finally:
         sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# schema v5 (wellness-archive): raw wellness payloads + promoted columns
+# ──────────────────────────────────────────────────────────────────────────────
+_SLEEP_WITH_DATA = {"dailySleepDTO": {"sleepTimeSeconds": 27300, "deepSleepSeconds": 5280},
+                    "restingHeartRate": 58, "bodyBatteryChange": 48}
+_SLEEP_HOLLOW = {"dailySleepDTO": {"sleepTimeSeconds": None}}
+_HRV = {"hrvSummary": {"lastNightAvg": 59, "weeklyAvg": None, "baseline": None, "status": "NONE"}}
+
+_VALUES_WITH_DATA = {"sleep_seconds": 27300, "deep_seconds": 5280, "resting_hr": 58,
+                     "hrv_last_night": 59, "hrv_status": "NONE"}
+_VALUES_HOLLOW = {"sleep_seconds": None, "resting_hr": None, "hrv_last_night": None}
+
+
+def _wellness_row(conn, date):
+    cur = conn.execute("SELECT * FROM daily_wellness WHERE date = ?", (date,))
+    cols = [c[0] for c in cur.description]
+    row = cur.fetchone()
+    return dict(zip(cols, row)) if row else None
+
+
+def test_wellness_v5_migration_is_additive():
+    """A v1 file gains the wellness columns; the original columns still read."""
+    d = _tmp()
+    _make_v1_db(d)
+    conn = arch.open_archive(d)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(daily_wellness)")}
+    for new in ("sleep_json", "hrv_json", "fetched_at", "sleep_seconds",
+                "hrv_balanced_low", "hrv_balanced_upper", "hrv_status"):
+        assert new in cols, f"{new} added by the v5 migration"
+    # an older reader selecting only the v1 columns keeps working
+    conn.execute("SELECT date, resting_hr, hrv, sleep_hours, raw_json, updated_at "
+                 "FROM daily_wellness").fetchall()
+    conn.close()
+
+
+def test_wellness_promoted_columns_round_trip():
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_wellness(conn, "2024-05-12", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, hrv_raw=_HRV, fetched_at="2026-07-10T00:00:00")
+    row = _wellness_row(conn, "2024-05-12")
+    assert row["sleep_seconds"] == 27300
+    assert row["resting_hr"] == 58
+    assert row["hrv_last_night"] == 59
+    assert row["hrv_status"] == "NONE"
+    assert json.loads(row["sleep_json"])["restingHeartRate"] == 58, "raw payload stored verbatim"
+    assert json.loads(row["hrv_json"])["hrvSummary"]["status"] == "NONE"
+    conn.close()
+
+
+def test_wellness_raw_payload_upgrades_from_hollow_to_data():
+    """Garmin had not finalised the night yet. A later sync fills it in."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_wellness(conn, "2026-07-09", _VALUES_HOLLOW,
+                         sleep_raw=_SLEEP_HOLLOW, fetched_at="2026-07-09T08:00:00")
+    assert _wellness_row(conn, "2026-07-09")["sleep_seconds"] is None
+
+    arch.upsert_wellness(conn, "2026-07-09", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, fetched_at="2026-07-10T08:00:00")
+    row = _wellness_row(conn, "2026-07-09")
+    assert row["sleep_seconds"] == 27300, "promoted values refreshed"
+    assert json.loads(row["sleep_json"])["dailySleepDTO"]["sleepTimeSeconds"] == 27300, \
+        "hollow payload replaced by the substantive one"
+    conn.close()
+
+
+def test_wellness_stored_night_is_never_thinned():
+    """Once a night carries device data, no later fetch may overwrite it."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_wellness(conn, "2024-05-12", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, fetched_at="2026-07-10T00:00:00")
+    arch.upsert_wellness(conn, "2024-05-12", _VALUES_HOLLOW,
+                         sleep_raw=_SLEEP_HOLLOW, fetched_at="2026-07-11T00:00:00")
+    stored = json.loads(_wellness_row(conn, "2024-05-12")["sleep_json"])
+    assert stored["dailySleepDTO"]["sleepTimeSeconds"] == 27300, "substantive payload survives"
+    conn.close()
+
+
+def test_wellness_fetched_at_distinguishes_unfetched_from_empty():
+    """Three states: never asked, asked-and-empty, asked-with-data."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    assert _wellness_row(conn, "2024-06-01") is None, "never asked → no row at all"
+
+    arch.upsert_wellness(conn, "2024-09-02", _VALUES_HOLLOW,
+                         sleep_raw=_SLEEP_HOLLOW, fetched_at="2026-07-10T00:00:00")
+    empty = _wellness_row(conn, "2024-09-02")
+    assert empty["fetched_at"] == "2026-07-10T00:00:00", "asked"
+    assert empty["sleep_seconds"] is None, "and the watch recorded nothing"
+
+    arch.upsert_wellness(conn, "2024-05-12", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, fetched_at="2026-07-10T00:00:00")
+    full = _wellness_row(conn, "2024-05-12")
+    assert full["fetched_at"] is not None and full["sleep_seconds"] == 27300
+    conn.close()
+
+
+def test_wellness_readiness_snapshot_survives_a_backfill_upsert():
+    """`raw_json` holds the sync's computed readiness, not a Garmin payload
+    (design D2). A backfill supplies no readiness and must not erase one."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_wellness(conn, "2026-07-05", {"resting_hr": 53}, {"score": 92, "status": "High"})
+    arch.upsert_wellness(conn, "2026-07-05", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, fetched_at="2026-07-10T00:00:00")
+    row = _wellness_row(conn, "2026-07-05")
+    assert json.loads(row["raw_json"])["score"] == 92, "readiness snapshot preserved"
+    assert row["sleep_seconds"] == 27300, "and the backfill's values landed"
+    conn.close()
+
+
+def test_wellness_backfilled_row_needs_no_readiness():
+    """raw_json is NOT NULL; a date the sync never scored still inserts."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_wellness(conn, "2024-05-12", _VALUES_WITH_DATA,
+                         sleep_raw=_SLEEP_WITH_DATA, fetched_at="2026-07-10T00:00:00")
+    assert json.loads(_wellness_row(conn, "2024-05-12")["raw_json"]) == {}
+    conn.close()
 
 
 if __name__ == "__main__":

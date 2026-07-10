@@ -541,15 +541,148 @@ def compute_fitness_fatigue(acts: list[dict], max_hr: int, weeks: int = WEEKS) -
     return ctl_w, atl_w
 
 
-def fetch_sleep(client, nights: int = SLEEP_NIGHTS) -> list[dict]:
+# The archive owns the column list; this is the projection that fills it. One
+# source of truth, pinned by a test — the two can never drift apart.
+WELLNESS_COLUMNS = activity_archive.WELLNESS_PROMOTED_COLUMNS
+
+
+def promote_wellness(sleep: dict | None, hrv: dict | None) -> dict:
+    """Project one night's raw sleep + HRV payloads onto the promoted columns.
+    Pure over its inputs: no clock, no network, nothing mutated.
+
+    Absent is None, never 0 — a night the watch sat on the nightstand and a night
+    of zero sleep are different facts. Columns are independently nullable: a
+    payload can carry no sleep at all while HRV's rolling weeklyAvg and balanced
+    range remain populated.
+
+    `resting_hr` can be None even though the sleep payload exists (Garmin returns
+    a hollow four-key payload for an unworn night), which is why the caller falls
+    back to get_rhr_day on a null VALUE rather than on a missing payload.
+
+    Shape drifts across eras — the 2024 sleep payload has 7 top-level keys, the
+    2026 one has 18 — so every read is a tolerant .get() chain. See the fixtures
+    in fixtures/wellness/ and their README.
+    """
+    sleep = sleep or {}
+    hrv = hrv or {}
+    dto = sleep.get("dailySleepDTO") or {}
+    scores = dto.get("sleepScores") or {}
+    summary = hrv.get("hrvSummary") or {}
+    baseline = summary.get("baseline") or {}   # object, not a pair: {lowUpper, balancedLow, balancedUpper, markerValue}
+    secs = dto.get("sleepTimeSeconds")
+    return {
+        # v1 columns, still populated so nothing downstream has to change
+        "hrv": summary.get("lastNightAvg"),
+        "sleep_hours": round(secs / 3600, 1) if secs else None,
+        "sleep_seconds": secs,
+        "deep_seconds": dto.get("deepSleepSeconds"),
+        "rem_seconds": dto.get("remSleepSeconds"),
+        "light_seconds": dto.get("lightSleepSeconds"),
+        "awake_seconds": dto.get("awakeSleepSeconds"),
+        "sleep_score": (scores.get("overall") or {}).get("value"),
+        "respiration_avg": dto.get("averageRespirationValue"),
+        "body_battery_change": sleep.get("bodyBatteryChange"),
+        "resting_hr": sleep.get("restingHeartRate"),
+        "hrv_last_night": summary.get("lastNightAvg"),
+        "hrv_weekly_avg": summary.get("weeklyAvg"),
+        "hrv_balanced_low": baseline.get("balancedLow"),
+        "hrv_balanced_upper": baseline.get("balancedUpper"),
+        "hrv_status": summary.get("status"),
+    }
+
+
+BACKFILL_DELAY_S = 0.4   # ~1,600 calls at this pace is roughly 11 minutes
+
+
+def _now_iso() -> str:
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _date_span(earliest: str, today: str):
+    """ISO dates from `earliest` to `today` inclusive, ascending."""
+    a, b = dt.date.fromisoformat(earliest), dt.date.fromisoformat(today)
+    while a <= b:
+        yield a.isoformat()
+        a += dt.timedelta(days=1)
+
+
+def fetch_wellness_day(client, date: str):
+    """One night's raw payloads + their promoted projection.
+
+    Returns `(sleep, hrv, values, complete)`. `complete` is True only when both
+    Garmin calls answered — a raised call yields None and leaves the date
+    unmarked so a later run retries it. Garmin answers every date with a
+    document, however empty, so an empty dict means "the watch recorded nothing"
+    and is a perfectly complete fetch.
+
+    Resting HR comes from the sleep payload, and the fallback fires on a **null
+    value**, not on a missing payload: an unworn night returns a hollow
+    four-key sleep document whose `restingHeartRate` is null, while
+    `get_rhr_day` for that same date still answers.
+    """
+    sleep = safe(lambda: client.get_sleep_data(date), None, f"get_sleep_data {date}")
+    hrv = safe(lambda: client.get_hrv_data(date), None, f"get_hrv_data {date}")
+    values = promote_wellness(sleep, hrv)
+    if values["resting_hr"] is None:
+        rhr = safe(lambda: _parse_rhr(client.get_rhr_day(date)), None, f"get_rhr_day {date}")
+        values["resting_hr"] = int(rhr) if rhr else None
+    return sleep, hrv, values, (sleep is not None and hrv is not None)
+
+
+def backfill_wellness(conn, client, earliest: str, today: str,
+                      since: str | None = None, delay: float = BACKFILL_DELAY_S) -> dict:
+    """Bank every night's raw sleep + HRV payload from `earliest` to `today`.
+
+    Resumable by construction: the archive is the cursor. A date already carrying
+    `fetched_at` is skipped, so an interrupted run resumes where it stopped and a
+    complete run makes no requests at all. Newest-first, so an interrupted
+    backfill leaves the most useful history present.
+    """
+    start = max(earliest, since) if since else earliest
+    dates = list(_date_span(start, today))
+    already = {r[0] for r in conn.execute(
+        "SELECT date FROM daily_wellness WHERE fetched_at IS NOT NULL")}
+    todo = [d for d in reversed(dates) if d not in already]
+
+    stats = {"fetched": 0, "skipped": len(dates) - len(todo), "failed": 0}
+    for i, date in enumerate(todo):
+        sleep, hrv, values, complete = fetch_wellness_day(client, date)
+        if not complete:
+            stats["failed"] += 1          # no fetched_at → the next run retries it
+            continue
+        activity_archive.upsert_wellness(
+            conn, date, values, sleep_raw=sleep, hrv_raw=hrv, fetched_at=_now_iso())
+        stats["fetched"] += 1
+        if delay and i < len(todo) - 1:
+            time.sleep(delay)
+        if stats["fetched"] % 50 == 0:
+            log(f"  wellness backfill: {stats['fetched']}/{len(todo)} banked")
+
+    # The marker claims coverage of the WHOLE span, so a --since run cannot set it.
+    remaining = [d for d in _date_span(earliest, today)
+                 if d not in already and d not in
+                 {r[0] for r in conn.execute(
+                     "SELECT date FROM daily_wellness WHERE fetched_at IS NOT NULL")}]
+    if not remaining:
+        activity_archive.set_meta(conn, "wellness_backfill_completed_at", _now_iso())
+    return stats
+
+
+def fetch_sleep(client, nights: int = SLEEP_NIGHTS, raw_out: list | None = None) -> list[dict]:
     # Window ENDS on TODAY, so the most recent slot is last night. Garmin only
     # finalises last night's sleep once you wake, so the sync must run after
     # wake-up (SYNC_AT in the compose) or that slot comes back empty — see the
     # non-zero fallback in fetch_readiness.
+    #
+    # `raw_out` collects (date, payload) for the archive: these payloads are
+    # fetched either way, and throwing them away is what capped wellness history
+    # at fourteen nights forever. The history.sleep contract is unchanged.
     out = []
     for i in range(nights):
         d = (TODAY - dt.timedelta(days=nights - 1 - i)).isoformat()
         rec = safe(lambda: client.get_sleep_data(d), {}, f"get_sleep_data {d}") or {}
+        if raw_out is not None:
+            raw_out.append((d, rec))
         dto = rec.get("dailySleepDTO") or {}
         secs = dto.get("sleepTimeSeconds") or 0
         deep = dto.get("deepSleepSeconds") or 0
@@ -761,13 +894,16 @@ def fetch_compliance() -> dict | None:
     return safe(assemble, None, "compliance assembly")
 
 
-def build_data(client, acts: list[dict], pred_doc: dict | None = None) -> dict:
+def build_data(client, acts: list[dict], pred_doc: dict | None = None,
+               sleep_raw_out: list | None = None) -> dict:
+    # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
+    # pulls anyway, so wellness_step can bank them without a second round-trip.
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
 
     monthly = fetch_monthly(client, acts)
     weekly_km, weekly_runs = fetch_weekly(acts)
     ctl, atl = compute_fitness_fatigue(acts, max_hr)
-    sleep = fetch_sleep(client)
+    sleep = fetch_sleep(client, raw_out=sleep_raw_out)
     vo2_current = monthly["vo2max"][-1] if monthly["vo2max"] else None
 
     predictions = fetch_predictions(pred_doc or {})
@@ -934,18 +1070,74 @@ def briefing_step(data: dict) -> None:
     log("✓ coach briefing written")
 
 
-def wellness_step(readiness: dict) -> None:
-    """Bank today's wellness row. Readiness is computed inside build_data, so
-    this runs after the write — unlike the activity banking, nothing downstream
-    needs it in the same sync. Only ever inside safe()."""
+def wellness_step(client, readiness: dict, sleep_raw: list) -> None:
+    """Bank the sync's whole sleep window, not just today.
+
+    `fetch_sleep()` already pulls a raw payload for every night in the window;
+    `sleep_raw` is that harvest. HRV is topped up only for nights whose stored
+    HRV carries no reading, and resting HR only for nights the sleep payload
+    does not report it — so the steady-state call count barely moves while the
+    window self-heals any night missed while the container was down.
+
+    Readiness is computed inside build_data, so this runs after the write —
+    nothing downstream needs it in the same sync. Only ever inside safe().
+    """
     conn = activity_archive.open_archive(DATA_DIR)
     try:
-        activity_archive.upsert_wellness(conn, TODAY.isoformat(), {
-            "resting_hr": readiness.get("restingHR"),
-            "hrv": readiness.get("hrv"),
-            "sleep_hours": readiness.get("sleepHours"),
-        }, readiness)
-        log("✓ archive: wellness banked")
+        stored = {r[0]: (r[1], r[2]) for r in conn.execute(
+            "SELECT date, hrv_json, hrv_last_night FROM daily_wellness")}
+        today_iso = TODAY.isoformat()
+
+        for date, sleep in sleep_raw:
+            hrv_json, hrv_last = stored.get(date, (None, None))
+            if hrv_last is None:                      # never read, or the night was unworn
+                hrv = safe(lambda: client.get_hrv_data(date), None, f"get_hrv_data {date}")
+            else:
+                hrv = json.loads(hrv_json)
+            values = promote_wellness(sleep, hrv)
+            if values["resting_hr"] is None:
+                rhr = safe(lambda: _parse_rhr(client.get_rhr_day(date)), None, f"get_rhr_day {date}")
+                values["resting_hr"] = int(rhr) if rhr else None
+            activity_archive.upsert_wellness(
+                conn, date, values, raw=readiness if date == today_iso else None,
+                sleep_raw=sleep, hrv_raw=hrv, fetched_at=_now_iso())
+
+        # The sleep window normally contains today. If fetch_sleep failed outright,
+        # today's readiness snapshot still gets banked — and stays unmarked, because
+        # we never actually asked Garmin about it.
+        if today_iso not in {d for d, _ in sleep_raw}:
+            activity_archive.upsert_wellness(conn, today_iso, {
+                "resting_hr": readiness.get("restingHR"),
+                "hrv": readiness.get("hrv"),
+                "sleep_hours": readiness.get("sleepHours"),
+            }, raw=readiness)
+
+        log("✓ archive: wellness banked "
+            + (f"({len(sleep_raw)} nights)" if sleep_raw else "(today only — no sleep window)"))
+    finally:
+        conn.close()
+
+
+def run_wellness_backfill(client, since: str | None = None) -> None:
+    """One-time full-history wellness pull. Idempotent and resumable — the
+    archive is the cursor, so interrupting never repeats completed work."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        cov = activity_archive.coverage(conn)
+        if not cov["earliest"]:
+            log("! archive holds no activities — run --backfill first")
+            return
+        earliest = cov["earliest"][:10]
+        today = TODAY.isoformat()
+        log(f"… wellness backfill: {earliest} → {today}"
+            + (f" (bounded by --since {since})" if since else ""))
+        stats = backfill_wellness(conn, client, earliest, today, since=since)
+        log(f"✓ wellness backfill: {stats['fetched']} banked, "
+            f"{stats['skipped']} already present, {stats['failed']} failed")
+        if stats["failed"]:
+            log("  re-run to retry the failed dates — they were left unmarked")
+        done = activity_archive.get_meta(conn, "wellness_backfill_completed_at")
+        log(f"  coverage complete: {done}" if done else "  coverage still incomplete")
     finally:
         conn.close()
 
@@ -1059,7 +1251,15 @@ def verify_archive() -> int:
         log(f"Archive: {db}  ({db.stat().st_size / 1e6:.1f} MB)")
         log(f"  activities : {cov['total']}  ({cov['earliest']} → {cov['latest']})")
         log(f"  detail     : {cov['with_detail']} with, {cov['without_detail']} missing")
-        log(f"  wellness   : {cov['wellness_rows']} daily rows")
+        wcov = activity_archive.wellness_coverage(conn, TODAY.isoformat())
+        log(f"  wellness   : {cov['wellness_rows']} daily rows"
+            + (f" — {wcov['fetched']}/{wcov['expected']} dates fetched, "
+               f"{wcov['with_data']} with data, {len(wcov['gaps'])} gaps"
+               if wcov["expected"] else ""))
+        if wcov["gaps"]:
+            head = ", ".join(wcov["gaps"][:5])
+            more = f" … (+{len(wcov['gaps']) - 5} more)" if len(wcov["gaps"]) > 5 else ""
+            log(f"               gaps: {head}{more}")
         log("  by year    : " + (", ".join(f"{y}: {n}" for y, n in sorted(cov["by_year"].items())) or "—"))
         log("  by type    : " + (", ".join(f"{t}: {n}" for t, n in list(cov["by_type"].items())[:8]) or "—"))
 
@@ -1113,6 +1313,14 @@ def verify_archive() -> int:
         if exp_distilled and dcov["distilled"] < int(exp_distilled):
             failures.append(f"distilled coverage regressed: {dcov['distilled']} distilled "
                             f"runs < expected {exp_distilled}")
+        # Wellness coverage regressions (wellness-archive design D3/D4). Ratcheted
+        # on the backfill's own completion marker, not on the presence of rows:
+        # the nightly sync starts stamping `fetched_at` the moment it deploys, so
+        # gating on rows alone would fail every check until the backfill has run.
+        # Once the backfill claims full coverage, a gap is a genuine regression.
+        if activity_archive.get_meta(conn, "wellness_backfill_completed_at") and wcov["gaps"]:
+            failures.append(f"wellness coverage regressed: {len(wcov['gaps'])} dates never "
+                            f"fetched (first: {wcov['gaps'][0]})")
         # Metrics coverage regressions (design D11). A completely empty
         # run_metrics table is a pre-engine archive, not a regression — but
         # stale-version leftovers or a partial extraction after a sync are.
@@ -1146,6 +1354,12 @@ def main() -> None:
     p.add_argument("--backfill", action="store_true",
                    help="pull the FULL account history into the activity archive "
                         "(one-time; idempotent and resumable)")
+    p.add_argument("--backfill-wellness", action="store_true",
+                   help="pull the FULL wellness history (sleep + HRV raw payloads) "
+                        "into the archive (one-time; idempotent and resumable)")
+    p.add_argument("--since", metavar="YYYY-MM-DD",
+                   help="lower bound for --backfill-wellness, so a long backfill "
+                        "can be spread across nights")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1158,6 +1372,9 @@ def main() -> None:
     if args.backfill:
         run_backfill(client)
         return
+    if args.backfill_wellness:
+        run_wellness_backfill(client, since=args.since)
+        return
 
     # Order per insight-metrics design D8 + coach-loop design D6: archive,
     # metrics and compliance run BEFORE build_data so insights include today's
@@ -1169,12 +1386,13 @@ def main() -> None:
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")
-    data = build_data(client, acts, pred_doc)
+    sleep_raw: list = []
+    data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
     safe(lambda: briefing_step(data), None, "coach briefing")
-    safe(lambda: wellness_step(data["readiness"]), None, "wellness banking")
+    safe(lambda: wellness_step(client, data["readiness"], sleep_raw), None, "wellness banking")
 
 
 if __name__ == "__main__":

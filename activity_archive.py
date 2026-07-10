@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -146,6 +146,33 @@ def _apply_schema_v4(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE activities ADD COLUMN detail_distilled_json TEXT")
 
 
+# Schema v5 (wellness-archive, design D1/D3): additive columns on daily_wellness.
+# `sleep_json` / `hrv_json` are the raw Garmin payloads (upgrade-only — a night
+# holding device data is never overwritten, a hollow one may be filled in later);
+# the rest are the promoted projection of them, all independently nullable.
+# `fetched_at` separates "we asked and the watch recorded nothing" from "we never
+# asked" — without it a chart cannot tell a real gap from a missing fetch.
+# NOTE: `raw_json` predates this and holds the sync's COMPUTED READINESS snapshot,
+# not a Garmin payload. It keeps that meaning; see design D2.
+_WELLNESS_V5_COLUMNS = (
+    ("sleep_json", "TEXT"), ("hrv_json", "TEXT"), ("fetched_at", "TEXT"),
+    ("sleep_seconds", "INTEGER"), ("deep_seconds", "INTEGER"),
+    ("rem_seconds", "INTEGER"), ("light_seconds", "INTEGER"),
+    ("awake_seconds", "INTEGER"), ("sleep_score", "INTEGER"),
+    ("respiration_avg", "REAL"), ("body_battery_change", "INTEGER"),
+    ("hrv_last_night", "INTEGER"), ("hrv_weekly_avg", "INTEGER"),
+    ("hrv_balanced_low", "INTEGER"), ("hrv_balanced_upper", "INTEGER"),
+    ("hrv_status", "TEXT"),
+)
+
+
+def _apply_schema_v5(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(daily_wellness)")}
+    for name, decl in _WELLNESS_V5_COLUMNS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE daily_wellness ADD COLUMN {name} {decl}")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -178,7 +205,8 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V2_SQL)
         conn.executescript(SCHEMA_V3_SQL)
         _apply_schema_v4(conn)
-        # Forward-only migration: v1→v2→v3→v4 is purely additive (CREATE IF
+        _apply_schema_v5(conn)
+        # Forward-only migration: v1→v2→v3→v4→v5 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -291,20 +319,68 @@ def missing_detail_ids(conn: sqlite3.Connection, limit: int | None = None,
 # ──────────────────────────────────────────────────────────────────────────────
 # daily wellness
 # ──────────────────────────────────────────────────────────────────────────────
-def upsert_wellness(conn: sqlite3.Connection, date: str, values: dict, raw) -> None:
-    """One row per local date; a later sync the same day refreshes it."""
-    conn.execute(
-        """INSERT INTO daily_wellness (date, resting_hr, hrv, sleep_hours, raw_json, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(date) DO UPDATE SET
-             resting_hr  = excluded.resting_hr,
-             hrv         = excluded.hrv,
-             sleep_hours = excluded.sleep_hours,
-             raw_json    = excluded.raw_json,
-             updated_at  = excluded.updated_at""",
-        (date, values.get("resting_hr"), values.get("hrv"),
-         values.get("sleep_hours"), json.dumps(raw, ensure_ascii=False), _now()),
+# Every column of daily_wellness that is a derived projection of the raw payloads.
+# `resting_hr` / `hrv` / `sleep_hours` are the v1 columns, still populated.
+# This tuple is the single source of truth for the projection: sync_garmin's
+# promote_wellness() returns exactly these keys, and a test pins the two together.
+WELLNESS_PROMOTED_COLUMNS = (
+    "resting_hr", "hrv", "sleep_hours",
+    "sleep_seconds", "deep_seconds", "rem_seconds", "light_seconds",
+    "awake_seconds", "sleep_score", "respiration_avg", "body_battery_change",
+    "hrv_last_night", "hrv_weekly_avg", "hrv_balanced_low",
+    "hrv_balanced_upper", "hrv_status",
+)
+
+
+def upsert_wellness(conn: sqlite3.Connection, date: str, values: dict, raw=None,
+                    sleep_raw=None, hrv_raw=None, fetched_at: str | None = None) -> None:
+    """One row per local date; a later sync the same day refreshes it.
+
+    Three storage rules, each load-bearing:
+
+    * **Promoted columns** (`values`) are derived from the raw payloads and are
+      always refreshed — they are recomputable, so they are never authoritative.
+    * **`raw_json`** holds the sync's COMPUTED READINESS snapshot, not a Garmin
+      payload (design D2). A backfill has no readiness for a past date and must
+      not erase one that exists, so it is only replaced when `raw` is supplied.
+    * **`sleep_json` / `hrv_json`** are the raw Garmin payloads, stored
+      **upgrade-only**: a stored payload that carries device data is never
+      replaced, but a hollow one may be filled in later. Garmin does not finalise
+      last night's sleep until you wake, and `fetch_sleep()` re-fetches the same
+      fourteen nights every sync — a literal write-once would freeze the hollow
+      payload for the newest night forever.
+
+    `fetched_at` records that the date was ASKED about. A row with a timestamp and
+    null metrics means the watch recorded nothing; no row (or no timestamp) means
+    the date was never fetched. Nothing else can tell those apart.
+    """
+    prior = conn.execute(
+        "SELECT raw_json, sleep_json, hrv_json, fetched_at, sleep_seconds, hrv_last_night "
+        "FROM daily_wellness WHERE date = ?", (date,)).fetchone()
+    p_raw, p_sleep, p_hrv, p_fetched, p_sleep_secs, p_hrv_last = prior or (None,) * 6
+
+    def _upgrade(stored, incoming, stored_has_data):
+        """Keep a night that has data; fill in one that does not."""
+        if incoming is None:
+            return stored
+        if stored is not None and stored_has_data:
+            return stored
+        return json.dumps(incoming, ensure_ascii=False)
+
+    cols = ("date", *WELLNESS_PROMOTED_COLUMNS,
+            "raw_json", "sleep_json", "hrv_json", "fetched_at", "updated_at")
+    row = (
+        date,
+        *(values.get(c) for c in WELLNESS_PROMOTED_COLUMNS),
+        json.dumps(raw, ensure_ascii=False) if raw is not None else (p_raw or "{}"),
+        _upgrade(p_sleep, sleep_raw, p_sleep_secs is not None),
+        _upgrade(p_hrv, hrv_raw, p_hrv_last is not None),
+        fetched_at or p_fetched,
+        _now(),
     )
+    conn.execute(
+        f"INSERT OR REPLACE INTO daily_wellness ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' * len(cols))})", row)
     conn.commit()
 
 
@@ -566,6 +642,44 @@ def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
         (key, str(value)),
     )
     conn.commit()
+
+
+def wellness_coverage(conn: sqlite3.Connection, today: str) -> dict:
+    """Wellness coverage over the archive's own span (earliest activity → today).
+
+    A date is COVERED once it has been asked about (`fetched_at`), whether or not
+    the watch recorded anything. A date the sync never requested is a GAP. Those
+    are different facts, and a chart that cannot tell them apart draws a lie —
+    which is the whole reason `fetched_at` exists.
+    """
+    earliest = conn.execute("SELECT MIN(start_time_local) FROM activities").fetchone()[0]
+    if not earliest:
+        return {"expected": 0, "rows": 0, "fetched": 0, "with_data": 0,
+                "gaps": [], "earliest": None, "today": today}
+
+    start = dt.date.fromisoformat(earliest[:10])
+    end = dt.date.fromisoformat(today)
+    expected = []
+    while start <= end:
+        expected.append(start.isoformat())
+        start += dt.timedelta(days=1)
+
+    fetched = {r[0] for r in conn.execute(
+        "SELECT date FROM daily_wellness WHERE fetched_at IS NOT NULL")}
+    with_data = conn.execute(
+        "SELECT COUNT(*) FROM daily_wellness WHERE fetched_at IS NOT NULL "
+        "AND (sleep_seconds IS NOT NULL OR hrv_last_night IS NOT NULL)").fetchone()[0]
+    rows = conn.execute("SELECT COUNT(*) FROM daily_wellness").fetchone()[0]
+
+    return {
+        "expected": len(expected),
+        "rows": rows,
+        "fetched": len(fetched & set(expected)),
+        "with_data": with_data,
+        "gaps": [d for d in expected if d not in fetched],
+        "earliest": expected[0],
+        "today": today,
+    }
 
 
 def coverage(conn: sqlite3.Connection) -> dict:

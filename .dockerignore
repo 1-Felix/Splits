@@ -26,6 +26,7 @@ tools
 !tools/plan-dump.mjs
 test_*.py
 test_*.mjs
+fixtures
 *.md
 .playwright-mcp
 .claude

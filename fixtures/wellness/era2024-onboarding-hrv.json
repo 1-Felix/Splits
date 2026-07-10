@@ -1,0 +1,22 @@
+{
+ "userProfilePk": 0,
+ "hrvSummary": {
+  "calendarDate": "2024-05-12",
+  "weeklyAvg": null,
+  "lastNightAvg": 59,
+  "lastNight5MinHigh": 91,
+  "baseline": null,
+  "status": "NONE",
+  "feedbackPhrase": "ONBOARDING_1",
+  "createTimeStamp": "2024-05-12T07:43:15.806"
+ },
+ "hrvReadings": [],
+ "startTimestampGMT": "2024-05-11T23:21:00.0",
+ "endTimestampGMT": "2024-05-12T07:04:39.0",
+ "startTimestampLocal": "2024-05-12T01:21:00.0",
+ "endTimestampLocal": "2024-05-12T09:04:39.0",
+ "sleepStartTimestampGMT": null,
+ "sleepEndTimestampGMT": null,
+ "sleepStartTimestampLocal": null,
+ "sleepEndTimestampLocal": null
+}

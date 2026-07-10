@@ -740,6 +740,127 @@ def test_verify_archive_distilled_coverage_paths():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# schema v6 (run-detail): columnar stream column + accessors + sync pass
+# ──────────────────────────────────────────────────────────────────────────────
+class _StreamFakeClient(_FakeClient):
+    """_FakeClient whose raw detail also carries the stream axes (sumDuration),
+    so the stream distiller has something to reshape."""
+    def get_activity_details(self, aid, maxchart=2000, maxpoly=0):
+        det = _steady_detail()
+        det["metricDescriptors"].append(
+            {"key": "sumDuration", "metricsIndex": len(det["metricDescriptors"])})
+        for i, row in enumerate(det["activityDetailMetrics"]):
+            row["metrics"].append(float(i))
+        return det
+
+
+def test_v6_streams_column_additive_and_idempotent():
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [_act(1)])
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(activities)")]
+    assert cols.count("detail_streams_json") == 1, "v6 column exists exactly once"
+    assert conn.execute("SELECT detail_streams_json FROM activities").fetchone()[0] is None, \
+        "the new column starts NULL"
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
+    conn.close()
+    conn = arch.open_archive(d)   # idempotent re-open at the current version
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(activities)")]
+    assert cols.count("detail_streams_json") == 1
+    # an "old reader" naming only pre-v6 columns works unchanged
+    assert conn.execute("SELECT activity_id, detail_json FROM activities").fetchone()[0] == 1
+    conn.close()
+
+
+def test_write_streams_and_missing_list():
+    import json
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [
+        _act(1, start="2026-07-01 08:00:00"),
+        _act(2, start="2026-07-02 08:00:00"),
+        _act(3, start="2026-07-03 08:00:00", type_key="strength_training"),
+        _act(4, start="2026-07-04 08:00:00"),
+    ])
+    for aid in (1, 2, 3):
+        arch.write_detail(conn, aid, {"d": 1})
+    assert arch.runs_missing_streams(conn) == [1, 2], \
+        "runs with raw detail only, oldest first; non-runs and detail-less skipped"
+
+    assert arch.write_streams(conn, 1, None) is False, "empty streams refused"
+    assert arch.write_streams(conn, 999, {"t": [0]}) is False, "unknown id: no row"
+    assert arch.write_streams(conn, 1, {"t": [0, 1], "d": [0, 3]}) is True
+    assert arch.runs_missing_streams(conn) == [2], "streamed run drops off the list"
+    # streams are derived and disposable — a recompute replaces, never duplicates
+    assert arch.write_streams(conn, 1, {"t": [0], "d": [9]}) is True
+    stored = json.loads(conn.execute(
+        "SELECT detail_streams_json FROM activities WHERE activity_id = 1").fetchone()[0])
+    assert stored["d"] == [9]
+    assert arch.streams_coverage(conn) == {"detailed_runs": 2, "streamed": 1, "missing": 1}
+    conn.close()
+
+
+def test_streams_pass_recovery_and_ratchet():
+    """run-detail 3.2/3.3 — topped-up runs gain streams inside the same archive
+    step; the recovery pass heals a pre-v6 archive from stored payloads with no
+    client anywhere near it; raw payloads stay byte-identical."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        sg.archive_step(_StreamFakeClient(), [_act(1), _act(2, start="2026-07-02 08:00:00")])
+        conn = arch.open_archive(d)
+        assert arch.streams_coverage(conn) == \
+            {"detailed_runs": 2, "streamed": 2, "missing": 0}, \
+            "topped-up runs gain streams within the same archive step"
+        assert arch.get_meta(conn, "expected_streamed_runs") == "2", "ratchet recorded"
+
+        # recovery: blank one row's streams (a pre-v6 archive in miniature)
+        # and heal it from the stored raw payload
+        raw_before = conn.execute(
+            "SELECT detail_json FROM activities WHERE activity_id = 2").fetchone()[0]
+        conn.execute("UPDATE activities SET detail_streams_json = NULL WHERE activity_id = 2")
+        conn.commit()
+        assert sg._streams_pass(conn) == 1, "recovery pass heals the gap"
+        assert sg._streams_pass(conn) == 0, "idempotent — second pass finds nothing"
+        raw_after = conn.execute(
+            "SELECT detail_json FROM activities WHERE activity_id = 2").fetchone()[0]
+        assert raw_after == raw_before, "raw payload untouched by the stream pass"
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_verify_archive_streams_coverage_paths():
+    """run-detail 3.4 — verify exits non-zero when streaming falls behind raw
+    detail; a fully pre-v6 archive (no streams at all) still passes."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        conn = arch.open_archive(d)
+        arch.upsert_activities(conn, [_act(1), _act(2, start="2026-07-02 08:00:00")])
+        arch.write_detail(conn, 1, {"d": 1})
+        arch.write_detail(conn, 2, {"d": 1})
+        conn.close()
+        assert sg.verify_archive() == 0, "pre-v6 archive (no streams) passes"
+
+        conn = arch.open_archive(d)
+        arch.write_streams(conn, 1, {"t": [0], "d": [0]})
+        conn.close()
+        assert sg.verify_archive() == 1, "partial streaming → regression"
+
+        conn = arch.open_archive(d)
+        arch.write_streams(conn, 2, {"t": [0], "d": [0]})
+        conn.close()
+        assert sg.verify_archive() == 0, "full stream coverage passes"
+
+        conn = arch.open_archive(d)
+        arch.set_meta(conn, "expected_streamed_runs", 5)
+        conn.close()
+        assert sg.verify_archive() == 1, "count below the ratchet → regression"
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # schema v5 (wellness-archive): raw wellness payloads + promoted columns
 # ──────────────────────────────────────────────────────────────────────────────
 _SLEEP_WITH_DATA = {"dailySleepDTO": {"sleepTimeSeconds": 27300, "deepSleepSeconds": 5280},

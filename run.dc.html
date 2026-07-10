@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Served at the parameterised route /run/:id (one level deep), so relative
+     URLs must resolve from the ROOT — scripts, nav links, and API fetches all
+     go through this base. -->
+<base href="/">
+<!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
+     ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
+     already present and never reaches for its unpkg CDN fallback. This pin is
+     load-bearing: React 19 ships no UMD build, so React cannot be pre-seeded as
+     a global — a version bump would blank the page until a bundler is adopted. -->
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./support.js"></script>
+<!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
+     before support.js mounts on DOMContentLoaded, so the persisted theme is
+     readable at component init — no default-theme flash -->
+<script type="module" src="./topbar.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<!-- Archivo + JetBrains Mono are vendored under ./vendor/fonts and declared via
+     @font-face in dashboard.css; no fonts.googleapis.com / fonts.gstatic.com
+     origin is contacted. -->
+<link rel="stylesheet" href="./dashboard.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0E0F12}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  ::-webkit-scrollbar{height:9px;width:9px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
+</style>
+</helmet>
+
+<div style="{{ rootStyle }}">
+<div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
+<div style="max-width:1100px;margin:0 auto">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:var(--sp-3)">
+      <div style="width:34px;height:34px;border-radius:var(--r-md);background:var(--accent);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <div style="width:14px;height:3px;background:#0E0F12;transform:skewX(-22deg);box-shadow:0 6px 0 #0E0F12,0 -6px 0 #0E0F12"></div>
+      </div>
+      <div style="line-height:1">
+        <div style="font-weight:900;font-size:var(--fs-xl);letter-spacing:-.04em">SPLITS</div>
+        <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
+      </div>
+      <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
+      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">Run detail</div>
+    </div>
+    <div class="topbar-actions">
+      <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="2">
+          <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
+        </sc-for>
+      </nav>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+        </sc-for>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== NOT-READY STATES: loading / archive offline / unknown run ===== -->
+  <sc-for list="{{ notReady }}" as="nr" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4);border-style:{{ nr.border }};border-color:{{ nr.color }}">
+      <div style="font-size:var(--fs-base);font-weight:700;color:{{ nr.color }}">{{ nr.title }}</div>
+      <div style="font-size:var(--fs-sm);color:var(--sub);font-weight:500;margin-top:var(--sp-1);line-height:1.5">{{ nr.body }}</div>
+    </div>
+  </sc-for>
+
+  <sc-for list="{{ page }}" as="pg" hint-placeholder-count="0">
+
+  <!-- ===== HEADLINE: the run + the verdict ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head">
+      <div>
+        <div style="font-size:var(--fs-xl);font-weight:800;letter-spacing:-.02em">{{ pg.name }}</div>
+        <div class="card-sub">{{ pg.dateLabel }} · {{ pg.summaryLine }}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="metric" style="font-size:var(--fs-2xl)">{{ pg.pace }}<span style="font-size:var(--fs-sm);color:var(--sub)"> /km</span></div>
+        <div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">avg pace</div>
+      </div>
+    </div>
+    <sc-for list="{{ pg.verdict }}" as="v" hint-placeholder-count="0">
+      <div style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-top:var(--sp-3);line-height:1.45">⚡ {{ v.t }}</div>
+    </sc-for>
+    <sc-for list="{{ pg.zones }}" as="zr" hint-placeholder-count="0">
+      <div style="display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-3)">
+        <span style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;white-space:nowrap">ZONES · TE {{ zr.te }} · {{ zr.temp }} °C</span>
+        <div style="display:flex;height:12px;border-radius:var(--r-sm);overflow:hidden;gap:1px;flex:1">
+          <sc-for list="{{ zr.parts }}" as="z" hint-placeholder-count="5"><div style="width:{{ z.pct }}%;background:{{ z.color }}" title="{{ z.title }}"></div></sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- ===== PLANNED VS ACTUAL (the thing Garmin cannot draw) ===== -->
+  <sc-for list="{{ pg.plan }}" as="pl" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Planned vs actual</div>
+          <div class="card-sub">{{ pl.sub }}</div>
+        </div>
+        <div style="text-align:right">
+          <span style="font-size:var(--fs-sm);font-weight:800;color:{{ pl.statusColor }}">{{ pl.statusGlyph }} {{ pl.statusWord }}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:var(--sp-5);flex-wrap:wrap;margin-top:var(--sp-3)">
+        <div><div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700">THE PLAN ASKED</div><div style="font-size:var(--fs-sm);font-weight:700;margin-top:var(--sp-0)">{{ pl.planned }}</div></div>
+        <div><div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700">WHAT HAPPENED</div><div style="font-size:var(--fs-sm);font-weight:700;margin-top:var(--sp-0);font-family:'JetBrains Mono'">{{ pl.actual }}</div></div>
+      </div>
+      <sc-for list="{{ pl.reason }}" as="rr" hint-placeholder-count="0">
+        <div style="font-size:var(--fs-xs);color:var(--warn);font-weight:600;margin-top:var(--sp-2)">{{ rr.t }}</div>
+      </sc-for>
+    </div>
+  </sc-for>
+
+  <!-- ===== TRACK STACK: full-resolution streams, one crosshair ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head" style="margin-bottom:var(--sp-2)">
+      <div>
+        <div class="card-title">The run, sample by sample</div>
+        <div class="card-sub">{{ pg.streamSub }}</div>
+      </div>
+      <div class="scope-row" style="margin:0">
+        <sc-for list="{{ pg.xModes }}" as="xm" hint-placeholder-count="2"><button class="scope-chip" aria-pressed="{{ xm.on }}" onClick="{{ xm.pick }}">{{ xm.label }}</button></sc-for>
+      </div>
+    </div>
+    <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="0">
+      <div style="display:flex;gap:var(--sp-4);flex-wrap:wrap;font-family:'JetBrains Mono';font-size:var(--fs-sm);font-weight:600;margin-bottom:var(--sp-2);padding:var(--sp-2) var(--sp-3);background:var(--panel2);border-radius:var(--r-md)">
+        <sc-for list="{{ ro.cells }}" as="c" hint-placeholder-count="6"><span><span style="color:var(--sub)">{{ c.k }}</span> {{ c.v }}</span></sc-for>
+      </div>
+    </sc-for>
+    <sc-for list="{{ pg.noStreams }}" as="ns" hint-placeholder-count="0">
+      <div style="padding:var(--sp-4);border:1px dashed var(--line);border-radius:var(--r-md);color:var(--sub);font-size:var(--fs-sm);font-weight:600">{{ ns.t }}</div>
+    </sc-for>
+    <sc-for list="{{ pg.tracks }}" as="tk" hint-placeholder-count="0">
+      <div style="margin-top:var(--sp-1)">
+        <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;letter-spacing:.04em">{{ tk.label }}</div>
+        {{ tk.chart }}
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- ===== TRACE + SPLITS + BESTS ===== -->
+  <div class="run-lower" style="margin-bottom:var(--sp-4)">
+    <div style="display:flex;flex-direction:column;gap:var(--sp-4)">
+      <sc-for list="{{ pg.trace }}" as="tc" hint-placeholder-count="0">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:var(--sp-2)">The route, as a shape</div>
+          <div class="card-sub" style="margin-bottom:var(--sp-2)">No basemap by design — the trace renders offline and follows the crosshair</div>
+          {{ tc.chart }}
+        </div>
+      </sc-for>
+      <sc-for list="{{ pg.bests }}" as="bs" hint-placeholder-count="0">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:var(--sp-2)">Best efforts inside this run</div>
+          <sc-for list="{{ bs.rows }}" as="b" hint-placeholder-count="0">
+            <div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">
+              <span style="min-width:46px;text-align:center;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ b.dist }}</span>
+              <span style="font-family:'JetBrains Mono';font-weight:700">{{ b.time }}</span>
+              <span style="margin-left:auto;color:var(--sub);font-size:var(--fs-xs);font-weight:600">{{ b.pace }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+    <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
+      <div class="card">
+        <div class="card-title" style="margin-bottom:var(--sp-1)">Splits</div>
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">Bars against this run's own median km — left of the line is faster</div>
+        <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
+          <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="8">
+            <div style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
+              <span style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.km }}</span>
+              <div style="flex:1;position:relative;height:16px">
+                <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)"></div>
+                <div style="position:absolute;top:2px;height:12px;border-radius:2px;left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
+              </div>
+              <span style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
+              <span style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-for>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:1600}}">
+class Component extends DCLogic {
+  // theme + nav come from topbar.js (shared, design D8); the id comes from
+  // location.pathname — never from the served filename (run-detail D6)
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
+            data: null, run: null, streams: null, streamsStatus: 'loading',
+            xMode: 'dist', cross: null, now: new Date() };
+
+  tb() { return window.SplitsTopbar; }
+  setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
+
+  runId() {
+    const m = /^\/run\/(\d+)$/.exec(window.location.pathname);
+    return m ? m[1] : null;
+  }
+
+  componentDidMount() {
+    import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
+    import('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
+    import('./coach-read.js').then((m) => { this._cr = m; this.setState({}); }).catch(() => {});
+    import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});
+    const id = this.runId();
+    if (!id) { this.setState({ run: { status: 'unknown' } }); return; }
+    fetch('./api/archive/activities/' + id)
+      .then((r) => { if (!r.ok) throw new Error(r.status === 503 ? 'offline' : r.status === 404 ? 'unknown' : 'status ' + r.status); return r.json(); })
+      .then((run) => this.setState({ run: { status: 'ready', run } }))
+      .catch((err) => this.setState({ run: { status: String((err && err.message) || err) } }));
+    fetch('./api/archive/activities/' + id + '/streams')
+      .then((r) => { if (!r.ok) throw new Error(r.status === 503 ? 'offline' : 'none'); return r.json(); })
+      .then((s) => this.setState({ streams: s, streamsStatus: 'ready' }))
+      .catch((err) => this.setState({ streamsStatus: String((err && err.message) || err) }));
+  }
+
+  setXMode = (m) => this.setState({ xMode: m, cross: null });
+
+  // continuous crosshair: pointer x (viewBox units) → nearest sample, shared
+  // by every track and the trace pin (chart-core's crosshairAt — D3)
+  moveCross = (vbX) => {
+    const cc = this._cc, S = this.state.streams;
+    if (!cc || !S) return;
+    const xs = this.state.xMode === 'time' ? S.t : S.d;
+    const c = cc.crosshairAt(this._xScale, xs, vbX);
+    if (c && c.i !== this.state.cross) this.setState({ cross: c.i });
+  };
+  leaveCross = () => this.setState({ cross: null });
+  crossKey = (e) => {
+    const S = this.state.streams;
+    if (!S) return;
+    const n = S.t.length;
+    const step = Math.max(1, Math.round(n / 100));
+    const cur = this.state.cross == null ? 0 : this.state.cross;
+    if (e.key === 'ArrowRight') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.min(n - 1, cur + step) }); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.max(0, cur - step) }); }
+    else if (e.key === 'Escape') { this.setState({ cross: null }); }
+  };
+
+  fmtPace(sec){ if (sec == null) return '—'; const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
+  fmtHMS(sec){ if (sec == null) return '—'; sec=Math.round(sec); const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60; return h ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0'); }
+  mDate(iso){ const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const d=new Date(iso); return M[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear(); }
+
+  renderVals() {
+    const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
+    for (const k in tv) rootStyle['--' + k] = tv[k];
+    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
+    const nav = this.tb() ? this.tb().navModel('run') : [];
+    const cc = this._cc, cv = this._cv, R = window.React;
+
+    let notReady = [];
+    let page = [];
+    let liveText = '';
+    const st = this.state.run;
+
+    if (!st || st.status === 'loading') {
+      notReady = [{ title: 'Loading run…', body: 'Fetching this run from the archive.', color: 'var(--sub)', border: 'dashed' }];
+    } else if (st.status === 'offline') {
+      notReady = [{ title: 'Archive offline', body: 'This run lives in the activity archive, which isn’t reachable right now. The rest of SPLITS keeps working — try again once the archive volume is back.', color: 'var(--warn)', border: 'dashed' }];
+    } else if (st.status !== 'ready') {
+      notReady = [{ title: 'Unknown run', body: 'No archived run has this id. Records and recent activities link here from their own pages.', color: 'var(--warn)', border: 'dashed' }];
+    } else if (cc && cv && R) {
+      const run = st.run;
+      const D = this.state.data;
+      const S = this.state.streams;
+      const km = run.distanceM ? run.distanceM / 1000 : 0;
+      const paceS = km > 0 && run.durationS ? Math.round(run.durationS / km) : null;
+      const dateISO = (run.startTimeLocal || '').slice(0, 10);
+
+      const pg = {};
+      pg.name = run.name || 'Run';
+      pg.dateLabel = this.mDate(dateISO);
+      pg.summaryLine = km.toFixed(1) + ' km · ' + this.fmtHMS(run.durationS) + ' · HR ' + (run.avgHr != null ? run.avgHr : '—')
+        + ' · ' + (run.avgCadence != null ? Math.round(run.avgCadence) + ' spm' : '—')
+        + (run.detail && run.detail.elevGain != null ? ' · +' + run.detail.elevGain + ' m' : '');
+      pg.pace = this.fmtPace(paceS);
+
+      // the verdict — the same coach-read line the drill-downs render (6.2)
+      let verdict = '';
+      if (this._cr && this._cr.coachRead && D && run.detail) {
+        const rr = { date: dateISO, type: 'Run', km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail: run.detail };
+        verdict = this._cr.coachRead(rr, D.weekPlan || [], (D.profile && D.profile.maxHR) || 0) || '';
+      }
+      pg.verdict = verdict ? [{ t: verdict }] : [];
+
+      // zones strip + TE from the distilled detail
+      pg.zones = [];
+      if (run.detail && run.detail.zoneMin && run.detail.zoneMin.some((m) => m > 0)) {
+        const zsum = run.detail.zoneMin.reduce((a, b) => a + b, 0) || 1;
+        pg.zones = [{
+          te: run.detail.te != null ? (+run.detail.te).toFixed(1) : '—',
+          temp: run.detail.tempC != null ? run.detail.tempC : '—',
+          parts: run.detail.zoneMin.map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')', title: 'Z' + (i + 1) + ' · ' + m + ' min' }))
+        }];
+      }
+
+      // planned vs actual, straight from the compliance join (6.8) — absent
+      // and silent for unplanned runs
+      pg.plan = [];
+      if (run.plan) {
+        const P = run.plan;
+        const glyph = { done: ['✓', 'var(--good)', 'done'], swapped: ['⇄', 'var(--good)', 'swapped'],
+                        partial: ['◐', 'var(--warn)', 'partial'], missed: ['✕', 'var(--warn)', 'missed'] }[P.status] || ['·', 'var(--sub)', P.status];
+        const reasonWord = { distance: 'shorter than planned', intensity: 'ran too hard for the intent' }[P.reason] || P.reason;
+        pg.plan = [{
+          sub: (P.wk ? P.wk + ' · ' : '') + P.date + (P.status === 'swapped' ? ' — matched to a different day than planned' : ''),
+          statusGlyph: glyph[0], statusColor: glyph[1], statusWord: glyph[2],
+          planned: (P.plannedTitle || P.plannedKind || 'session') + (P.plannedKm ? ' · ' + P.plannedKm + ' km' : '') + (P.plannedLoad ? ' · ' + P.plannedLoad : ''),
+          actual: km.toFixed(1) + ' km @ ' + this.fmtPace(paceS) + '/km' + (run.avgHr ? ' · HR ' + run.avgHr : ''),
+          reason: P.reason ? [{ t: reasonWord }] : []
+        }];
+      }
+
+      // best efforts inside this run, from run_metrics (6.7)
+      pg.bests = [];
+      if (run.bests) {
+        const DIST = [['best1kS', '1K', 1], ['bestMileS', 'MILE', 1.609], ['best5kS', '5K', 5], ['best10kS', '10K', 10], ['bestHalfS', 'HALF', 21.0975]];
+        const rows = DIST.filter(([k]) => run.bests[k] != null).map(([k, label, dkm]) => ({
+          dist: label, time: this.fmtHMS(run.bests[k]),
+          pace: this.fmtPace(Math.round(run.bests[k] / dkm)) + ' /km'
+        }));
+        if (rows.length) pg.bests = [{ rows }];
+      }
+
+      // ── the track stack (6.3/6.4): full-resolution columns, one x scale,
+      //    one crosshair index shared by every track and the trace pin ──
+      pg.tracks = []; pg.noStreams = []; pg.readout = []; pg.trace = []; pg.xModes = [];
+      const sst = this.state.streamsStatus;
+      if (S && sst === 'ready' && S.t && S.t.length > 1) {
+        const dist = this.state.xMode === 'dist';
+        const xs = dist ? S.d : S.t;
+        pg.streamSub = S.t.length + ' samples · full resolution · hover or focus for the crosshair';
+        pg.xModes = [
+          { label: 'distance', on: String(dist), pick: () => this.setXMode('dist') },
+          { label: 'time', on: String(!dist), pick: () => this.setXMode('time') }
+        ];
+        this._xScale = cc.sharedXScale(xs);
+        const xFmt = dist ? ((m) => (m / 1000).toFixed(1).replace(/\.0$/, '') + ' km') : ((s) => this.fmtHMS(s));
+
+        const toPace = (v) => (v != null && v >= 0.6) ? Math.round(1000 / v) : null;
+        const pace = (S.v || []).map(toPace);
+        const gap = S.gap ? S.gap.map(toPace) : null;
+        const has = (col) => col && col.some((x) => x != null);
+
+        const maxHR = (D && D.profile && D.profile.maxHR) || null;
+        const spans = maxHR ? [0.5, 0.6, 0.7, 0.8, 0.9].map((f, i) => ({
+          lo: Math.round(maxHR * f), hi: Math.round(maxHR * (f + 0.1)), color: 'var(--z' + (i + 1) + ')', opacity: 0.16
+        })) : [];
+
+        const defs = [];
+        if (has(pace)) defs.push({ id: 'tr-pace', label: 'PACE' + (gap && has(gap) ? ' · GRADE-ADJUSTED DASHED' : ''), h: 110, height: '96px',
+          ariaLabel: 'Pace by ' + (dist ? 'distance' : 'time') + (gap ? ', with grade-adjusted pace' : '') + '. Arrow keys to move the crosshair.',
+          policy: { minSpan: 60, steps: [15, 30, 60, 120], fmt: cc.fmt.pace, dirLabel: 'faster ↓', clip: [0.02, 0.98] },
+          series: [
+            ...(gap && has(gap) ? [{ key: 'gap', name: 'Grade-adjusted', color: 'var(--series2)', values: gap, width: 1.1, dash: '3 3' }] : []),
+            { key: 'pace', name: 'Pace', color: 'var(--series1)', values: pace, width: 1.6 }
+          ] });
+        if (has(S.hr)) defs.push({ id: 'tr-hr', label: 'HEART RATE · ZONES SHADED', h: 100, height: '88px',
+          ariaLabel: 'Heart rate over zone bands. Arrow keys to move the crosshair.',
+          policy: { minSpan: 40, tickCount: 4, fmt: cc.fmt.int }, unit: 'bpm', spans,
+          series: [{ key: 'hr', name: 'HR', color: 'var(--series2)', values: S.hr, width: 1.6 }] });
+        if (has(S.cad)) defs.push({ id: 'tr-cad', label: 'CADENCE', h: 76, height: '64px',
+          ariaLabel: 'Cadence. Arrow keys to move the crosshair.',
+          policy: { minSpan: 30, tickCount: 3, fmt: cc.fmt.int }, unit: 'spm',
+          series: [{ key: 'cad', name: 'Cadence', color: 'var(--series3)', values: S.cad, width: 1.3 }] });
+        if (has(S.elev)) defs.push({ id: 'tr-elev', label: 'ELEVATION', h: 76, height: '64px',
+          ariaLabel: 'Elevation. Arrow keys to move the crosshair.',
+          policy: { minSpan: 40, tickCount: 3, fmt: cc.fmt.int }, unit: 'm',
+          series: [{ key: 'elev', name: 'Elevation', color: 'var(--series4)', values: S.elev, width: 1.3 }] });
+        // power and performance condition only when their columns carry data,
+        // and their absence is silent (D4)
+        if (has(S.pwr)) defs.push({ id: 'tr-pwr', label: 'POWER', h: 76, height: '64px',
+          ariaLabel: 'Running power. Arrow keys to move the crosshair.',
+          policy: { minSpan: 120, tickCount: 3, fmt: cc.fmt.int }, unit: 'W',
+          series: [{ key: 'pwr', name: 'Power', color: 'var(--series1)', values: S.pwr, width: 1.3 }] });
+        if (has(S.pc)) defs.push({ id: 'tr-pc', label: 'PERFORMANCE CONDITION', h: 64, height: '54px',
+          ariaLabel: 'Performance condition. Arrow keys to move the crosshair.',
+          policy: { minSpan: 10, tickCount: 3, fmt: cc.fmt.int },
+          series: [{ key: 'pc', name: 'Perf condition', color: 'var(--series2)', values: S.pc, width: 1.3 }] });
+
+        const ci = this.state.cross;
+        const specs = cc.multiTrackSpec(
+          defs.map((t) => ({ ...t, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
+          { values: xs, fmt: xFmt, cross: ci != null ? { i: ci } : null });
+        pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
+
+        // the crosshair readout — every track's value at one sample (6.4)
+        if (ci != null) {
+          const cells = [];
+          cells.push({ k: 'at', v: (S.d && S.d[ci] != null ? (S.d[ci] / 1000).toFixed(2) + ' km' : '—') + ' · ' + this.fmtHMS(S.t[ci]) });
+          if (pace[ci] != null) cells.push({ k: 'pace', v: this.fmtPace(pace[ci]) + '/km' });
+          if (gap && gap[ci] != null) cells.push({ k: 'gap', v: this.fmtPace(gap[ci]) + '/km' });
+          if (S.hr && S.hr[ci] != null) cells.push({ k: 'hr', v: S.hr[ci] + ' bpm' });
+          if (S.cad && S.cad[ci] != null) cells.push({ k: 'cad', v: S.cad[ci] + ' spm' });
+          if (S.elev && S.elev[ci] != null) cells.push({ k: 'elev', v: S.elev[ci] + ' m' });
+          if (S.pwr && S.pwr[ci] != null) cells.push({ k: 'pwr', v: S.pwr[ci] + ' W' });
+          pg.readout = [{ cells }];
+          liveText = cells.map((c) => c.k + ' ' + c.v).join(', ');
+        }
+
+        // the trace (6.5): projected polyline, crosshair sample pinned on it
+        if (has(S.lat) && has(S.lon)) {
+          const proj = cc.projectTrack(S.lat, S.lon, 300, 300);
+          if (proj) {
+            const pin = (ci != null && proj.points[ci]) ? proj.points[ci] : null;
+            pg.trace = [{ chart: cv.renderTrace(proj, R, { w: 300, h: 300, pin, ariaLabel: 'GPS trace of ' + pg.name }) }];
+          }
+        }
+      } else if (sst === 'loading') {
+        pg.streamSub = 'loading streams…';
+        pg.noStreams = [{ t: 'Loading the sample streams…' }];
+      } else if (sst === 'offline') {
+        pg.streamSub = 'archive offline';
+        pg.noStreams = [{ t: 'Archive offline — the sample streams can’t be loaded right now.' }];
+      } else {
+        pg.streamSub = 'no stored streams';
+        pg.noStreams = [{ t: 'This run has no stored sample streams yet — the next sync writes them from the archived raw payload.' }];
+      }
+
+      // splits vs the run's own median (6.6)
+      pg.splits = [];
+      if (run.detail && run.detail.splits && run.detail.splits.length) {
+        const paces = run.detail.splits.map((s) => s.pace).filter((p) => p != null).sort((a, b) => a - b);
+        const median = paces.length ? paces[Math.floor(paces.length / 2)] : 0;
+        const maxDev = Math.max(15, ...run.detail.splits.map((s) => Math.abs((s.pace || median) - median)));
+        pg.splits = [{
+          rows: run.detail.splits.map((s) => {
+            const dev = (s.pace || median) - median;           // + slower, − faster
+            const half = Math.min(50, Math.abs(dev) / maxDev * 50);
+            return {
+              km: 'km ' + s.km,
+              pace: this.fmtPace(s.pace),
+              hr: s.hr != null ? s.hr : '—',
+              left: dev < 0 ? +(50 - half).toFixed(1) : 50,
+              width: +half.toFixed(1) || 0.5,
+              color: dev <= 0 ? 'var(--series1)' : 'var(--sub)'
+            };
+          })
+        }];
+      }
+
+      page = [pg];
+    } else {
+      notReady = [{ title: 'Loading…', body: 'Preparing the chart engine.', color: 'var(--sub)', border: 'dashed' }];
+    }
+
+    return { rootStyle, themes, nav, notReady, page, liveText };
+  }
+}
+</script>
+</body>
+</html>

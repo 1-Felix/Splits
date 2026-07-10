@@ -141,8 +141,31 @@
 .wk-back   { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--sub); background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px; cursor: pointer; }
 .wk-back:hover { color: var(--ink); border-color: var(--accent); }
 
+/* ---- chart engine (chart-core.js → chart-view.js) ----
+   The svg stretches to the card (marks only, non-scaling strokes); every piece
+   of TEXT and every DOT is HTML positioned over it, so labels stay crisp and
+   dots stay round at any card width. Values, labels and legend text wear ink
+   tokens — identity is carried by the swatch/mark beside them, never by
+   colouring the text itself. */
+.chart-svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+.chart-ytick { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: var(--fw-semibold); color: var(--sub); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chart-xtick { font-size: 9.5px; font-weight: var(--fw-semibold); color: var(--sub); line-height: 1; white-space: nowrap; }
+.chart-flag  { font-size: 9px; font-weight: var(--fw-bold); color: var(--sub); line-height: 1; }
+.chart-legend { display: flex; justify-content: flex-end; gap: var(--sp-3); font-size: var(--fs-2xs); font-weight: var(--fw-bold); color: var(--sub); margin-bottom: var(--sp-1); flex-wrap: wrap; }
+.chart-legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
+
+/* scope row (progress-views: per-chart range chips, offered only where the
+   series can honour them; the subtitle states the true span) */
+.scope-row  { display: flex; justify-content: flex-end; gap: var(--sp-1); margin: var(--sp-1) 0 var(--sp-0); }
+.scope-chip { font-size: var(--fs-2xs); font-weight: var(--fw-bold); color: var(--sub); background: transparent; border: 1px solid var(--line); border-radius: var(--r-pill); padding: 2px 9px; cursor: pointer; font-family: inherit; }
+.scope-chip:hover { color: var(--ink); }
+.scope-chip[aria-pressed="true"] { color: var(--ink); background: var(--accentFade); border-color: var(--accent); }
+
 /* ---- bottom split: runs table + drill-down + coach-log ---- */
 .split-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--sp-4); }
+
+/* ---- run page (/run/:id): trace + bests beside the splits table ---- */
+.run-lower { display: grid; grid-template-columns: minmax(260px, 1fr) 1.6fr; gap: var(--sp-4); }
 
 .runs-head, .runs-row { display: grid; grid-template-columns: 1fr 1.3fr .8fr .9fr .9fr .7fr .7fr; gap: var(--sp-2); }
 .runs-head { font-size: var(--fs-2xs); letter-spacing: .06em; color: var(--sub); font-weight: var(--fw-bold); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); }
@@ -161,6 +184,7 @@
   .stats-grid  { grid-template-columns: repeat(2, 1fr); }
   .week-grid   { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .split-grid  { grid-template-columns: 1fr; }
+  .run-lower   { grid-template-columns: 1fr; }
 }
 /* ============ phone ============ */
 @media (max-width: 560px) {

@@ -174,6 +174,30 @@
     </sc-for>
   </section>
 
+  <!-- ===== RACE TRAJECTORY (chart-engine ★) — insights.trajectory as a chart:
+       demonstrated (Riegel) vs model projection, the goal rule, and the gap
+       ribbon between them. Absent trajectory data renders nothing at all. -->
+  <sc-for list="{{ trajCard }}" as="tc" hint-placeholder-count="0">
+    <div class="section-head">
+      <h2>RACE TRAJECTORY</h2>
+      <div class="rule"></div>
+      <span class="meta">{{ tc.meta }}</span>
+    </div>
+    <div id="sec-traj" class="card" style="margin-bottom:var(--sp-5)">
+      <div class="card-head" style="margin-bottom:var(--sp-2)">
+        <div>
+          <div class="card-title">Half-marathon projection</div>
+          <div class="card-sub">{{ tc.sub }}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="metric" style="font-size:var(--fs-2xl)">{{ tc.last }}</div>
+          <div style="font-size:var(--fs-xs);font-weight:700;color:{{ tc.trendColor }}">{{ tc.trend }}</div>
+        </div>
+      </div>
+      {{ tc.chart }}
+    </div>
+  </sc-for>
+
   <!-- ===== THIS WEEK ===== -->
   <div class="section-head">
     <h2>THIS WEEK</h2>
@@ -276,27 +300,22 @@
       </div>
     </div>
 
-    <!-- SLEEP / HRV -->
+    <!-- SLEEP + HRV — two measures, two frames, two honest scales (chart-engine
+         D5: the old dual-axis "Sleep & HRV" canvas manufactured a correlation) -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Sleep &amp; recovery</div><div class="card-sub">14 nights · bars=hours, line=HRV</div></div>
+        <div><div class="card-title">Sleep</div><div class="card-sub">{{ sleep.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ sleep.avgH }}<span style="font-size:var(--fs-sm);color:var(--sub)"> h</span></div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">avg</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ sleep.navLabel }}" onKeyDown="{{ sleep.onKey }}" onMouseLeave="{{ sleep.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ sleep.bars }}" as="b" hint-placeholder-count="14"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:var(--accentFade)"></rect></sc-for>
-        <path d="{{ sleep.hrvD }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.2" stroke-linejoin="round"></path>
-        <sc-for list="{{ sleep.dots }}" as="p" hint-placeholder-count="14"><circle cx="{{ p.x }}" cy="{{ p.y }}" r="2.4" style="fill:var(--accent2)"></circle></sc-for>
-        <sc-for list="{{ sleep.bands }}" as="b" hint-placeholder-count="14"><rect data-hb="sleep" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ sleep.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
-        <sc-for list="{{ sleep.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ sleep.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="sleep" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
+      {{ sleep.chart }}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">HRV · overnight</div><div class="card-sub">{{ hrv.sub }}</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ hrv.last }}<span style="font-size:var(--fs-sm);color:var(--sub)"> ms</span></div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">last night</div></div>
       </div>
+      {{ hrv.chart }}
     </div>
 
   </section>
@@ -314,18 +333,7 @@
       </div>
     </div>
     <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
-      <div style="position:relative;width:{{ heat.w }}px">
-      <svg width="{{ heat.w }}" height="{{ heat.h }}" style="display:block" tabIndex="0" role="img" aria-label="{{ heat.navLabel }}" onKeyDown="{{ heat.onKey }}" onMouseLeave="{{ heat.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ heat.months }}" as="m" hint-placeholder-count="12"><text x="{{ m.x }}" y="9" fill="var(--sub)" style="font:600 9px 'Archivo'">{{ m.label }}</text></sc-for>
-        <sc-for list="{{ heat.cells }}" as="c" hint-placeholder-count="200"><rect data-hb="heat" x="{{ c.x }}" y="{{ c.y }}" width="11" height="11" rx="2.5" style="fill:{{ c.fill }};cursor:pointer" onMouseEnter="{{ c.onEnter }}" onClick="{{ c.onClick }}" aria-label="{{ c.aria }}"></rect></sc-for>
-        <sc-for list="{{ heat.outline }}" as="o" hint-placeholder-count="0"><rect x="{{ o.x }}" y="{{ o.y }}" width="13" height="13" rx="3" fill="none" style="stroke:var(--ink);pointer-events:none" stroke-width="1.5"></rect></sc-for>
-      </svg>
-      <sc-for list="{{ heat.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="heat" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div style="width:{{ heat.w }}px">{{ heat.chart }}</div>
     </div>
   </div>
 
@@ -353,35 +361,11 @@
               <div class="drill-grid">
                 <div>
                   <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">SPLITS /km</div>
-                  <div style="position:relative">
-                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.sp.onLeave }}">
-                    <path d="{{ dv.spPath }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
-                    <sc-for list="{{ dv.sp.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="splits" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-                    <sc-for list="{{ dv.sp.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-                    <sc-for list="{{ dv.sp.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
-                  </svg>
-                  <sc-for list="{{ dv.sp.card }}" as="cd" hint-placeholder-count="0">
-                    <div data-card="splits" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:7">
-                      <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-                    </div>
-                  </sc-for>
-                  </div>
+                  {{ dv.spChart }}
                 </div>
                 <div>
                   <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">HR {{ dv.hrStart }} → {{ dv.hrEnd }} ({{ dv.drift }})</div>
-                  <div style="position:relative">
-                  <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.dr.onLeave }}">
-                    <path d="{{ dv.hrPath }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
-                    <sc-for list="{{ dv.dr.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="drift" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-                    <sc-for list="{{ dv.dr.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-                    <sc-for list="{{ dv.dr.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
-                  </svg>
-                  <sc-for list="{{ dv.dr.card }}" as="cd" hint-placeholder-count="0">
-                    <div data-card="drift" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:7">
-                      <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-                    </div>
-                  </sc-for>
-                  </div>
+                  {{ dv.hrChart }}
                 </div>
                 <div>
                   <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">ZONES · TE {{ dv.te }} · {{ dv.temp }} °C</div>
@@ -465,34 +449,61 @@ class Component extends DCLogic {
     else if (k === 'ArrowLeft' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart: 'heat', i: Math.max(0, (cur < 0 ? 0 : cur) - step), pinned: true } }); }
     else if (k === 'Escape') { this.setState({ hover: null }); }
   };
+  // ---- chart engine plumbing -------------------------------------------------
+  // Wires the shared hover/pin/keyboard state into a descriptor, builds the
+  // spec (chart-core), renders it (chart-view), and remembers the spec so the
+  // aria-live region can announce the hovered reading. Until the engine
+  // modules resolve, a neutral placeholder holds the layout.
+  engineChart(id, desc) {
+    const cc = this._cc, cv = this._cv, R = window.React;
+    if (!cc || !cv || !R) {
+      return { chart: R ? R.createElement('div', { style: { height: desc.height || '130px' } }) : null, spec: null };
+    }
+    const h = this.state.hover;
+    desc.id = id;
+    desc.hover = {
+      index: (h && h.chart === id) ? h.i : null, pinned: !!(h && h.pinned),
+      onEnter: (i) => this.hoverPoint(id, i), onPin: (i, e) => this.pinPoint(id, i, e),
+      onKey: (e) => this.chartKey(id, (desc.hoverPoints || []).length, e),
+      onLeave: () => this.leaveChart(id)
+    };
+    const spec = cc.buildSpec(desc);
+    this._specs[id] = spec;
+    return { chart: cv.renderChart(spec, R), spec };
+  }
+
+  // structured drill-down for one run's distilled detail — sparklines render
+  // through the chart engine (kind 'spark': hover intact, no axis chrome)
   runDetail = (r) => {
     const d = r.detail;
     const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
     const sp = (d.splits && d.splits.length) ? d.splits.map(s => s.pace) : [0, 0];
     const zsum = (d.zoneMin || []).reduce((a, b) => a + b, 0) || 1;
-    const spL = this.line(sp, 30, { padT: 2, padB: 2 });
-    const hsL = this.line(hs, 30, { padT: 2, padB: 2 });
-    const spPts = spL.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'Km ' + (i + 1) + ', ' + this.fmtPace(sp[i]) + ' per km',
-      lines: [ { t: 'km ' + (i + 1), em: false }, { t: this.fmtPace(sp[i]) + ' /km', em: true } ]
-    }));
-    const hsPts = hsL.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent2)',
-      aria: 'Segment ' + (i + 1) + ', ' + hs[i] + ' bpm',
-      lines: [ { t: 'seg ' + (i + 1), em: false }, { t: hs[i] + ' bpm', em: true } ]
-    }));
-    const splits = {}; this.attachOverlay(splits, this.hoverLayer('splits', spPts, { vbW: 600, vbH: 30 })); splits.onLeave = () => this.leaveChart('splits');
-    const drift = {}; this.attachOverlay(drift, this.hoverLayer('drift', hsPts, { vbW: 600, vbH: 30 })); drift.onLeave = () => this.leaveChart('drift');
+    const spChart = this.engineChart('splits', {
+      kind: 'spark', height: '26px', frame: { w: 600, h: 30 },
+      ariaLabel: 'Per-kilometre splits. Arrow keys to inspect.',
+      x: { kind: 'point', n: sp.length },
+      y: { policy: {} },
+      series: [{ key: 'sp', name: 'Pace', color: 'var(--series1)', values: sp }],
+      hoverPoints: sp.map((v, i) => ({ i, aria: 'Km ' + (i + 1) + ', ' + this.fmtPace(v) + ' per km',
+        lines: [{ t: 'km ' + (i + 1), em: false }, { t: this.fmtPace(v) + ' /km', em: true }] }))
+    }).chart;
+    const hrChart = this.engineChart('drift', {
+      kind: 'spark', height: '26px', frame: { w: 600, h: 30 },
+      ariaLabel: 'Heart rate over the run. Arrow keys to inspect.',
+      x: { kind: 'point', n: hs.length },
+      y: { policy: {} },
+      series: [{ key: 'hr', name: 'HR', color: 'var(--series2)', values: hs }],
+      hoverPoints: hs.map((v, i) => ({ i, aria: 'Segment ' + (i + 1) + ', ' + v + ' bpm',
+        lines: [{ t: 'seg ' + (i + 1), em: false }, { t: v + ' bpm', em: true }] }))
+    }).chart;
     return {
       read: r.read || (r.km + ' km'),
       drift: d.driftBpm != null ? ((d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm') : '—',
       hrStart: hs[0], hrEnd: hs[hs.length - 1],
-      hrPath: hsL.d,
-      spPath: spL.d,
       zones: (d.zoneMin || []).map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')' })),
       te: d.te != null ? (+d.te).toFixed(1) : '—', temp: d.tempC != null ? d.tempC : '—',
-      sp: splits, dr: drift
+      spChart, hrChart
     };
   };
 
@@ -509,7 +520,10 @@ class Component extends DCLogic {
   };
 
   componentDidMount() {
-    import('./chart-hover.js').then((m) => { this._ch = m; this.setState({}); }).catch(() => {});
+    // chart engine: pure geometry (chart-core, which consumes chart-hover) +
+    // renderer (chart-view) — neutral placeholders render until they resolve
+    import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
+    import('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
     document.addEventListener('click', () => this.dismissHover());
     // last-sync indicator (absent when opened as a static file / no server API)
@@ -588,68 +602,9 @@ class Component extends DCLogic {
     return this._builtin;
   }
 
-  // ---- chart geometry helpers ----------------------------------------------
-  line(vals, h, opt) {
-    opt = opt || {}; const w = 600, pad = 6, padT = opt.padT != null ? opt.padT : 14, padB = opt.padB != null ? opt.padB : 12;
-    const all = vals.concat(opt.include || []);
-    let mn = opt.min != null ? opt.min : Math.min.apply(null, all);
-    let mx = opt.max != null ? opt.max : Math.max.apply(null, all);
-    const r = (mx - mn) || 1, head = opt.headroom != null ? opt.headroom : 0.14; mn -= r * head; mx += r * head;
-    const n = vals.length, span = (mx - mn) || 1;
-    const X = (i) => pad + (n <= 1 ? 0.5 : i / (n - 1)) * (w - 2 * pad);
-    const Y = (v) => padT + (1 - (v - mn) / span) * (h - padT - padB);
-    const pts = vals.map((v, i) => [X(i), Y(v)]);
-    const d = 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
-    const area = d + ' L' + pts[n-1][0].toFixed(1) + ' ' + (h-padB) + ' L' + pts[0][0].toFixed(1) + ' ' + (h-padB) + ' Z';
-    const grid = [padT, padT + (h-padT-padB)/2, h-padB];
-    return { d, area, grid, lastX:+pts[n-1][0].toFixed(1), lastY:+pts[n-1][1].toFixed(1), Y, pts };
-  }
-
-  hoverLayer(chartId, points, opt) {
-    const ch = this._ch;
-    if (!ch) return { bands: [], overlay: null };   // geometry module not loaded yet
-    opt = opt || {};
-    const vbW = opt.vbW != null ? opt.vbW : 600;
-    const vbH = opt.vbH != null ? opt.vbH : 150;
-    const bands = ch.bandRects(points, vbW, vbH).map((b, i) => ({
-      x: b.x, y: b.y, w: b.w, h: b.h,
-      onEnter: () => this.hoverPoint(chartId, i),
-      onClick: (e) => this.pinPoint(chartId, i, e),
-      aria: points[i].aria || ''
-    }));
-    const h = this.state.hover;
-    let overlay = null;
-    if (h && h.chart === chartId && h.i >= 0 && h.i < points.length) {
-      const p = points[h.i];
-      const pl = ch.cardPlace(p.x, p.y, vbW, vbH);
-      const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
-      const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
-      overlay = {
-        cross: opt.crosshair === false ? [] : [{ x:+p.x.toFixed(2), top:0, bot:vbH }],
-        dots: p.dots || [{ x:+p.x.toFixed(2), y:+p.y.toFixed(2), color:p.dotColor || 'var(--accent)' }],
-        card: {
-          left: pl.leftPct + '%', top: pl.topPct + '%', transform: 'translate(' + tx + ', ' + ty + ')',
-          rows: p.lines.map(r => ({ t: r.t, color: r.em ? 'var(--ink)' : 'var(--sub)', weight: r.em ? '800' : '600' }))
-        }
-      };
-    }
-    return { bands, overlay };
-  }
-
-  attachOverlay(obj, hl) {
-    obj.bands = hl.bands;
-    if (hl.overlay) { obj.cross = hl.overlay.cross; obj.odots = hl.overlay.dots; obj.card = [hl.overlay.card]; }
-    else { obj.cross = []; obj.odots = []; obj.card = []; }
-    return obj;
-  }
-
-  monthLabel(D, i) {
-    const sm = (D.history && D.history.vo2maxStartMonth) || '2024-01';
-    const parts = sm.split('-'); const y = +parts[0], m = +parts[1];
-    const idx = (m - 1) + i; const yr = y + Math.floor(idx / 12); const mo = ((idx % 12) + 12) % 12;
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return M[mo] + ' ' + yr;
-  }
+  // (the duplicated chart geometry helpers — line/hoverLayer/attachOverlay/
+  // monthLabel — are gone: geometry lives in chart-core.js, elements in
+  // chart-view.js, hover glue in engineChart above)
 
   relLabel(i, n, unit) {
     const back = n - 1 - i;
@@ -669,6 +624,8 @@ class Component extends DCLogic {
   renderVals() {
     const D = this.state.data || this.buildData();
     const H = D.history;
+    this._specs = {};   // ChartSpecs built this render, keyed by chart id (aria-live)
+    const cc = this._cc, cv = this._cv;
     const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
@@ -690,22 +647,33 @@ class Component extends DCLogic {
       pb:D.race.pb, goalPace:this.fmtPace(D.race.goalPaceSecPerKm)
     };
 
-    // readiness ring
+    // readiness ring — one hit target + a placed card; placement comes from
+    // chart-core's re-exported cardPlace (chart-hover geometry, unchanged)
     const c = 2*Math.PI*50;
     const ring = { c:+c.toFixed(1), off:+(c*(1-D.readiness.score/100)).toFixed(1) };
     const rd = D.readiness;
-    const ringPts = [{
-      x: 60, y: 60, dots: [],
-      aria: 'Readiness ' + rd.score + ', ' + rd.status,
-      lines: [
-        { t: 'Readiness ' + rd.score + ' · ' + rd.status, em: true },
-        { t: 'HRV ' + rd.hrv + ' · RHR ' + rd.restingHR, em: false },
-        { t: 'Sleep ' + rd.sleepHours + ' h · Load ' + rd.trainingLoad, em: false }
-      ]
-    }];
-    const ringHL = this.hoverLayer('ring', ringPts, { vbW: 120, vbH: 120, crosshair: false });
-    const ringObj = {}; this.attachOverlay(ringObj, ringHL); ringObj.onLeave = () => this.leaveChart('ring');
-    ringObj.onKey = (e) => this.chartKey('ring', 1, e); ringObj.navLabel = 'Readiness ring. Enter to read the breakdown.';
+    const ringRows = [
+      { t: 'Readiness ' + rd.score + ' · ' + rd.status, em: true },
+      { t: 'HRV ' + rd.hrv + ' · RHR ' + rd.restingHR, em: false },
+      { t: 'Sleep ' + rd.sleepHours + ' h · Load ' + rd.trainingLoad, em: false }
+    ];
+    const ringObj = {
+      bands: [{ onEnter: () => this.hoverPoint('ring', 0), onClick: (e) => this.pinPoint('ring', 0, e),
+                aria: 'Readiness ' + rd.score + ', ' + rd.status }],
+      card: [],
+      onLeave: () => this.leaveChart('ring'),
+      onKey: (e) => this.chartKey('ring', 1, e),
+      navLabel: 'Readiness ring. Enter to read the breakdown.'
+    };
+    { const hv = this.state.hover;
+      if (cc && hv && hv.chart === 'ring') {
+        const pl = cc.cardPlace(60, 60, 120, 120);
+        const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
+        const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
+        ringObj.card = [{ left: pl.leftPct + '%', top: pl.topPct + '%', transform: 'translate(' + tx + ', ' + ty + ')',
+          rows: ringRows.map(r => ({ t: r.t, color: r.em ? 'var(--ink)' : 'var(--sub)', weight: r.em ? '800' : '600' })) }];
+      }
+    }
 
     // KPI tiles
     const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
@@ -835,65 +803,91 @@ class Component extends DCLogic {
     const zones = { totalMin:ztot, easyPct:Math.round((D.hrZones[0].min+D.hrZones[1].min)/ztot*100),
       rows: D.hrZones.map(z=>({ z:z.z, label:z.label, min:z.min, pct:Math.round(z.min/zmax*100), color:'var(--z'+z.z+')' })) };
 
-    // sleep bars + hrv line
-    const sl = H.sleep; const sN=sl.length, sw=600, spX=6, sslot=(sw-2*spX)/sN, sbw=sslot*0.58, sH=150, spT=12, spB=10;
-    const shMax = Math.max.apply(null, sl.map(d=>d.hours))*1.1;
-    const hrvVals = sl.map(d=>d.hrv); let hmn=Math.min.apply(null,hrvVals), hmx=Math.max.apply(null,hrvVals); const hr=(hmx-hmn)||1; hmn-=hr*0.4; hmx+=hr*0.25;
-    const hY = v => spT + (1-(v-hmn)/((hmx-hmn)||1))*(sH-spT-spB-30);
-    const hX = i => spX + (sN<=1?0.5:i/(sN-1))*(sw-2*spX);
-    const sleepBars = sl.map((d,i)=>{ const bh=(d.hours/shMax)*(sH-spT-spB); return { x:+(spX+sslot*i+(sslot-sbw)/2).toFixed(1), y:+(sH-spB-bh).toFixed(1), w:+sbw.toFixed(1), h:+bh.toFixed(1) }; });
-    const sDots = sl.map((d,i)=>({ x:+hX(i).toFixed(1), y:+hY(d.hrv).toFixed(1) }));
-    const sleepObj = { avgH:(sl.reduce((a,b)=>a+b.hours,0)/sN).toFixed(1), bars:sleepBars, dots:sDots,
-      hrvD: 'M'+sDots.map(p=>p.x+' '+p.y).join(' L') };
-    const sleepPts = sleepBars.map((b, i) => ({
-      x: b.x + b.w / 2, y: sDots[i].y,
-      dots: [
-        { x: +(b.x + b.w / 2).toFixed(2), y: +b.y.toFixed(2), color: 'var(--accentFade)' },
-        { x: +sDots[i].x.toFixed(2), y: +sDots[i].y.toFixed(2), color: 'var(--accent2)' }
-      ],
-      aria: 'Night ' + this.relLabel(i, sN, 'night') + ', ' + sl[i].hours.toFixed(1) + ' hours, HRV ' + sl[i].hrv,
-      lines: [
-        { t: this.relLabel(i, sN, 'night'), em: false },
-        { t: sl[i].hours.toFixed(1) + ' h', em: true },
-        { t: 'HRV ' + sl[i].hrv + ' ms', em: false }
-      ]
-    }));
-    this.attachOverlay(sleepObj, this.hoverLayer('sleep', sleepPts));
-    sleepObj.onLeave = () => this.leaveChart('sleep');
-    sleepObj.onKey = (e) => this.chartKey('sleep', sleepPts.length, e); sleepObj.navLabel = 'Sleep and HRV over 14 nights. Arrow keys to inspect.';
+    // sleep + HRV — two frames, two honest scales (chart-engine D5): hours as
+    // zero-anchored bars against the 7–9 h target band; HRV as its own line
+    // over a personal rolling-median baseline band
+    const sl = H.sleep; const sN = sl.length;
+    const nightDates = Array.from({ length: sN }, (_, i) => new Date(new Date(D.today + 'T00:00:00Z').getTime() - (sN - 1 - i) * 86400000));
+    const sleepObj = {
+      avgH: (sl.reduce((a, b) => a + b.hours, 0) / sN).toFixed(1),
+      sub: sN + ' nights · target band 7–9 h',
+      chart: this.engineChart('sleep', {
+        ariaLabel: 'Sleep hours, ' + sN + ' nights, against the 7 to 9 hour target band. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'band', dates: nightDates },
+        y: { policy: cc ? cc.POLICIES.sleepHours : {}, label: 'h' },
+        series: [{ key: 'h', name: 'Sleep', color: 'var(--series2)', marks: ['bars'], values: sl.map(d => d.hours) }],
+        hoverPoints: sl.map((dn, i) => ({ i,
+          aria: 'Night ' + this.relLabel(i, sN, 'night') + ', ' + dn.hours.toFixed(1) + ' hours',
+          lines: [
+            { t: this.relLabel(i, sN, 'night'), em: false },
+            { t: dn.hours.toFixed(1) + ' h', em: true }
+          ].concat(dn.deepPct != null ? [{ t: dn.deepPct + '% deep', em: false }] : []) }))
+      }).chart
+    };
+    const hrvLast = sl.length ? sl[sl.length - 1].hrv : null;
+    const hrvObj = {
+      last: hrvLast != null ? hrvLast : '—',
+      sub: sN + ' nights · personal baseline band',
+      chart: this.engineChart('hrv', {
+        ariaLabel: 'Overnight HRV, ' + sN + ' nights, against your personal baseline band. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: nightDates },
+        y: { policy: cc ? cc.POLICIES.hrv : {}, label: 'ms' },
+        series: [{ key: 'hrv', name: 'HRV', color: 'var(--series1)', values: sl.map(d => d.hrv) }],
+        hoverPoints: sl.map((dn, i) => ({ i,
+          aria: 'Night ' + this.relLabel(i, sN, 'night') + ', HRV ' + dn.hrv + ' milliseconds',
+          lines: [
+            { t: this.relLabel(i, sN, 'night'), em: false },
+            { t: 'HRV ' + dn.hrv + ' ms', em: true }
+          ] }))
+      }).chart
+    };
 
-    // heatmap
+    // heatmap — cells through the engine (hoverMode 'cells': the cells are
+    // their own hit targets; the card and a11y come from the spec; the 2D
+    // arrow-key navigation stays this page's heatKey)
     const km = D.heatmapKm; const start = new Date(D.today); start.setDate(start.getDate()-(km.length-1));
     const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const cells=[]; const months=[]; let col=0, lastMonth=-1; const CELL=13, TOP=14;
+    const cells=[]; const heatHp=[]; const months=[]; let col=0, lastMonth=-1; const CELL=13, TOP=14;
     const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const hh = this.state.hover;
+    const heatIdx = (hh && hh.chart === 'heat') ? hh.i : null;
     for(let i=0;i<km.length;i++){ const dt=new Date(start); dt.setDate(start.getDate()+i); const dow=dt.getDay(); const row=(dow+6)%7;
       if(i>0 && row===0) col++;
       const v=km[i]; const lvl = v===0?0 : v<6?1 : v<9?2 : v<14?3 : 4;
       const cx = col*CELL, cy = TOP+row*CELL;
-      cells.push({ x:cx, y:cy, fill:'var(--hm'+lvl+')',
+      const aria = WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate()+', '+(v>0?v.toFixed(1)+' km':'rest');
+      cells.push({ x:cx, y:cy, w:11, h:11, rx:2.5, fill:'var(--hm'+lvl+')',
+        stroke: heatIdx === i ? 'var(--ink)' : undefined,
         onEnter: () => this.hoverPoint('heat', i),
         onClick: (e) => this.pinPoint('heat', i, e),
-        aria: WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate()+', '+(v>0?v.toFixed(1)+' km':'rest') });
-      if(dt.getMonth()!==lastMonth && row<=1){ lastMonth=dt.getMonth(); months.push({ x:col*CELL, label:M[dt.getMonth()] }); }
+        aria });
+      heatHp.push({ i, x: cx + 5.5, y: cy + 5.5, dots: [], aria,
+        lines: [
+          { t: WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate(), em: false },
+          { t: v>0 ? v.toFixed(1)+' km' : 'rest', em: true }
+        ] });
+      if(dt.getMonth()!==lastMonth && row<=1){ lastMonth=dt.getMonth(); months.push({ x:col*CELL, y:1, label:M[dt.getMonth()] }); }
     }
     const heatW=(col+1)*CELL+4, heatH=TOP+7*CELL;
-    const heat = { cells, months, w:heatW, h:heatH, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length };
-    const hh = this.state.hover;
-    if (this._ch && hh && hh.chart === 'heat' && hh.i >= 0 && hh.i < cells.length) {
-      const c = cells[hh.i]; const dt = new Date(start); dt.setDate(start.getDate()+hh.i); const v = km[hh.i];
-      const pl = this._ch.cardPlace(c.x + CELL/2, c.y + CELL/2, heatW, heatH);
-      const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
-      const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
-      heat.outline = [{ x:c.x-1, y:c.y-1 }];
-      heat.card = [{ left: pl.leftPct+'%', top: pl.topPct+'%', transform:'translate('+tx+', '+ty+')',
-        rows: [
-          { t: WD[dt.getDay()]+' '+M[dt.getMonth()]+' '+dt.getDate(), color:'var(--sub)', weight:'600' },
-          { t: v>0 ? v.toFixed(1)+' km' : 'rest', color:'var(--ink)', weight:'800' }
-        ] }];
-    } else { heat.outline = []; heat.card = []; }
-    heat.onLeave = () => this.leaveChart('heat');
-    heat.onKey = (e) => this.heatKey(heat.cells.length, e); heat.navLabel = 'Running heatmap, 365 days. Arrow keys by day, up and down by week.';
+    const heat = { w:heatW, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length, chart:null };
+    if (cc && cv && window.React) {
+      const heatSpec = cc.buildSpec({
+        id: 'heat', kind: 'cells', hoverMode: 'cells',
+        ariaLabel: 'Running heatmap, 365 days. Arrow keys by day, up and down by week.',
+        height: heatH + 'px', frame: { w: heatW, h: heatH, pad: { l: 0, r: 0, t: 0, b: 0 } },
+        x: {}, y: {}, series: [],
+        extraLayers: [{ kind: 'labels', labels: months }, { kind: 'cells', cells }],
+        hoverPoints: heatHp,
+        hover: { index: heatIdx, pinned: !!(hh && hh.pinned),
+                 onKey: (e) => this.heatKey(km.length, e), onLeave: () => this.leaveChart('heat') }
+      });
+      this._specs.heat = heatSpec;
+      heat.chart = cv.renderChart(heatSpec, window.React);
+    } else if (window.React) {
+      heat.chart = window.React.createElement('div', { style: { height: heatH + 'px' } });
+    }
 
     // recent runs
     const rdot = { 'Tempo Run':'var(--warn)','Long Run':'var(--accent)','Recovery':'var(--accent2)' };
@@ -918,19 +912,22 @@ class Component extends DCLogic {
     // row, which renders when the sync has emitted the `insights` block.
     const INS = D.insights || null;
     let traj = [];
-    if (INS) {
+    let trajCard = [];
+    this._trajSpec = null;
+    if (INS && INS.trajectory) {
       // hero-card trajectory row: latest demonstrated (Riegel) half, the gap
       // to Garmin's model, and the engine's trend verdict
-      const weekly = INS.trajectory.weekly || [];
+      const T = INS.trajectory;
+      const weekly = T.weekly || [];
       let lastR = null, lastG = null;
       for (let i = weekly.length - 1; i >= 0; i--) {
         if (lastR == null && weekly[i].riegelSec != null) lastR = weekly[i].riegelSec;
         if (lastG == null && weekly[i].garminSec != null) lastG = weekly[i].garminSec;
         if (lastR != null && lastG != null) break;
       }
+      const arrow = predTrend.indexOf('closing') === 0 ? '↘ ' : predTrend.indexOf('opening') === 0 ? '↗ ' : predTrend ? '→ ' : '';
       if (lastR != null) {
         const gap = lastG != null ? lastR - lastG : null;
-        const arrow = predTrend.indexOf('closing') === 0 ? '↘ ' : predTrend.indexOf('opening') === 0 ? '↗ ' : predTrend ? '→ ' : '';
         traj = [{
           riegel: this.fmtHMS(lastR),
           gap: gap != null ? ((gap >= 0 ? '+' : '−') + this.fmtHMS(Math.abs(gap)) + ' vs model') : '',
@@ -938,11 +935,76 @@ class Component extends DCLogic {
           trendColor: predTrendColor
         }];
       }
+
+      // ★ the trajectory CHART (chart-engine 5.x) — built entirely from
+      // insights.trajectory through buildSpec → renderChart. The engine's
+      // first consumer: two lines, the goal rule, the gap ribbon.
+      if (weekly.length > 1 && lastR != null && T.goalSec != null) {
+        const card = {
+          meta: weekly.length + ' weeks · goal ' + this.fmtHMS(T.goalSec),
+          sub: 'What recent runs demonstrate vs what the watch predicts · weekly',
+          last: this.fmtHMS(lastR),
+          trend: predTrend ? arrow + predTrend : '—',
+          trendColor: predTrendColor,
+          chart: null
+        };
+        const cc = this._cc, cv = this._cv, R = window.React;
+        if (cc && cv && R) {
+          const dates = weekly.map(wk => cc.isoWeekToDate(wk.week));
+          const riegel = weekly.map(wk => wk.riegelSec != null ? wk.riegelSec : null);
+          const garmin = weekly.map(wk => wk.garminSec != null ? wk.garminSec : null);
+          const hp = [];
+          weekly.forEach((wk, i) => {
+            if (wk.riegelSec == null && wk.garminSec == null) return;
+            const lines = [{ t: wk.week, em: false }];
+            const ariaBits = [wk.week];
+            if (wk.riegelSec != null) {
+              lines.push({ t: 'Riegel ' + this.fmtHMS(wk.riegelSec), em: true });
+              const g = wk.riegelSec - T.goalSec;
+              lines.push({ t: (g >= 0 ? '+' : '−') + this.fmtHMS(Math.abs(g)) + ' vs goal', em: false });
+              ariaBits.push('demonstrated ' + this.fmtHMS(wk.riegelSec));
+            }
+            if (wk.garminSec != null) {
+              lines.push({ t: 'Model ' + this.fmtHMS(wk.garminSec), em: false });
+              ariaBits.push('model ' + this.fmtHMS(wk.garminSec));
+            }
+            hp.push({ i, aria: ariaBits.join(', '), lines });
+          });
+          const h = this.state.hover;
+          const spec = cc.buildSpec({
+            id: 'traj',
+            ariaLabel: 'Race trajectory: demonstrated and model-predicted half-marathon time by week against the ' + this.fmtHMS(T.goalSec) + ' goal. Arrow keys to inspect.',
+            height: '170px', frame: { w: 600, h: 170 },
+            x: { kind: 'time', dates },
+            y: { policy: cc.POLICIES.trajectory, include: [T.goalSec] },
+            series: [
+              { key: 'riegel', name: 'Demonstrated (Riegel)', color: 'var(--series1)', values: riegel },
+              { key: 'garmin', name: 'Garmin model', color: 'var(--series2)', values: garmin, width: 1.6, dash: '4 4' }
+            ],
+            ribbon: ['riegel', 'garmin'],
+            rules: [{ v: T.goalSec, label: 'goal ' + this.fmtHMS(T.goalSec) }],
+            hoverPoints: hp,
+            hover: {
+              index: (h && h.chart === 'traj') ? h.i : null, pinned: !!(h && h.pinned),
+              onEnter: (i) => this.hoverPoint('traj', i), onPin: (i, e) => this.pinPoint('traj', i, e),
+              onKey: (e) => this.chartKey('traj', hp.length, e), onLeave: () => this.leaveChart('traj')
+            }
+          });
+          this._trajSpec = spec;
+          card.chart = cv.renderChart(spec, R);
+        } else if (R) {
+          // engine modules still loading — hold the layout, no flash
+          card.chart = R.createElement('div', { style: { height: '170px' } });
+        }
+        trajCard = [card];
+      }
     }
 
     let liveText = '';
-    { const h = this.state.hover; const reg = { sleep:sleepObj, heat:heat, ring:ringObj };
-      if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
+    { const h = this.state.hover;
+      if (h && h.chart === 'ring' && ringObj.card.length) liveText = ringObj.card[0].rows.map(r => r.t).join(', ');
+      else if (h && h.chart === 'traj' && this._trajSpec && this._trajSpec.hover.card) liveText = this._trajSpec.hover.card.rows.map(r => r.t).join(', ');
+      else { const sp = h && this._specs && this._specs[h.chart]; if (sp && sp.hover.card) liveText = sp.hover.card.rows.map(r => r.t).join(', '); } }
 
     // sync freshness — the pill model lives in topbar.js (shared across pages);
     // telemetry is anchored to D.today (the sync date) vs the live date.
@@ -959,8 +1021,8 @@ class Component extends DCLogic {
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
-      zones, sleep:sleepObj, heat, runs,
-      traj,
+      zones, sleep:sleepObj, hrv:hrvObj, heat, runs,
+      traj, trajCard,
       liveText
     };
   }

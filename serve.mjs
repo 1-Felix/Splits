@@ -281,11 +281,45 @@ function getArchiveActivity(db, id) {
     `SELECT ${ARCHIVE_SUMMARY_COLS}, max_hr, detail_distilled_json
      FROM activities WHERE activity_id = ?`).get(id);
   if (!r) return null;
+  // planned-vs-actual and this run's best efforts are plain SELECTs over rows
+  // the sync already scored (run-detail D5) — renamed, never derived. Guarded:
+  // a pre-v3/pre-metrics archive simply has no such table, which means no plan
+  // and no bests, not an outage.
+  let plan = null;
+  try {
+    const p = db.prepare(
+      `SELECT date, wk, planned_kind, planned_km, planned_load, planned_title,
+              status, reason, actual_km, actual_pace_s, actual_hr
+       FROM plan_compliance WHERE activity_id = ? ORDER BY date LIMIT 1`).get(id);
+    if (p) {
+      plan = {
+        date: p.date, wk: p.wk,
+        plannedKind: p.planned_kind, plannedKm: p.planned_km,
+        plannedLoad: p.planned_load, plannedTitle: p.planned_title,
+        status: p.status, reason: p.reason,
+        actualKm: p.actual_km, actualPaceS: p.actual_pace_s, actualHr: p.actual_hr,
+      };
+    }
+  } catch { /* no plan_compliance table in this archive */ }
+  let bests = null;
+  try {
+    const b = db.prepare(
+      `SELECT best_1k_s, best_mile_s, best_5k_s, best_10k_s, best_half_s
+       FROM run_metrics WHERE activity_id = ?`).get(id);
+    if (b) {
+      bests = {
+        best1kS: b.best_1k_s, bestMileS: b.best_mile_s, best5kS: b.best_5k_s,
+        best10kS: b.best_10k_s, bestHalfS: b.best_half_s,
+      };
+    }
+  } catch { /* no run_metrics table in this archive */ }
   return {
     ...archiveSummaryRow(r),
     maxHr: r.max_hr,
     // stored verbatim — the sync's distiller wrote it; never recomputed here
     detail: r.detail_distilled_json ? JSON.parse(r.detail_distilled_json) : null,
+    plan,
+    bests,
   };
 }
 
@@ -304,9 +338,41 @@ async function handleArchive(req, res, pathname, url) {
       json(req, res, 200, listArchiveActivities(db, url.searchParams));
       return;
     }
-    const idStr = pathname.slice("/api/archive/activities/".length);
-    if (!/^\d+$/.test(idStr)) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
-    const activity = getArchiveActivity(db, Number(idStr));
+    // /api/archive/activities/:id and …/:id/streams — the parse accepts the
+    // suffix while keeping the ^\d+$ guard on the id itself (run-detail 4.1)
+    const rest = pathname.slice("/api/archive/activities/".length);
+    const m = /^(\d+)(\/streams)?$/.exec(rest);
+    if (!m) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
+    const id = Number(m[1]);
+    if (m[2]) {
+      // streams: the stored columnar TEXT served VERBATIM — never parsed,
+      // never reshaped (the API stays a window, not an engine); gzip comes
+      // from sendBuffer's negotiation, which is what makes 105 KB cost ~29 KB
+      let row;
+      try {
+        row = db.prepare(
+          "SELECT detail_streams_json FROM activities WHERE activity_id = ?").get(id);
+      } catch (e) {
+        // a pre-v6 archive has no streams column — that's "no streams", not
+        // an outage; anything else (BUSY, corruption) falls to the 503 below
+        if (/no such column/i.test(String(e && e.message))) {
+          json(req, res, 404, { ok: false, error: "no streams for this activity" });
+          return;
+        }
+        throw e;
+      }
+      if (!row) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
+      if (!row.detail_streams_json) {
+        json(req, res, 404, { ok: false, error: "no streams for this activity" });
+        return;
+      }
+      sendBuffer(req, res, 200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      }, Buffer.from(row.detail_streams_json, "utf8"), "application/json; charset=utf-8");
+      return;
+    }
+    const activity = getArchiveActivity(db, id);
     if (!activity) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
     json(req, res, 200, activity);
   } catch {
@@ -457,8 +523,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // clean page routes serve their component file directly
+    // clean page routes serve their component file directly; /run/:id is the
+    // one parameterised route (run-detail D6) — the page reads its id from
+    // location.pathname, never from the served filename
     if (PAGES[pathname]) pathname = PAGES[pathname];
+    else if (/^\/run\/\d+$/.test(pathname)) pathname = "/run.dc.html";
 
     // ── data files come from the volume; everything else from the image ────────
     const baseDir = DATA_FILES.has(pathname) ? DATA_DIR : ROOT;

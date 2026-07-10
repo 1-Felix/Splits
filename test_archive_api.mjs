@@ -2,11 +2,13 @@
 // Patterned on test_plan_push.mjs: real server processes over temp data dirs.
 // Needs a Node with node:sqlite (stable in 24; experimental-but-present in 22.19).
 import assert from "node:assert";
+import http from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +29,18 @@ const DETAIL = {
 
 const RAW_MARKER = "raw-garmin-payload-marker";
 
+// Columnar streams (run-detail D1), stored as ONE exact string — the endpoint
+// must serve these bytes verbatim, never parse-and-reserialise. Long enough
+// that gzip negotiation engages.
+const STREAMS_TEXT = JSON.stringify({
+  t: Array.from({ length: 400 }, (_, i) => i),
+  d: Array.from({ length: 400 }, (_, i) => i * 3),
+  hr: Array.from({ length: 400 }, (_, i) => (i % 7 === 3 ? null : 140 + (i % 20))),
+  v: Array.from({ length: 400 }, (_, i) => +(2.5 + (i % 10) / 20).toFixed(2)),
+  lat: Array.from({ length: 400 }, (_, i) => +(47.37 + i * 0.00001).toFixed(5)),
+  lon: Array.from({ length: 400 }, (_, i) => +(8.53 + i * 0.00001).toFixed(5)),
+});
+
 function makeArchive(dir) {
   const db = new DatabaseSync(join(dir, "activity-archive.db"));
   db.exec(`CREATE TABLE activities (
@@ -45,25 +59,28 @@ function makeArchive(dir) {
     detail_fetched_at TEXT,
     first_seen_at     TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
-    detail_distilled_json TEXT
+    detail_distilled_json TEXT,
+    detail_streams_json TEXT
   )`);
   const ins = db.prepare(
     `INSERT INTO activities (activity_id, start_time_local, type_key, name,
        distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
-       summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'x', 'x', ?)`);
+       summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+       detail_streams_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'x', 'x', ?, ?)`);
   const raw = JSON.stringify({ secret: RAW_MARKER });
-  // 4 runs across 2025/2026 + one strength session; run 20 has no distilled detail
+  // 4 runs across 2025/2026 + one strength session; run 20 has no distilled
+  // detail and no streams
   ins.run(10, "2025-03-10 08:01:00", "running", "Tempo Tuesday",
-    10210.5, 3480.0, 156, 171, 168.5, 44.0, raw, raw, JSON.stringify(DETAIL));
+    10210.5, 3480.0, 156, 171, 168.5, 44.0, raw, raw, JSON.stringify(DETAIL), STREAMS_TEXT);
   ins.run(20, "2026-02-14 09:00:00", "running", "Valentine Long Run",
-    21100.0, 7200.0, 148, 165, 166.0, 120.0, raw, raw, null);
+    21100.0, 7200.0, 148, 165, 166.0, 120.0, raw, raw, null, null);
   ins.run(30, "2025-06-01 18:00:00", "strength_training", "Gym",
-    null, 3600.0, 110, 140, null, null, raw, null, null);
+    null, 3600.0, 110, 140, null, null, raw, null, null, null);
   ins.run(40, "2025-09-01 07:30:00", "running", "September Base",
-    8000.0, 2900.0, 140, 150, 165.0, 30.0, raw, raw, null);
+    8000.0, 2900.0, 140, 150, 165.0, 30.0, raw, raw, null, null);
   ins.run(50, "2025-11-20 07:30:00", "running", "November Base",
-    9000.0, 3200.0, 141, 152, 165.0, 35.0, raw, raw, null);
+    9000.0, 3200.0, 141, 152, 165.0, 35.0, raw, raw, null, null);
   db.close();
 }
 
@@ -107,6 +124,20 @@ const serverOverride = startServer(PORT + 2, { SPLITS_DATA_DIR: emptyDir, SPLITS
 
 const list = (base, qs = "") => fetch(base + "/api/archive/activities" + qs);
 const byId = (base, id) => fetch(base + "/api/archive/activities/" + id);
+const streams = (base, id) => fetch(base + "/api/archive/activities/" + id + "/streams");
+
+// raw node:http request (undici's fetch silently decompresses, hiding the very
+// Content-Encoding the gzip assertion needs to observe — test_compression.mjs
+// establishes this pattern)
+const rawGet = (base, path, headers = {}) => new Promise((resolve, reject) => {
+  const req = http.request(base + path, { headers }, (res) => {
+    const chunks = [];
+    res.on("data", (c) => chunks.push(c));
+    res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+  });
+  req.on("error", reject);
+  req.end();
+});
 
 let failed = false;
 try {
@@ -165,6 +196,34 @@ try {
     assert.ok(!(await r.clone().text()).includes(RAW_MARKER), "raw summary/detail JSON must never be serialized");
   }
 
+  // ── streams endpoint (run-detail group 4): stored columns, verbatim ───────
+  const st = await streams(B, 10);
+  assert.strictEqual(st.status, 200, "streams for a streamed run → 200");
+  assert.strictEqual(st.headers.get("content-type"), "application/json; charset=utf-8");
+  const stText = await st.text();
+  assert.strictEqual(stText, STREAMS_TEXT,
+    "the stored streams TEXT is served verbatim — never parsed and reserialised");
+  const stJson = JSON.parse(stText);
+  assert.strictEqual(stJson.t.length, 400, "full resolution — no downsampling");
+  assert.strictEqual(stJson.hr[3], null, "nulls survive the wire");
+
+  // gzip negotiation (run-detail 4.4): the raw wire carries Content-Encoding
+  // gzip and gunzips to the stored bytes; without Accept-Encoding it's plain
+  const gz = await rawGet(B, "/api/archive/activities/10/streams", { "accept-encoding": "gzip" });
+  assert.strictEqual(gz.headers["content-encoding"], "gzip", "streams are gzipped on the wire");
+  assert.ok(gz.body.length < Buffer.byteLength(STREAMS_TEXT) / 2, "gzip actually pays for itself");
+  assert.strictEqual(gunzipSync(gz.body).toString("utf8"), STREAMS_TEXT, "gunzips to the stored bytes");
+  const plainSt = await rawGet(B, "/api/archive/activities/10/streams");
+  assert.ok(!plainSt.headers["content-encoding"], "no Accept-Encoding → plain body");
+
+  // the fail-soft contract (run-detail 4.3)
+  assert.strictEqual((await streams(B, 999999)).status, 404, "unknown id → 404");
+  assert.strictEqual((await streams(B, 20)).status, 404, "run without stored streams → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/activities/abc/streams")).status, 404, "malformed id → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/activities/10/streamsX")).status, 404, "junk suffix → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/activities/10/streams", { method: "POST", body: "x" })).status, 405, "POST streams → 405");
+  assert.ok(!stText.includes(RAW_MARKER), "raw payloads never leave via streams");
+
   // write methods rejected, no state change
   assert.strictEqual((await fetch(B + "/api/archive/activities", { method: "POST", body: "x" })).status, 405, "POST → 405");
   assert.strictEqual((await fetch(B + "/api/archive/activities/10", { method: "PUT", body: "x" })).status, 405, "PUT → 405");
@@ -173,6 +232,7 @@ try {
   // ── fail-soft: no database → 503, everything else keeps serving ───────────
   assert.strictEqual((await list(Bmissing)).status, 503, "missing db → 503 on the list");
   assert.strictEqual((await byId(Bmissing, 10)).status, 503, "missing db → 503 on by-id");
+  assert.strictEqual((await streams(Bmissing, 10)).status, 503, "missing db → 503 on streams");
   assert.ok((await fetch(Bmissing + "/api/status")).ok, "other APIs unaffected");
   assert.ok((await fetch(Bmissing + "/Running%20Dashboard.dc.html")).ok, "dashboard page still serves");
 

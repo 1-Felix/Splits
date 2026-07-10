@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -173,6 +173,19 @@ def _apply_schema_v5(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE daily_wellness ADD COLUMN {name} {decl}")
 
 
+# Schema v6 (run-detail, design D1): ONE additive column on activities — the
+# run's full sample stream reshaped to rounded COLUMNS (t/d/hr/v/gap/cad/elev/
+# pwr/lat/lon/pc), written by the sync's stream distiller and served verbatim by
+# the archive API's /streams endpoint. Like detail_distilled_json it is derived
+# and disposable: detail_json stays the untouched source of truth and a
+# recompute simply replaces the streams. (v5 belongs to wellness-archive; both
+# migrations are additive and guarded, so either lands first without conflict.)
+def _apply_schema_v6(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(activities)")}
+    if "detail_streams_json" not in cols:
+        conn.execute("ALTER TABLE activities ADD COLUMN detail_streams_json TEXT")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -206,7 +219,8 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V3_SQL)
         _apply_schema_v4(conn)
         _apply_schema_v5(conn)
-        # Forward-only migration: v1→v2→v3→v4→v5 is purely additive (CREATE IF
+        _apply_schema_v6(conn)
+        # Forward-only migration: v1→…→v6 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -625,6 +639,51 @@ def distilled_coverage(conn: sqlite3.Connection) -> dict:
         f"WHERE a.detail_distilled_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
     return {"detailed_runs": detailed_runs, "distilled": distilled,
             "missing": detailed_runs - distilled}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# columnar run streams (schema v6 — filled by sync_garmin's stream distiller;
+# the archive API serves detail_streams_json verbatim, never the raw payloads)
+# ──────────────────────────────────────────────────────────────────────────────
+def write_streams(conn: sqlite3.Connection, activity_id, streams) -> bool:
+    """Store a run's columnar sample streams. Like the distilled detail they
+    are derived and disposable — a recompute simply replaces them. Empty
+    payloads are refused; commits per call so an interrupted pass never loses
+    completed work."""
+    if not streams:
+        return False
+    cur = conn.execute(
+        "UPDATE activities SET detail_streams_json = ? WHERE activity_id = ?",
+        (json.dumps(streams, ensure_ascii=False, separators=(",", ":")), activity_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def runs_missing_streams(conn: sqlite3.Connection) -> list:
+    """activity_ids of archived runs holding raw detail but no stream columns —
+    the stream pass's work list (and the recovery pass over a pre-v6 archive),
+    oldest first."""
+    rows = conn.execute(
+        f"""SELECT a.activity_id FROM activities a
+            WHERE a.detail_json IS NOT NULL
+              AND a.detail_streams_json IS NULL
+              AND {_RUN_TYPE_SQL}
+            ORDER BY a.start_time_local""").fetchall()
+    return [r[0] for r in rows]
+
+
+def streams_coverage(conn: sqlite3.Connection) -> dict:
+    """The streams section --verify-archive reports: runs holding raw detail
+    vs runs holding the columnar streams."""
+    detailed_runs = conn.execute(
+        f"SELECT COUNT(*) FROM activities a "
+        f"WHERE a.detail_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
+    streamed = conn.execute(
+        f"SELECT COUNT(*) FROM activities a "
+        f"WHERE a.detail_streams_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
+    return {"detailed_runs": detailed_runs, "streamed": streamed,
+            "missing": detailed_runs - streamed}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

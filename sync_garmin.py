@@ -414,6 +414,69 @@ def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
     }
 
 
+# Columns the stream distiller keeps, with the precision each metric actually
+# carries (run-detail design D1). Everything else in the raw payload is
+# derivable and deliberately dropped:
+#   directTimestamp          — t plus the activity's start time
+#   directRunCadence         — SINGLE-SIDE strides/min despite a descriptor
+#                              claiming stepsPerMinute (79.8 where the promoted
+#                              avg_cadence reads 160.3); directDoubleCadence is
+#                              the true steps/min — see insight_metrics.
+#                              read_stream's quirk note
+#   directFractionalCadence  — folded into directDoubleCadence
+#   sumElapsedDuration / sumMovingDuration — sumDuration is the shared axis
+#   sumAccumulatedPower      — the integral of directPower
+#   directVerticalSpeed      — the derivative of directElevation
+_STREAM_COLUMNS = (
+    ("t",    "sumDuration",                0),
+    ("d",    "sumDistance",                0),
+    ("hr",   "directHeartRate",            0),
+    ("v",    "directSpeed",                2),
+    ("gap",  "directGradeAdjustedSpeed",   2),
+    ("cad",  "directDoubleCadence",        0),
+    ("elev", "directElevation",            1),
+    ("pwr",  "directPower",                0),
+    ("lat",  "directLatitude",             5),
+    ("lon",  "directLongitude",            5),
+    ("pc",   "directPerformanceCondition", 0),
+)
+
+
+def distill_run_streams(det: dict | None) -> dict | None:
+    """Reshape a RAW `get_activity_details` payload into rounded columnar
+    streams (run-detail design D1): one array per metric, sample-aligned,
+    nulls preserved as nulls, at full stored resolution. Pure over its input —
+    no network, no clock. The GPS track lives in lat/lon: the sync fetches
+    `maxpoly=0`, so `geoPolylineDTO.polyline` is always empty and the stream
+    columns are the only (and complete) source of the route."""
+    if not det:
+        return None
+    idx = {d.get("key"): d.get("metricsIndex") for d in (det.get("metricDescriptors") or [])}
+    rows = det.get("activityDetailMetrics") or []
+    if not rows:
+        return None
+    out = {}
+    for key, source, digits in _STREAM_COLUMNS:
+        i = idx.get(source)
+        if i is None:
+            continue                       # metric absent from this payload
+        col = []
+        for row in rows:
+            m = row.get("metrics") or []
+            val = m[i] if i < len(m) else None
+            if val is None:
+                col.append(None)
+            elif digits == 0:
+                col.append(int(round(val)))
+            else:
+                col.append(round(val, digits))
+        if any(v is not None for v in col):
+            out[key] = col
+    if "t" not in out or "d" not in out:
+        return None                        # not a stream payload worth serving
+    return out
+
+
 def fetch_heatmap(acts: list[dict]) -> list[float]:
     by_day: dict[str, float] = {}
     for a in acts:
@@ -994,9 +1057,11 @@ def archive_step(client, acts: list[dict]) -> None:
         added = activity_archive.upsert_activities(conn, acts)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         distilled = _distill_pass(conn)
+        streamed = _streams_pass(conn)
         _record_expectations(conn)
         log(f"✓ archive: +{added} activities, {topped} details topped up"
-            + (f", {distilled} runs distilled" if distilled else ""))
+            + (f", {distilled} runs distilled" if distilled else "")
+            + (f", {streamed} runs streamed" if streamed else ""))
     finally:
         conn.close()
 
@@ -1168,6 +1233,19 @@ def _distill_pass(conn) -> int:
     return done
 
 
+def _streams_pass(conn) -> int:
+    """Write columnar streams for every archived run holding raw detail but no
+    streams — this sync's topped-up runs and (as the recovery pass) the whole
+    pre-v6 archive. Stored payloads in, no network; idempotent — a second pass
+    finds nothing to do. Raw payloads are never modified."""
+    done = 0
+    for aid in activity_archive.runs_missing_streams(conn):
+        streams = distill_run_streams(activity_archive.detail_payload(conn, aid))
+        if streams and activity_archive.write_streams(conn, aid, streams):
+            done += 1
+    return done
+
+
 def _record_expectations(conn) -> None:
     """Ratchet the coverage expectations --verify-archive checks against: the
     archive never deletes, so the count can only grow and the earliest date
@@ -1185,6 +1263,11 @@ def _record_expectations(conn) -> None:
     prev_distilled = activity_archive.get_meta(conn, "expected_distilled_runs")
     if dcov["distilled"] > int(prev_distilled or 0):
         activity_archive.set_meta(conn, "expected_distilled_runs", dcov["distilled"])
+    # Streamed runs accumulate the same way (run-detail design D1).
+    scov = activity_archive.streams_coverage(conn)
+    prev_streamed = activity_archive.get_meta(conn, "expected_streamed_runs")
+    if scov["streamed"] > int(prev_streamed or 0):
+        activity_archive.set_meta(conn, "expected_streamed_runs", scov["streamed"])
     activity_archive.set_meta(conn, "last_append_at",
                               dt.datetime.now().astimezone().isoformat(timespec="seconds"))
 
@@ -1267,6 +1350,10 @@ def verify_archive() -> int:
         log(f"  distilled  : {dcov['distilled']}/{dcov['detailed_runs']} detailed runs"
             + (f", {dcov['missing']} missing" if dcov["missing"] else ""))
 
+        scov = activity_archive.streams_coverage(conn)
+        log(f"  streams    : {scov['streamed']}/{scov['detailed_runs']} detailed runs"
+            + (f", {scov['missing']} missing" if scov["missing"] else ""))
+
         mcov = activity_archive.metrics_coverage(conn, insight_metrics.METRICS_VERSION)
         log(f"  metrics    : {mcov['at_version']}/{mcov['detailed_runs']} detailed runs at "
             f"v{insight_metrics.METRICS_VERSION}"
@@ -1313,6 +1400,17 @@ def verify_archive() -> int:
         if exp_distilled and dcov["distilled"] < int(exp_distilled):
             failures.append(f"distilled coverage regressed: {dcov['distilled']} distilled "
                             f"runs < expected {exp_distilled}")
+        # Stream coverage regressions (run-detail design D1). A fully
+        # unstreamed archive is pre-v6, not a regression — but a partial pass,
+        # or a count below the ratchet, means the stream distiller fell behind
+        # the raw detail it derives from.
+        if scov["streamed"] and scov["missing"] > 0:
+            failures.append(f"stream coverage regressed: {scov['missing']} detailed runs "
+                            f"without streams (sync should have distilled them)")
+        exp_streamed = activity_archive.get_meta(conn, "expected_streamed_runs")
+        if exp_streamed and scov["streamed"] < int(exp_streamed):
+            failures.append(f"stream coverage regressed: {scov['streamed']} streamed "
+                            f"runs < expected {exp_streamed}")
         # Wellness coverage regressions (wellness-archive design D3/D4). Ratcheted
         # on the backfill's own completion marker, not on the presence of rows:
         # the nightly sync starts stamping `fetched_at` the moment it deploys, so

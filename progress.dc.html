@@ -77,27 +77,15 @@
   </div>
 
   <div class="card" style="margin-bottom:var(--sp-4)">
-    <div class="card-head" style="margin-bottom:var(--sp-2)">
+    <div class="card-head">
       <div>
         <div class="card-title">Weekly volume</div>
-        <div class="card-sub">Last 26 weeks · building to peak, taper begins</div>
+        <div class="card-sub">{{ vol.sub }}</div>
       </div>
       <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);letter-spacing:-.02em">{{ vol.lastKm }}<span style="font-size:var(--fs-sm);color:var(--sub)"> km</span></div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">this week</div></div>
     </div>
-    <div style="position:relative">
-    <svg viewBox="0 0 600 150" style="width:100%;height:140px;display:block" tabIndex="0" role="img" aria-label="{{ vol.navLabel }}" onKeyDown="{{ vol.onKey }}" onMouseLeave="{{ vol.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-      <sc-for list="{{ vol.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-      <sc-for list="{{ vol.bars }}" as="b" hint-placeholder-count="26"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2" style="fill:{{ b.fill }}"></rect></sc-for>
-      <sc-for list="{{ vol.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="vol" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-      <sc-for list="{{ vol.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
-      <sc-for list="{{ vol.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-    </svg>
-    <sc-for list="{{ vol.card }}" as="cd" hint-placeholder-count="0">
-      <div data-card="vol" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-        <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-      </div>
-    </sc-for>
-    </div>
+    <div class="scope-row"><sc-for list="{{ vol.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+    {{ vol.chart }}
   </div>
 
   <!-- ===== CHART GRID (relocated from the cockpit) ===== -->
@@ -106,100 +94,40 @@
     <!-- VO2 -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · 30 months</div></div>
+        <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · {{ vo2.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ vo2.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ vo2.navLabel }}" onKeyDown="{{ vo2.onKey }}" onMouseLeave="{{ vo2.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ vo2.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ vo2.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ vo2.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ vo2.lastX }}" cy="{{ vo2.lastY }}" r="4" style="fill:var(--accent)"></circle>
-        <sc-for list="{{ vo2.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="vo2" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ vo2.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ vo2.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ vo2.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="vo2" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ vo2.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ vo2.chart }}
     </div>
 
     <!-- PACE -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Avg run pace</div><div class="card-sub">Dashed = goal {{ race.goalPace }}/km</div></div>
+        <div><div class="card-title">Avg run pace</div><div class="card-sub">Goal {{ race.goalPace }}/km dashed · {{ pace.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ pace.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ pace.navLabel }}" onKeyDown="{{ pace.onKey }}" onMouseLeave="{{ pace.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ pace.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <line x1="0" y1="{{ pace.goalY }}" x2="600" y2="{{ pace.goalY }}" style="stroke:var(--accent)" stroke-width="1.4" stroke-dasharray="5 5"></line>
-        <path d="{{ pace.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ pace.d }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ pace.lastX }}" cy="{{ pace.lastY }}" r="4" style="fill:var(--accent2)"></circle>
-        <sc-for list="{{ pace.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="pace" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ pace.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ pace.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ pace.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="pace" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ pace.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ pace.chart }}
     </div>
 
     <!-- FITNESS / FATIGUE -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Fitness &amp; fatigue</div><div class="card-sub">Form (freshness) <span style="color:var(--accent)">{{ form.value }}</span></div></div>
-        <div style="display:flex;gap:var(--sp-3);font-size:var(--fs-xs);font-weight:700">
-          <span style="color:var(--accent)">● Fitness</span><span style="color:var(--accent2)">● Fatigue</span>
-        </div>
+        <div><div class="card-title">Fitness &amp; fatigue</div><div class="card-sub">Form (freshness) <span style="color:var(--accent)">{{ form.value }}</span> · {{ fit.sub }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ fit.navLabel }}" onKeyDown="{{ fit.onKey }}" onMouseLeave="{{ fit.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ fit.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ fit.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ fit.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <path d="{{ fit.atl }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"></path>
-        <sc-for list="{{ fit.bands }}" as="b" hint-placeholder-count="26"><rect data-hb="fit" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ fit.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ fit.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ fit.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="fit" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ fit.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ fit.chart }}
     </div>
 
     <!-- CADENCE -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Cadence</div><div class="card-sub">Steps / min · efficiency rising</div></div>
+        <div><div class="card-title">Cadence</div><div class="card-sub">Steps / min · {{ cad.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cad.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cad.navLabel }}" onKeyDown="{{ cad.onKey }}" onMouseLeave="{{ cad.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ cad.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <path d="{{ cad.area }}" style="fill:var(--accentFade)"></path>
-        <path d="{{ cad.d }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path>
-        <circle cx="{{ cad.lastX }}" cy="{{ cad.lastY }}" r="4" style="fill:var(--accent)"></circle>
-        <sc-for list="{{ cad.bands }}" as="b" hint-placeholder-count="30"><rect data-hb="cad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ cad.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ cad.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ cad.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="cad" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ cad.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ cad.chart }}
     </div>
 
     <!-- ===== INSIGHTS (relocated) — hidden until the sync emits the
@@ -209,47 +137,21 @@
     <!-- PACE @ REFERENCE HR -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Pace @ {{ eff.bandLabel }}</div><div class="card-sub">Aerobic efficiency · pooled samples · gaps = too little in-band time</div></div>
+        <div><div class="card-title">Pace @ {{ eff.bandLabel }}</div><div class="card-sub">Aerobic efficiency · dot size = in-band minutes · gaps &amp; hollow dots = thin evidence · {{ eff.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent2)">{{ eff.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ eff.delta }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ eff.navLabel }}" onKeyDown="{{ eff.onKey }}" onMouseLeave="{{ eff.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ eff.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <sc-for list="{{ eff.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
-        <sc-for list="{{ eff.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent2)"></circle></sc-for>
-        <sc-for list="{{ eff.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insEff" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ eff.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ eff.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ eff.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="insEff" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ eff.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ eff.chart }}
     </div>
 
     <!-- CADENCE @ REFERENCE PACE -->
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Cadence @ {{ cadRef.bandLabel }}</div><div class="card-sub">Form at easy pace · pooled samples · gaps = too little in-band time</div></div>
+        <div><div class="card-title">Cadence @ {{ cadRef.bandLabel }}</div><div class="card-sub">Form at easy pace · dot size = in-band minutes · gaps &amp; hollow dots = thin evidence · {{ cadRef.sub }}</div></div>
         <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cadRef.last }}</div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ cadRef.delta }}</div></div>
       </div>
-      <div style="position:relative">
-      <svg viewBox="0 0 600 150" style="width:100%;height:130px;display:block;margin-top:6px" tabIndex="0" role="img" aria-label="{{ cadRef.navLabel }}" onKeyDown="{{ cadRef.onKey }}" onMouseLeave="{{ cadRef.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-        <sc-for list="{{ cadRef.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-        <sc-for list="{{ cadRef.paths }}" as="pth" hint-placeholder-count="1"><path d="{{ pth }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2.4" stroke-linejoin="round"></path></sc-for>
-        <sc-for list="{{ cadRef.pdots }}" as="pd" hint-placeholder-count="12"><circle cx="{{ pd.x }}" cy="{{ pd.y }}" r="2.6" style="fill:var(--accent)"></circle></sc-for>
-        <sc-for list="{{ cadRef.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="insCad" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-        <sc-for list="{{ cadRef.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-        <sc-for list="{{ cadRef.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="4.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.5"></circle></sc-for>
-      </svg>
-      <sc-for list="{{ cadRef.card }}" as="cd" hint-placeholder-count="0">
-        <div data-card="insCad" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-          <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-        </div>
-      </sc-for>
-      </div>
+      <div class="scope-row"><sc-for list="{{ cadRef.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
+      {{ cadRef.chart }}
     </div>
 
     <!-- RECORDS FEED -->
@@ -289,7 +191,7 @@
     <div class="card-head" style="margin-bottom:var(--sp-3)">
       <div>
         <div class="card-title">Records wall</div>
-        <div class="card-sub">All-time · last 90 days · by year — click a time to open its run from the archive</div>
+        <div class="card-sub">All-time · last 90 days · by year — click a time to open that run's page</div>
       </div>
     </div>
     <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
@@ -314,68 +216,6 @@
       </div>
     </div>
 
-    <!-- record click-through: archived run drill-down / honest offline state -->
-    <sc-for list="{{ wall.loading }}" as="wl" hint-placeholder-count="0">
-      <div style="margin-top:var(--sp-3);padding:var(--sp-3);border:1px dashed var(--line);border-radius:var(--r-md);color:var(--sub);font-size:var(--fs-sm);font-weight:600">{{ wl.t }}</div>
-    </sc-for>
-    <sc-for list="{{ wall.offline }}" as="wo" hint-placeholder-count="0">
-      <div style="margin-top:var(--sp-3);padding:var(--sp-3);border:1px dashed var(--warn);border-radius:var(--r-md);color:var(--warn);font-size:var(--fs-sm);font-weight:600">{{ wo.msg }}</div>
-    </sc-for>
-    <sc-for list="{{ wall.run }}" as="wrun" hint-placeholder-count="0">
-      <div style="margin-top:var(--sp-3);padding:var(--sp-3) var(--sp-3) var(--sp-4);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);animation:rise .18s ease-out">
-        <div style="display:flex;align-items:baseline;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-2)">
-          <span style="font-weight:800">{{ wrun.name }}</span>
-          <span style="color:var(--sub);font-size:var(--fs-sm);font-weight:600">{{ wrun.dateLabel }}</span>
-          <span style="font-family:'JetBrains Mono';font-size:var(--fs-sm)">{{ wrun.km }} km · {{ wrun.time }} · {{ wrun.pace }}/km · HR {{ wrun.hr }}</span>
-          <button onClick="{{ wrun.onClose }}" aria-label="Close run detail" style="margin-left:auto;border:1px solid var(--line);background:transparent;color:var(--sub);border-radius:var(--r-pill);padding:2px 10px;cursor:pointer;font-family:inherit;font-size:var(--fs-xs);font-weight:700">✕</button>
-        </div>
-        <sc-for list="{{ wrun.dvRows }}" as="dv" hint-placeholder-count="0">
-          <div>
-            <div style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-bottom:var(--sp-3);line-height:1.4">⚡ {{ dv.read }}</div>
-            <div class="drill-grid">
-              <div>
-                <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">SPLITS /km</div>
-                <div style="position:relative">
-                <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.sp.onLeave }}">
-                  <path d="{{ dv.spPath }}" fill="none" style="stroke:var(--accent);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
-                  <sc-for list="{{ dv.sp.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="splits" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-                  <sc-for list="{{ dv.sp.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-                  <sc-for list="{{ dv.sp.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
-                </svg>
-                <sc-for list="{{ dv.sp.card }}" as="cd" hint-placeholder-count="0">
-                  <div data-card="splits" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:7">
-                    <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-                  </div>
-                </sc-for>
-                </div>
-              </div>
-              <div>
-                <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">HR {{ dv.hrStart }} → {{ dv.hrEnd }} ({{ dv.drift }})</div>
-                <div style="position:relative">
-                <svg viewBox="0 0 600 30" style="width:100%;height:26px;display:block;overflow:visible" onMouseLeave="{{ dv.dr.onLeave }}">
-                  <path d="{{ dv.hrPath }}" fill="none" style="stroke:var(--accent2);vector-effect:non-scaling-stroke" stroke-width="2" stroke-linejoin="round"></path>
-                  <sc-for list="{{ dv.dr.bands }}" as="b" hint-placeholder-count="20"><rect data-hb="drift" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-                  <sc-for list="{{ dv.dr.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--sub);pointer-events:none" stroke-width="1" stroke-dasharray="3 3"></line></sc-for>
-                  <sc-for list="{{ dv.dr.odots }}" as="d" hint-placeholder-count="0"><circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" style="fill:{{ d.color }};pointer-events:none" stroke="var(--bg)" stroke-width="1.2"></circle></sc-for>
-                </svg>
-                <sc-for list="{{ dv.dr.card }}" as="cd" hint-placeholder-count="0">
-                  <div data-card="drift" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:7">
-                    <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="2"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-                  </div>
-                </sc-for>
-                </div>
-              </div>
-              <div>
-                <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;margin-bottom:var(--sp-1)">ZONES · TE {{ dv.te }} · {{ dv.temp }} °C</div>
-                <div style="display:flex;height:14px;border-radius:var(--r-sm);overflow:hidden;gap:1px">
-                  <sc-for list="{{ dv.zones }}" as="z" hint-placeholder-count="5"><div style="width:{{ z.pct }}%;background:{{ z.color }}"></div></sc-for>
-                </div>
-              </div>
-            </div>
-          </div>
-        </sc-for>
-      </div>
-    </sc-for>
   </div>
 
   </sc-if>
@@ -393,28 +233,10 @@
     <div class="card-head" style="margin-bottom:var(--sp-2)">
       <div>
         <div class="card-title">Monthly distance by year</div>
-        <div class="card-sub">Hover a month for distance, runs and pace per year</div>
-      </div>
-      <div style="display:flex;gap:var(--sp-3);font-size:var(--fs-xs);font-weight:700;flex-wrap:wrap">
-        <sc-for list="{{ yoy.legend }}" as="lg" hint-placeholder-count="3">
-          <span style="color:{{ lg.color }}">● {{ lg.y }}</span>
-        </sc-for>
+        <div class="card-sub">One zero-anchored scale across every year · hover a month for distance, runs and pace</div>
       </div>
     </div>
-    <div style="position:relative">
-    <svg viewBox="0 0 600 150" style="width:100%;height:150px;display:block" tabIndex="0" role="img" aria-label="{{ yoy.navLabel }}" onKeyDown="{{ yoy.onKey }}" onMouseLeave="{{ yoy.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
-      <sc-for list="{{ yoy.grid }}" as="g" hint-placeholder-count="3"><line x1="0" y1="{{ g }}" x2="600" y2="{{ g }}" stroke="var(--grid)" stroke-width="1"></line></sc-for>
-      <sc-for list="{{ yoy.bars }}" as="b" hint-placeholder-count="36"><rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="1.5" style="fill:{{ b.fill }}"></rect></sc-for>
-      <sc-for list="{{ yoy.labels }}" as="ml" hint-placeholder-count="12"><text x="{{ ml.x }}" y="147" text-anchor="middle" fill="var(--sub)" style="font:600 9px 'Archivo'">{{ ml.t }}</text></sc-for>
-      <sc-for list="{{ yoy.bands }}" as="b" hint-placeholder-count="12"><rect data-hb="yoy" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></rect></sc-for>
-      <sc-for list="{{ yoy.cross }}" as="c" hint-placeholder-count="0"><line x1="{{ c.x }}" y1="{{ c.top }}" x2="{{ c.x }}" y2="{{ c.bot }}" style="stroke:var(--ink);pointer-events:none;opacity:.5" stroke-width="1.5"></line></sc-for>
-    </svg>
-    <sc-for list="{{ yoy.card }}" as="cd" hint-placeholder-count="0">
-      <div data-card="yoy" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
-        <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="4"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
-      </div>
-    </sc-for>
-    </div>
+    {{ yoy.chart }}
   </div>
 
   </sc-if>
@@ -426,7 +248,7 @@
 class Component extends DCLogic {
   // theme, registry, sync machine, greeting and nav all live in topbar.js
   // (shared across pages, design D8); this component only holds the state.
-  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, record: null };
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {} };
 
   tb() { return window.SplitsTopbar; }
 
@@ -450,54 +272,56 @@ class Component extends DCLogic {
     else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur < 0 ? 0 : cur, pinned: true } }); }
   };
 
-  // ---- record click-through: fetch one archived run from the read-only API --
-  openRecord = (id) => {
-    const cur = this.state.record;
-    if (cur && cur.id === id && cur.status === 'ready') { this.setState({ record: null, hover: null }); return; }
-    this.setState({ record: { id, status: 'loading' }, hover: null });
-    fetch('./api/archive/activities/' + id)
-      .then((r) => { if (!r.ok) throw new Error(r.status === 503 ? 'offline' : 'status ' + r.status); return r.json(); })
-      .then((run) => { const rec = this.state.record; if (rec && rec.id === id) this.setState({ record: { id, status: 'ready', run } }); })
-      .catch((err) => { const rec = this.state.record; if (rec && rec.id === id) this.setState({ record: { id, status: 'error', reason: String((err && err.message) || err) } }); });
-  };
-  closeRecord = () => this.setState({ record: null, hover: null });
+  // ---- record click-through: navigate to the run's own page (run-detail 7.1)
+  openRecord = (id) => { window.location.href = './run/' + id; };
 
-  // structured drill-down for one run's distilled detail — identical
-  // presentation to the cockpit's recent-run drill-down
-  runDetail = (r) => {
-    const d = r.detail;
-    const hs = (d.hrSeries && d.hrSeries.length) ? d.hrSeries : [0, 0];
-    const sp = (d.splits && d.splits.length) ? d.splits.map(s => s.pace) : [0, 0];
-    const zsum = (d.zoneMin || []).reduce((a, b) => a + b, 0) || 1;
-    const spL = this.line(sp, 30, { padT: 2, padB: 2 });
-    const hsL = this.line(hs, 30, { padT: 2, padB: 2 });
-    const spPts = spL.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'Km ' + (i + 1) + ', ' + this.fmtPace(sp[i]) + ' per km',
-      lines: [ { t: 'km ' + (i + 1), em: false }, { t: this.fmtPace(sp[i]) + ' /km', em: true } ]
-    }));
-    const hsPts = hsL.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent2)',
-      aria: 'Segment ' + (i + 1) + ', ' + hs[i] + ' bpm',
-      lines: [ { t: 'seg ' + (i + 1), em: false }, { t: hs[i] + ' bpm', em: true } ]
-    }));
-    const splits = {}; this.attachOverlay(splits, this.hoverLayer('splits', spPts, { vbW: 600, vbH: 30 })); splits.onLeave = () => this.leaveChart('splits');
-    const drift = {}; this.attachOverlay(drift, this.hoverLayer('drift', hsPts, { vbW: 600, vbH: 30 })); drift.onLeave = () => this.leaveChart('drift');
-    return {
-      read: r.read || (r.km + ' km'),
-      drift: d.driftBpm != null ? ((d.driftBpm >= 0 ? '+' : '') + d.driftBpm + ' bpm') : '—',
-      hrStart: hs[0], hrEnd: hs[hs.length - 1],
-      hrPath: hsL.d,
-      spPath: spL.d,
-      zones: (d.zoneMin || []).map((m, i) => ({ pct: Math.round(m / zsum * 100), color: 'var(--z' + (i + 1) + ')' })),
-      te: d.te != null ? (+d.te).toFixed(1) : '—', temp: d.tempC != null ? d.tempC : '—',
-      sp: splits, dr: drift
+  // ---- chart engine plumbing -------------------------------------------------
+  // Wires the shared hover/pin/keyboard state into a descriptor, builds the
+  // spec (chart-core), renders it (chart-view), and remembers the spec so the
+  // aria-live region can announce the hovered reading. Until the engine
+  // modules resolve, a neutral placeholder holds the layout.
+  engineChart(id, desc) {
+    const cc = this._cc, cv = this._cv, R = window.React;
+    if (!cc || !cv || !R) {
+      return { chart: R ? R.createElement('div', { style: { height: desc.height || '130px' } }) : null, spec: null };
+    }
+    const h = this.state.hover;
+    desc.id = id;
+    desc.hover = {
+      index: (h && h.chart === id) ? h.i : null, pinned: !!(h && h.pinned),
+      onEnter: (i) => this.hoverPoint(id, i), onPin: (i, e) => this.pinPoint(id, i, e),
+      onKey: (e) => this.chartKey(id, (desc.hoverPoints || []).length, e),
+      onLeave: () => this.leaveChart(id)
     };
-  };
+    const spec = cc.buildSpec(desc);
+    this._specs[id] = spec;
+    return { chart: cv.renderChart(spec, R), spec };
+  }
+
+  // ---- scope chips (progress-views): a chip re-derives the chart over the
+  // tail of its series; offered only where the series can honour it. The 26
+  // weekly points ARE six months, so the weekly "6 mo" chip is the full series
+  // (wider ranges wait for history-depth).
+  MONTH_SCOPES = [{ key: '6mo', label: '6 mo', keep: 6 }, { key: '1y', label: '1 y', keep: 12 }, { key: 'all', label: 'all', keep: null }];
+  WEEK_SCOPES = [{ key: '3mo', label: '3 mo', keep: 13 }, { key: 'all', label: '6 mo', keep: null }];
+  setScope = (id, key) => this.setState({ scope: { ...this.state.scope, [id]: key }, hover: null });
+  scopeCut(id, n, defs) {
+    const avail = defs.filter(d => d.keep == null || d.keep < n);
+    const cur = this.state.scope[id];
+    const sel = avail.find(d => d.key === cur) || avail[avail.length - 1];
+    return {
+      keep: sel.keep == null ? n : Math.min(n, sel.keep),
+      scopes: avail.length >= 2 ? avail.map(d => ({
+        label: d.label, on: String(d.key === sel.key), pick: () => this.setScope(id, d.key)
+      })) : []
+    };
+  }
 
   componentDidMount() {
-    import('./chart-hover.js').then((m) => { this._ch = m; this.setState({}); }).catch(() => {});
-    import('./coach-read.js').then((m) => { this._cr = m; this.setState({}); }).catch(() => {});
+    // chart engine: pure geometry (chart-core, which consumes chart-hover) +
+    // renderer (chart-view) — neutral placeholders render until they resolve
+    import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
+    import('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
     import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
     document.addEventListener('click', () => this.dismissHover());
     // last-sync indicator (absent when opened as a static file / no server API)
@@ -535,68 +359,9 @@ class Component extends DCLogic {
     return this._builtin;
   }
 
-  // ---- chart geometry helpers (same implementations as the cockpit) ---------
-  line(vals, h, opt) {
-    opt = opt || {}; const w = 600, pad = 6, padT = opt.padT != null ? opt.padT : 14, padB = opt.padB != null ? opt.padB : 12;
-    const all = vals.concat(opt.include || []);
-    let mn = opt.min != null ? opt.min : Math.min.apply(null, all);
-    let mx = opt.max != null ? opt.max : Math.max.apply(null, all);
-    const r = (mx - mn) || 1, head = opt.headroom != null ? opt.headroom : 0.14; mn -= r * head; mx += r * head;
-    const n = vals.length, span = (mx - mn) || 1;
-    const X = (i) => pad + (n <= 1 ? 0.5 : i / (n - 1)) * (w - 2 * pad);
-    const Y = (v) => padT + (1 - (v - mn) / span) * (h - padT - padB);
-    const pts = vals.map((v, i) => [X(i), Y(v)]);
-    const d = 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
-    const area = d + ' L' + pts[n-1][0].toFixed(1) + ' ' + (h-padB) + ' L' + pts[0][0].toFixed(1) + ' ' + (h-padB) + ' Z';
-    const grid = [padT, padT + (h-padT-padB)/2, h-padB];
-    return { d, area, grid, lastX:+pts[n-1][0].toFixed(1), lastY:+pts[n-1][1].toFixed(1), Y, pts };
-  }
-
-  hoverLayer(chartId, points, opt) {
-    const ch = this._ch;
-    if (!ch) return { bands: [], overlay: null };   // geometry module not loaded yet
-    opt = opt || {};
-    const vbW = opt.vbW != null ? opt.vbW : 600;
-    const vbH = opt.vbH != null ? opt.vbH : 150;
-    const bands = ch.bandRects(points, vbW, vbH).map((b, i) => ({
-      x: b.x, y: b.y, w: b.w, h: b.h,
-      onEnter: () => this.hoverPoint(chartId, i),
-      onClick: (e) => this.pinPoint(chartId, i, e),
-      aria: points[i].aria || ''
-    }));
-    const h = this.state.hover;
-    let overlay = null;
-    if (h && h.chart === chartId && h.i >= 0 && h.i < points.length) {
-      const p = points[h.i];
-      const pl = ch.cardPlace(p.x, p.y, vbW, vbH);
-      const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
-      const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
-      overlay = {
-        cross: opt.crosshair === false ? [] : [{ x:+p.x.toFixed(2), top:0, bot:vbH }],
-        dots: p.dots || [{ x:+p.x.toFixed(2), y:+p.y.toFixed(2), color:p.dotColor || 'var(--accent)' }],
-        card: {
-          left: pl.leftPct + '%', top: pl.topPct + '%', transform: 'translate(' + tx + ', ' + ty + ')',
-          rows: p.lines.map(r => ({ t: r.t, color: r.em ? 'var(--ink)' : 'var(--sub)', weight: r.em ? '800' : '600' }))
-        }
-      };
-    }
-    return { bands, overlay };
-  }
-
-  attachOverlay(obj, hl) {
-    obj.bands = hl.bands;
-    if (hl.overlay) { obj.cross = hl.overlay.cross; obj.odots = hl.overlay.dots; obj.card = [hl.overlay.card]; }
-    else { obj.cross = []; obj.odots = []; obj.card = []; }
-    return obj;
-  }
-
-  monthLabel(D, i) {
-    const sm = (D.history && D.history.vo2maxStartMonth) || '2024-01';
-    const parts = sm.split('-'); const y = +parts[0], m = +parts[1];
-    const idx = (m - 1) + i; const yr = y + Math.floor(idx / 12); const mo = ((idx % 12) + 12) % 12;
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return M[mo] + ' ' + yr;
-  }
+  // (the duplicated chart geometry helpers — line/hoverLayer/attachOverlay/
+  // monthLabel — are gone: geometry lives in chart-core.js, elements in
+  // chart-view.js, hover glue in engineChart above)
 
   relLabel(i, n, unit) {
     const back = n - 1 - i;
@@ -615,6 +380,7 @@ class Component extends DCLogic {
   renderVals() {
     const D = this.state.data || this.buildData();
     const H = D.history;
+    this._specs = {};   // ChartSpecs built this render, keyed by chart id (aria-live)
     const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
@@ -630,101 +396,162 @@ class Component extends DCLogic {
     const goalP = D.race.goalPaceSecPerKm;
     const race = { goalPace: this.fmtPace(goalP) };
 
-    // volume bars
-    const vmax = Math.max.apply(null, H.weeklyKm)*1.12;
-    const vw=600, vpadX=6, vN=H.weeklyKm.length, vslot=(vw-2*vpadX)/vN, vbw=vslot*0.6, vH=150, vpT=10, vpB=8;
+    // ---- date helpers for the engine charts (labels come from real dates) ---
+    const cc = this._cc;
+    const M3 = (d) => M[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+    const spanOf = (dates, unit) => {
+      if (!dates.length) return '';
+      const f = (d) => M[d.getUTCMonth()] + ' ’' + String(d.getUTCFullYear()).slice(2);
+      return f(dates[0]) + ' – ' + f(dates[dates.length - 1]) + ' · ' + dates.length + ' ' + unit;
+    };
+    const monthDates = (startKey, n) => { const p = String(startKey || '2024-01').split('-'); return Array.from({ length: n }, (_, i) => new Date(Date.UTC(+p[0], +p[1] - 1 + i, 1))); };
+    const monthKeyDate = (k) => new Date(Date.UTC(+k.slice(0, 4), +k.slice(5, 7) - 1, 1));
+    const weekDates = (n) => { const end = new Date(D.today + 'T00:00:00Z'); return Array.from({ length: n }, (_, i) => new Date(end.getTime() - (n - 1 - i) * 7 * 86400000)); };
+
+    // annotations: record dates (grouped per day) + race day — placeAnnotations
+    // drops anything outside the plotted range, so a future race simply waits
+    const DL = { '1k': '1K', 'mile': 'MILE', '5k': '5K', '10k': '10K', 'half': 'HALF' };
+    const INSpre = D.insights || null;
+    const recAnns = [];
+    if (INSpre && INSpre.recordsFeed) {
+      const byDate = {};
+      for (const ev of INSpre.recordsFeed) (byDate[ev.date] = byDate[ev.date] || []).push(DL[ev.distance] || String(ev.distance).toUpperCase());
+      for (const dt of Object.keys(byDate)) {
+        const ds = byDate[dt];
+        recAnns.push({ at: new Date(dt + 'T00:00:00Z'), label: ds.length > 1 ? ds.length + ' PBs' : ds[0] + ' PB' });
+      }
+    }
+    if (D.race && D.race.date) recAnns.push({ at: new Date(D.race.date + 'T00:00:00Z'), label: 'race' });
+
+    // ---- weekly volume: zero-anchored bars + 4-wk rolling mean (engine) -----
+    const volCut = this.scopeCut('vol', H.weeklyKm.length, this.WEEK_SCOPES);
+    const volVals = H.weeklyKm.slice(-volCut.keep);
+    const volDates = weekDates(H.weeklyKm.length).slice(-volCut.keep);
+    const volN = volVals.length;
     const vol = {
       lastKm: Math.round(kmNow),
-      grid:[vpT, vpT+(vH-vpT-vpB)/2, vH-vpB],
-      bars: H.weeklyKm.map((v,i)=>{ const bh=(v/vmax)*(vH-vpT-vpB); return { x:+(vpadX+vslot*i+(vslot-vbw)/2).toFixed(1), y:+(vH-vpB-bh).toFixed(1), w:+vbw.toFixed(1), h:+bh.toFixed(1), fill: i>=vN-2?'var(--accent2)':'var(--accent)' }; })
+      sub: spanOf(volDates, 'wk') + ' · 4-wk mean dashed',
+      scopes: volCut.scopes,
+      chart: this.engineChart('vol', {
+        ariaLabel: 'Weekly volume, ' + volN + ' weeks, zero-anchored with a four-week rolling mean. Arrow keys to inspect.',
+        height: '140px', frame: { w: 600, h: 150 },
+        x: { kind: 'band', dates: volDates },
+        y: { policy: cc ? cc.POLICIES.weeklyVolume : {}, label: 'km' },
+        series: [{ key: 'km', name: 'Weekly km', color: 'var(--series1)', marks: ['bars'], values: volVals }],
+        hoverPoints: volVals.map((v, i) => ({ i,
+          aria: 'Week ' + this.relLabel(i, volN, 'wk') + ', ' + v.toFixed(1) + ' km',
+          lines: [
+            { t: this.relLabel(i, volN, 'wk'), em: false },
+            { t: v.toFixed(1) + ' km', em: true },
+            { t: i > 0 ? ((v - volVals[i - 1] >= 0 ? '+' : '−') + Math.abs(Math.round(v - volVals[i - 1])) + ' vs prev') : 'first week', em: false }
+          ] }))
+      }).chart
     };
-    const volN = H.weeklyKm.length;
-    const volPts = vol.bars.map((b, i) => ({
-      x: b.x + b.w / 2, y: b.y, dotColor: 'var(--accent2)',
-      aria: 'Week ' + this.relLabel(i, volN, 'wk') + ', ' + H.weeklyKm[i].toFixed(1) + ' km',
-      lines: [
-        { t: this.relLabel(i, volN, 'wk'), em: false },
-        { t: H.weeklyKm[i].toFixed(1) + ' km', em: true },
-        { t: i > 0 ? ((H.weeklyKm[i] - H.weeklyKm[i-1] >= 0 ? '+' : '−') + Math.abs(Math.round(H.weeklyKm[i] - H.weeklyKm[i-1])) + ' vs prev') : 'first week', em: false }
-      ]
-    }));
-    this.attachOverlay(vol, this.hoverLayer('vol', volPts));
-    vol.onLeave = () => this.leaveChart('vol');
-    vol.onKey = (e) => this.chartKey('vol', volPts.length, e); vol.navLabel = 'Weekly volume over 26 weeks. Arrow keys to inspect.';
 
-    // vo2 line
-    const vo2 = this.line(H.vo2max, 150); vo2.last = vo2Now.toFixed(1); vo2.delta = '+'+(vo2Now-vo2Prev).toFixed(1)+' / 3mo';
-    const vo2pts = vo2.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'VO2 ' + H.vo2max[i].toFixed(1) + ', ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: 'VO₂ ' + H.vo2max[i].toFixed(1), em: true },
-        { t: i > 0 ? ((H.vo2max[i] - H.vo2max[i-1] >= 0 ? '+' : '−') + Math.abs(H.vo2max[i] - H.vo2max[i-1]).toFixed(1) + ' vs prev') : 'first month', em: false }
-      ]
-    }));
-    this.attachOverlay(vo2, this.hoverLayer('vo2', vo2pts));
-    vo2.onLeave = () => this.leaveChart('vo2');
-    vo2.onKey = (e) => this.chartKey('vo2', vo2pts.length, e); vo2.navLabel = 'VO2 max over 30 months, ' + vo2pts.length + ' points. Arrow keys to inspect.';
+    // ---- VO₂ max: minimum-span domain + 12-month median band (engine) -------
+    const vo2Cut = this.scopeCut('vo2', H.vo2max.length, this.MONTH_SCOPES);
+    const vo2Vals = H.vo2max.slice(-vo2Cut.keep);
+    const vo2Dates = monthDates(H.vo2maxStartMonth, H.vo2max.length).slice(-vo2Cut.keep);
+    const vo2 = {
+      last: vo2Now.toFixed(1), delta: '+' + (vo2Now - vo2Prev).toFixed(1) + ' / 3mo',
+      sub: spanOf(vo2Dates, 'mo') + ' · 12-mo median band',
+      scopes: vo2Cut.scopes,
+      chart: this.engineChart('vo2', {
+        ariaLabel: 'VO2 max, ' + vo2Vals.length + ' months, against a 12-month rolling median band. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: vo2Dates },
+        y: { policy: cc ? cc.POLICIES.vo2 : {} },
+        series: [{ key: 'vo2', name: 'VO₂ max', color: 'var(--series1)', values: vo2Vals }],
+        hoverPoints: vo2Vals.map((v, i) => ({ i,
+          aria: 'VO2 ' + v.toFixed(1) + ', ' + M3(vo2Dates[i]),
+          lines: [
+            { t: M3(vo2Dates[i]), em: false },
+            { t: 'VO₂ ' + v.toFixed(1), em: true },
+            { t: i > 0 ? ((v - vo2Vals[i - 1] >= 0 ? '+' : '−') + Math.abs(v - vo2Vals[i - 1]).toFixed(1) + ' vs prev') : 'first month', em: false }
+          ] }))
+      }).chart
+    };
 
-    // pace line (lower better)
-    const pace = this.line(H.paceSecPerKm, 150, { include:[goalP], headroom:0.18 });
-    pace.last = this.fmtPace(H.paceSecPerKm[H.paceSecPerKm.length-1]);
-    pace.delta = '−'+this.fmtPace(H.paceSecPerKm[0]-H.paceSecPerKm[H.paceSecPerKm.length-1])+' /km';
-    pace.goalY = +pace.Y(goalP).toFixed(1);
-    const pacePts = pace.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent2)',
-      aria: 'Pace ' + this.fmtPace(H.paceSecPerKm[i]) + ' per km, ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: this.fmtPace(H.paceSecPerKm[i]) + ' /km', em: true },
-        { t: (() => { const g = H.paceSecPerKm[i] - goalP; return g === 0 ? 'on goal' : (g > 0 ? '+' : '−') + this.fmtPace(Math.abs(g)) + ' vs goal'; })(), em: false }
-      ]
-    }));
-    this.attachOverlay(pace, this.hoverLayer('pace', pacePts));
-    pace.onLeave = () => this.leaveChart('pace');
-    pace.onKey = (e) => this.chartKey('pace', pacePts.length, e); pace.navLabel = 'Average run pace over 30 months. Arrow keys to inspect.';
+    // ---- avg pace: goal rule always in frame, no area fill (engine) ---------
+    const paceCut = this.scopeCut('pace', H.paceSecPerKm.length, this.MONTH_SCOPES);
+    const paceVals = H.paceSecPerKm.slice(-paceCut.keep);
+    const paceDates = monthDates(H.vo2maxStartMonth, H.paceSecPerKm.length).slice(-paceCut.keep);
+    const pace = {
+      last: this.fmtPace(paceVals[paceVals.length - 1]),
+      delta: '−' + this.fmtPace(H.paceSecPerKm[0] - H.paceSecPerKm[H.paceSecPerKm.length - 1]) + ' /km all-time',
+      sub: spanOf(paceDates, 'mo'),
+      scopes: paceCut.scopes,
+      chart: this.engineChart('pace', {
+        ariaLabel: 'Average run pace, ' + paceVals.length + ' months, against the goal pace rule. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: paceDates },
+        y: { policy: cc ? cc.POLICIES.pace : {} },
+        series: [{ key: 'pace', name: 'Avg pace', color: 'var(--series2)', values: paceVals }],
+        rules: [{ v: goalP, label: 'goal ' + this.fmtPace(goalP) }],
+        annotations: recAnns,
+        hoverPoints: paceVals.map((v, i) => ({ i,
+          aria: 'Pace ' + this.fmtPace(v) + ' per km, ' + M3(paceDates[i]),
+          lines: [
+            { t: M3(paceDates[i]), em: false },
+            { t: this.fmtPace(v) + ' /km', em: true },
+            { t: (() => { const g = v - goalP; return g === 0 ? 'on goal' : (g > 0 ? '+' : '−') + this.fmtPace(Math.abs(g)) + ' vs goal'; })(), em: false }
+          ] }))
+      }).chart
+    };
 
-    // fitness ctl + atl
-    const fall = H.ctl.concat(H.atl); const fmin=Math.min.apply(null,fall), fmax=Math.max.apply(null,fall);
-    const fit = this.line(H.ctl, 150, { min:fmin, max:fmax });
-    const fitAtl = this.line(H.atl, 150, { min:fmin, max:fmax }); fit.atl = fitAtl.d;
-    const formObj = { value:(form>0?'+':'')+form };
-    const fitN = H.ctl.length;
-    const fitPts = fit.pts.map((p, i) => {
-      const tsb = Math.round(H.ctl[i] - H.atl[i]);
-      return {
-        x: p[0], y: p[1],
-        dots: [
-          { x: +p[0].toFixed(2), y: +p[1].toFixed(2), color: 'var(--accent)' },
-          { x: +fitAtl.pts[i][0].toFixed(2), y: +fitAtl.pts[i][1].toFixed(2), color: 'var(--accent2)' }
+    // ---- fitness & fatigue: two series, shared zero domain, legend (engine) -
+    const fitCut = this.scopeCut('fit', H.ctl.length, this.WEEK_SCOPES);
+    const ctlVals = H.ctl.slice(-fitCut.keep);
+    const atlVals = H.atl.slice(-fitCut.keep);
+    const fitDates = weekDates(H.ctl.length).slice(-fitCut.keep);
+    const formObj = { value: (form > 0 ? '+' : '') + form };
+    const fitN = ctlVals.length;
+    const fit = {
+      sub: spanOf(fitDates, 'wk'),
+      scopes: fitCut.scopes,
+      chart: this.engineChart('fit', {
+        ariaLabel: 'Fitness and fatigue, ' + fitN + ' weeks on one zero-anchored scale. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: fitDates },
+        y: { policy: cc ? cc.POLICIES.fitnessFatigue : {} },
+        series: [
+          { key: 'ctl', name: 'Fitness', color: 'var(--series1)', values: ctlVals },
+          { key: 'atl', name: 'Fatigue', color: 'var(--series2)', values: atlVals, dash: '4 4' }
         ],
-        aria: 'Week ' + this.relLabel(i, fitN, 'wk') + ', fitness ' + Math.round(H.ctl[i]) + ', fatigue ' + Math.round(H.atl[i]),
-        lines: [
-          { t: this.relLabel(i, fitN, 'wk'), em: false },
-          { t: 'CTL ' + Math.round(H.ctl[i]) + ' / ATL ' + Math.round(H.atl[i]), em: true },
-          { t: 'Form ' + (tsb >= 0 ? '+' : '−') + Math.abs(tsb), em: false }
-        ]
-      };
-    });
-    this.attachOverlay(fit, this.hoverLayer('fit', fitPts));
-    fit.onLeave = () => this.leaveChart('fit');
-    fit.onKey = (e) => this.chartKey('fit', fitPts.length, e); fit.navLabel = 'Fitness and fatigue over 26 weeks. Arrow keys to inspect.';
+        hoverPoints: ctlVals.map((v, i) => { const tsb = Math.round(v - atlVals[i]); return { i,
+          aria: 'Week ' + this.relLabel(i, fitN, 'wk') + ', fitness ' + Math.round(v) + ', fatigue ' + Math.round(atlVals[i]),
+          lines: [
+            { t: this.relLabel(i, fitN, 'wk'), em: false },
+            { t: 'CTL ' + Math.round(v) + ' / ATL ' + Math.round(atlVals[i]), em: true },
+            { t: 'Form ' + (tsb >= 0 ? '+' : '−') + Math.abs(tsb), em: false }
+          ] }; })
+      }).chart
+    };
 
-    // cadence
-    const cad = this.line(H.cadenceSpm, 150); cad.last = H.cadenceSpm[H.cadenceSpm.length-1]; cad.delta = '+'+(H.cadenceSpm[H.cadenceSpm.length-1]-H.cadenceSpm[0])+' spm';
-    const cadPts = cad.pts.map((p, i) => ({
-      x: p[0], y: p[1], dotColor: 'var(--accent)',
-      aria: 'Cadence ' + H.cadenceSpm[i] + ' steps per minute, ' + this.monthLabel(D, i),
-      lines: [
-        { t: this.monthLabel(D, i), em: false },
-        { t: H.cadenceSpm[i] + ' spm', em: true },
-        { t: i > 0 ? ((H.cadenceSpm[i] - H.cadenceSpm[i-1] >= 0 ? '+' : '−') + Math.abs(H.cadenceSpm[i] - H.cadenceSpm[i-1]) + ' vs prev') : 'first month', em: false }
-      ]
-    }));
-    this.attachOverlay(cad, this.hoverLayer('cad', cadPts));
-    cad.onLeave = () => this.leaveChart('cad');
-    cad.onKey = (e) => this.chartKey('cad', cadPts.length, e); cad.navLabel = 'Cadence over 30 months. Arrow keys to inspect.';
+    // ---- cadence: minimum-span domain + median band (engine) ----------------
+    const cadCut = this.scopeCut('cad', H.cadenceSpm.length, this.MONTH_SCOPES);
+    const cadVals = H.cadenceSpm.slice(-cadCut.keep);
+    const cadDates = monthDates(H.vo2maxStartMonth, H.cadenceSpm.length).slice(-cadCut.keep);
+    const cad = {
+      last: H.cadenceSpm[H.cadenceSpm.length - 1],
+      delta: '+' + (H.cadenceSpm[H.cadenceSpm.length - 1] - H.cadenceSpm[0]) + ' spm all-time',
+      sub: spanOf(cadDates, 'mo') + ' · 12-mo median band',
+      scopes: cadCut.scopes,
+      chart: this.engineChart('cad', {
+        ariaLabel: 'Cadence, ' + cadVals.length + ' months, against a 12-month rolling median band. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: cadDates },
+        y: { policy: cc ? cc.POLICIES.cadence : {}, label: 'spm' },
+        series: [{ key: 'cad', name: 'Cadence', color: 'var(--series1)', values: cadVals }],
+        hoverPoints: cadVals.map((v, i) => ({ i,
+          aria: 'Cadence ' + v + ' steps per minute, ' + M3(cadDates[i]),
+          lines: [
+            { t: M3(cadDates[i]), em: false },
+            { t: v + ' spm', em: true },
+            { t: i > 0 ? ((v - cadVals[i - 1] >= 0 ? '+' : '−') + Math.abs(v - cadVals[i - 1]) + ' vs prev') : 'first month', em: false }
+          ] }))
+      }).chart
+    };
 
     // ---- insight-metrics surfaces — render only when the sync has emitted the
     // archive-computed `insights` block; older data files leave hasInsights
@@ -733,61 +560,53 @@ class Component extends DCLogic {
     const hasInsights = !!INS;
     let eff = {}, cadRef = {}, recs = {};
     if (INS) {
-      const mKey = (k) => { const p = k.split('-'); return M[+p[1]-1] + ' ' + p[0].slice(2); };
-      const buildMonthly = (chartId, monthly, valKey, fmtVal, color) => {
-        // like line(), but null months break the path into segments — a gap in
-        // the drawing, never a fabricated point (insight-metrics design D10)
-        const H2 = 150, w = 600, pad = 6, padT = 14, padB = 12;
-        const vals = monthly.map(m => m[valKey]);
-        const valid = vals.filter(v => v != null);
-        let mn = Math.min.apply(null, valid), mx = Math.max.apply(null, valid);
-        const rr = (mx - mn) || 1; mn -= rr * 0.14; mx += rr * 0.14;
-        const n = vals.length;
-        const X = i => pad + (n <= 1 ? 0.5 : i / (n - 1)) * (w - 2 * pad);
-        const Y = v => padT + (1 - (v - mn) / ((mx - mn) || 1)) * (H2 - padT - padB);
-        const segs = []; let seg = [];
-        vals.forEach((v, i) => {
-          if (v == null) { if (seg.length) segs.push(seg); seg = []; return; }
-          seg.push(X(i).toFixed(1) + ' ' + Y(v).toFixed(1));
-        });
-        if (seg.length) segs.push(seg);
-        const obj = {
-          grid: [padT, padT + (H2 - padT - padB) / 2, H2 - padB],
-          paths: segs.filter(s => s.length > 1).map(s => 'M' + s.join(' L')),
-          pdots: []
-        };
-        const pts = [];
-        monthly.forEach((m, i) => {
+      // pooled monthly insight series through the engine: null months stay
+      // gaps, inBandMin weights size the dots, below-floor points go hollow
+      // and leave the line (insight-metrics D10 + chart-engine D4)
+      const insightMonthly = (chartId, monthly, valKey, fmtVal, color, policy, name) => {
+        const cut = this.scopeCut(chartId, monthly.length, this.MONTH_SCOPES);
+        const rows = monthly.slice(-cut.keep);
+        const vals = rows.map(m => m[valKey]);
+        const weights = rows.map(m => m.inBandMin);
+        const dates = rows.map(m => monthKeyDate(m.month));
+        const hp = [];
+        rows.forEach((m, i) => {
           if (m[valKey] == null) return;
-          obj.pdots.push({ x: +X(i).toFixed(1), y: +Y(m[valKey]).toFixed(1) });
-          pts.push({ x: X(i), y: Y(m[valKey]), dotColor: color,
-            aria: mKey(m.month) + ', ' + fmtVal(m[valKey]) + ', ' + m.inBandMin + ' minutes in band',
+          hp.push({ i, aria: M3(dates[i]) + ', ' + fmtVal(m[valKey]) + ', ' + m.inBandMin + ' minutes in band',
             lines: [
-              { t: mKey(m.month), em: false },
+              { t: M3(dates[i]), em: false },
               { t: fmtVal(m[valKey]), em: true },
               { t: m.inBandMin + ' min in band', em: false }
             ] });
         });
-        this.attachOverlay(obj, this.hoverLayer(chartId, pts));
-        obj.onLeave = () => this.leaveChart(chartId);
-        obj.onKey = (e) => this.chartKey(chartId, pts.length, e);
-        obj.firstV = valid.length ? valid[0] : null;
-        obj.lastV = valid.length ? valid[valid.length - 1] : null;
-        obj.last = obj.lastV != null ? fmtVal(obj.lastV) : '—';
-        return obj;
+        const valid = monthly.map(m => m[valKey]).filter(v => v != null);
+        return {
+          sub: spanOf(dates, 'mo'),
+          scopes: cut.scopes,
+          firstV: valid.length ? valid[0] : null,
+          lastV: valid.length ? valid[valid.length - 1] : null,
+          last: valid.length ? fmtVal(valid[valid.length - 1]) : '—',
+          chart: this.engineChart(chartId, {
+            ariaLabel: name + ', monthly, dot size showing minutes of in-band evidence; gaps are months without enough. Arrow keys to inspect.',
+            height: '130px', frame: { w: 600, h: 150 },
+            x: { kind: 'time', dates },
+            y: { policy },
+            series: [{ key: 'v', name, color, values: vals, marks: ['line', 'dots'], weights }],
+            hoverPoints: hp
+          }).chart
+        };
       };
-      eff = buildMonthly('insEff', INS.efficiency.monthly, 'paceSecPerKm', (v) => this.fmtPace(v) + ' /km', 'var(--accent2)');
+      eff = insightMonthly('insEff', INS.efficiency.monthly, 'paceSecPerKm',
+        (v) => this.fmtPace(v) + ' /km', 'var(--series2)', cc ? cc.POLICIES.efficiency : {}, 'Pace at reference HR');
       eff.bandLabel = INS.efficiency.refHrBand[0] + '–' + INS.efficiency.refHrBand[1] + ' bpm';
       eff.delta = (eff.firstV != null && eff.lastV != null && eff.firstV !== eff.lastV)
         ? ((eff.lastV < eff.firstV ? '−' : '+') + this.fmtPace(Math.abs(eff.firstV - eff.lastV)) + ' /km all-time') : '';
-      eff.navLabel = 'Pace at reference heart rate, monthly. Arrow keys to inspect; gaps are months without enough in-band time.';
-      cadRef = buildMonthly('insCad', INS.cadence.monthly, 'spm', (v) => v + ' spm', 'var(--accent)');
+      cadRef = insightMonthly('insCad', INS.cadence.monthly, 'spm',
+        (v) => v + ' spm', 'var(--series1)', cc ? cc.POLICIES.cadenceAtRefPace : {}, 'Cadence at reference pace');
       cadRef.bandLabel = this.fmtPace(INS.cadence.refPaceBand[0]) + '–' + this.fmtPace(INS.cadence.refPaceBand[1]) + ' /km';
       cadRef.delta = (cadRef.firstV != null && cadRef.lastV != null && cadRef.firstV !== cadRef.lastV)
         ? ((cadRef.lastV >= cadRef.firstV ? '+' : '−') + Math.abs(cadRef.lastV - cadRef.firstV) + ' spm all-time') : '';
-      cadRef.navLabel = 'Cadence at reference pace, monthly. Arrow keys to inspect.';
 
-      const DL = { '1k': '1K', 'mile': 'MILE', '5k': '5K', '10k': '10K', 'half': 'HALF' };
       const feed = INS.recordsFeed || [];
       recs = {
         count: feed.length,
@@ -798,8 +617,9 @@ class Component extends DCLogic {
     }
 
     // ---- records wall: all-time / 90d / by-year, entirely from static data —
-    // the archive API is touched only when a record is clicked through.
-    const wall = { gridStyle: '', head: [], rows: [], loading: [], offline: [], run: [] };
+    // activating a record navigates to that run's own page (run-detail 7.1);
+    // /run/:id owns the offline degradation from there.
+    const wall = { gridStyle: '', head: [], rows: [] };
     if (INS && INS.bestEfforts) {
       const BE = INS.bestEfforts;
       const years = BE.byYear ? Object.keys(BE.byYear).sort() : [];
@@ -810,7 +630,6 @@ class Component extends DCLogic {
       wall.gridStyle = 'display:grid;grid-template-columns:52px repeat(' + cols.length + ',minmax(96px,1fr));gap:var(--sp-2)';
       wall.head = cols.map(c => ({ t: c.label }));
       const DIST = [['oneK','1K'],['mile','MILE'],['fiveK','5K'],['tenK','10K'],['half','HALF']];
-      const rec = this.state.record;
       wall.rows = DIST.map((dk) => {
         const key = dk[0], label = dk[1];
         return {
@@ -824,81 +643,38 @@ class Component extends DCLogic {
               style: 'display:block;width:100%;text-align:left;padding:var(--sp-2);border:1px dashed var(--line);border-radius:var(--r-md);background:transparent;color:var(--sub);font-family:inherit;cursor:default'
             };
             const clickable = e.activityId != null;
-            const selected = clickable && rec && rec.id === e.activityId;
             return {
               time: this.fmtHMS(e.sec),
               date: c.withYear ? (this.mDate(e.date) + ' ’' + e.date.slice(2, 4)) : this.mDate(e.date),
               onClick: clickable ? (() => this.openRecord(e.activityId)) : (() => {}),
-              title: clickable ? (label + ' · ' + this.fmtHMS(e.sec) + ' on ' + e.date + ' — open the run') : (label + ' · ' + this.fmtHMS(e.sec) + ' on ' + e.date),
+              title: clickable ? (label + ' · ' + this.fmtHMS(e.sec) + ' on ' + e.date + ' — open the run page') : (label + ' · ' + this.fmtHMS(e.sec) + ' on ' + e.date),
               aria: label + ' ' + c.label + ': ' + this.fmtHMS(e.sec) + ' on ' + e.date + (clickable ? '. Open the run it was set in.' : ''),
-              style: 'display:block;width:100%;text-align:left;padding:var(--sp-2);border:1px solid ' + (selected ? 'var(--accent)' : 'var(--line)') + ';border-radius:var(--r-md);background:var(--panel2);color:var(--ink);font-family:inherit;cursor:' + (clickable ? 'pointer' : 'default')
+              style: 'display:block;width:100%;text-align:left;padding:var(--sp-2);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);color:var(--ink);font-family:inherit;cursor:' + (clickable ? 'pointer' : 'default')
             };
           })
         };
       });
-
-      // click-through drill-down states: loading / archive-offline / the run
-      if (rec) {
-        if (rec.status === 'loading') {
-          wall.loading = [{ t: 'Loading run from the archive…' }];
-        } else if (rec.status === 'error') {
-          wall.offline = [{ msg: rec.reason === 'offline'
-            ? 'Archive offline — this record’s run can’t be opened right now. The wall itself is complete from static data.'
-            : 'Could not load this run from the archive (' + rec.reason + ').' }];
-        } else if (rec.status === 'ready') {
-          const run = rec.run;
-          if (run.detail) {
-            const km = run.distanceM ? run.distanceM / 1000 : 0;
-            const paceS = km > 0 && run.durationS ? Math.round(run.durationS / km) : 0;
-            const rr = { date: (run.startTimeLocal || '').slice(0, 10), type: 'Run',
-                         km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail: run.detail };
-            const read = (this._cr && this._cr.coachRead)
-              ? this._cr.coachRead(rr, D.weekPlan || [], (D.profile && D.profile.maxHR) || 0) : '';
-            wall.run = [{
-              name: run.name || 'Run',
-              dateLabel: this.mDate(rr.date) + ', ' + rr.date.slice(0, 4),
-              km: km.toFixed(1), time: this.fmtHMS(run.durationS || 0),
-              pace: this.fmtPace(paceS), hr: run.avgHr != null ? run.avgHr : '—',
-              onClose: this.closeRecord,
-              dvRows: [this.runDetail({ ...rr, read })]
-            }];
-          } else {
-            wall.offline = [{ msg: 'This run has no distilled detail in the archive yet — the next sync will fill it in.' }];
-          }
-        }
-      }
     }
 
-    // ---- year over year: grouped monthly bars from insights.yoy -------------
+    // ---- year over year: grouped monthly bars from insights.yoy — one
+    // zero-anchored domain shared across every year (engine) ------------------
     let yoy = {}; let hasYoy = false;
     if (INS && INS.yoy) {
       const years = Object.keys(INS.yoy).sort();
       if (years.length) {
         hasYoy = true;
-        const W2 = 600, H3 = 150, pad2 = 8, pT = 12, pB = 20;
-        const plotH = H3 - pT - pB;
-        const palette = ['var(--sub)', 'var(--accent2)', 'var(--accent)'];
-        const colorOf = (yi) => palette[Math.max(0, palette.length - years.length + yi)];
         const byYear = {};
-        let maxKm = 1;
-        years.forEach((y) => {
-          byYear[y] = {};
-          INS.yoy[y].forEach((m) => { byYear[y][m.month] = m; if (m.km > maxKm) maxKm = m.km; });
-        });
-        const gw = (W2 - 2 * pad2) / 12;
-        const bw = Math.min(14, (gw - 6) / years.length);
-        const bars = [];
-        years.forEach((y, yi) => {
-          for (let m = 1; m <= 12; m++) {
-            const e = byYear[y][m];
-            if (!e) continue;   // not-yet month: no bar at all — distinct from a zero month's stub
-            const x = pad2 + (m - 1) * gw + (gw - bw * years.length) / 2 + yi * bw;
-            const bh = e.km > 0 ? Math.max(2, e.km / maxKm * plotH) : 2;
-            bars.push({ x: +x.toFixed(1), y: +(H3 - pB - bh).toFixed(1), w: +bw.toFixed(1), h: +bh.toFixed(1),
-                        fill: e.km > 0 ? colorOf(yi) : 'var(--line)' });
-          }
-        });
-        const pts = Array.from({ length: 12 }, (_, i) => {
+        years.forEach((y) => { byYear[y] = {}; INS.yoy[y].forEach((m) => { byYear[y][m.month] = m; }); });
+        // colour follows the year: the current year wears series1, the one
+        // before series2, and so on — the assignment never shifts mid-chart
+        const tokenFor = (y) => 'var(--series' + Math.min(4, years.length - years.indexOf(y)) + ')';
+        const yoySeries = years.map((y) => ({
+          key: 'y' + y, name: y, color: tokenFor(y), marks: ['bars'],
+          // not-yet months are null (no bar at all); a zero month keeps its
+          // 1px stub at the baseline — absence and zero stay distinct
+          values: Array.from({ length: 12 }, (_, i) => { const e = byYear[y][i + 1]; return e ? e.km : null; })
+        }));
+        const yoyHp = Array.from({ length: 12 }, (_, i) => {
           const m = i + 1;
           const lines = [{ t: M[i], em: false }];
           const ariaParts = [];
@@ -913,25 +689,24 @@ class Component extends DCLogic {
               ariaParts.push(y + ': ' + e.km.toFixed(1) + ' km over ' + e.runs + ' runs');
             }
           });
-          return { x: pad2 + i * gw + gw / 2, y: pT + 8, dotColor: 'transparent',
-                   aria: M[i] + ' — ' + ariaParts.join('; '), lines };
+          return { i, aria: M[i] + ' — ' + ariaParts.join('; '), lines, dots: [] };
         });
         yoy = {
-          grid: [pT, pT + plotH / 2, H3 - pB],
-          bars,
-          labels: Array.from({ length: 12 }, (_, i) => ({ x: +(pad2 + i * gw + gw / 2).toFixed(1), t: M[i] })),
-          legend: years.map((y, yi) => ({ y, color: colorOf(yi) }))
+          chart: this.engineChart('yoy', {
+            ariaLabel: 'Year over year monthly volume, ' + years.join(' vs ') + ', on one zero-anchored scale. Arrow keys to inspect months.',
+            height: '150px', frame: { w: 600, h: 150 },
+            x: { kind: 'band', labels: M },
+            y: { policy: cc ? cc.POLICIES.yoy : {}, label: 'km' },
+            series: yoySeries,
+            hoverPoints: yoyHp
+          }).chart
         };
-        this.attachOverlay(yoy, this.hoverLayer('yoy', pts));
-        yoy.onLeave = () => this.leaveChart('yoy');
-        yoy.onKey = (e) => this.chartKey('yoy', 12, e);
-        yoy.navLabel = 'Year over year monthly volume, ' + years.join(' vs ') + '. Arrow keys to inspect months.';
       }
     }
 
     let liveText = '';
-    { const h = this.state.hover; const reg = { vo2:vo2, pace:pace, cad:cad, fit:fit, vol:vol, insEff:eff, insCad:cadRef, yoy:yoy };
-      if (h && reg[h.chart] && reg[h.chart].card && reg[h.chart].card.length) liveText = reg[h.chart].card[0].rows.map(r => r.t).join(', '); }
+    { const h = this.state.hover; const sp = h && this._specs && this._specs[h.chart];
+      if (sp && sp.hover.card) liveText = sp.hover.card.rows.map(r => r.t).join(', '); }
 
     // sync freshness — the pill model lives in topbar.js (shared across pages);
     // telemetry is anchored to D.today (the sync date) vs the live date.

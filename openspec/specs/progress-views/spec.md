@@ -38,21 +38,20 @@ required to display it.
   extrapolated time
 
 ### Requirement: Records click through to the run they fell in
-Each record on the wall SHALL link to the run it was set in. Activating a
-record SHALL fetch that activity from the archive API and present its
-drill-down (coach-read line, splits, HR) using the established recent-run
-drill-down presentation.
+Each record on the wall SHALL link to the run it was set in. Activating a record
+SHALL navigate to that run's page (`/run/<activityId>`), where the run's streams,
+splits, records, and plan comparison are presented in full. The inline
+drill-down presentation is retired from the records wall.
 
 #### Scenario: Opening a record's run
 - **WHEN** the viewer activates a record whose run is only in the archive (not
   among the recent runs)
-- **THEN** the run's drill-down renders from the archive API's distilled
-  detail, matching the recent-run drill-down presentation
+- **THEN** the browser navigates to that run's page and the run detail renders
 
 #### Scenario: Click-through degrades honestly when the archive is offline
 - **WHEN** the viewer activates a record while the archive API returns 503
-- **THEN** the page shows an "archive offline" indication for the drill-down
-  and the rest of the page remains functional
+- **THEN** the run page renders its chrome with an "archive offline" indication,
+  and the progress page they left remains functional on return
 
 ### Requirement: Year-over-year comparison renders per-year monthly aggregates
 The progress page SHALL render a year-over-year view from `insights.yoy`
@@ -98,3 +97,43 @@ API unavailability MUST NOT blank any statically-renderable content.
 - **WHEN** the progress page loads while archive endpoints return 503
 - **THEN** the records wall, year-over-year view, and all relocated sections
   render fully; only drill-down interactions surface the offline state
+
+### Requirement: Progress charts offer scope controls where the data supports them
+Each trend chart on the progress page SHALL offer a scope control that
+re-derives its domain over the selected tail of its series, so a deviation
+invisible across the full range becomes visible across a shorter one. A scope
+option SHALL be offered only where the underlying series carries enough points to
+honour it, and each chart SHALL state its actual span alongside its title.
+
+#### Scenario: Narrowing the scope resolves a deviation
+- **WHEN** the user selects a six-month scope on a thirty-month series
+- **THEN** the chart re-derives its domain and its axes over the last six months
+  only, and the subtitle states that span
+
+#### Scenario: A chip is never offered beyond the data
+- **WHEN** a series carries fewer points than a scope option requires
+- **THEN** that option is not offered, and no chart implies a range it cannot
+  render
+
+### Requirement: Year-over-year bars share one domain
+The year-over-year comparison SHALL plot every year against a single shared y
+domain anchored at zero, so bar heights are comparable across years.
+
+#### Scenario: Years are visually comparable
+- **WHEN** the year-over-year chart renders three years of monthly volume
+- **THEN** all years share one zero-anchored y domain, and a month's bar height
+  is comparable to the same month in another year
+
+### Requirement: Timeline charts carry annotations
+Where a chart plots a timeline, it SHALL mark the events already present in the
+data file — race day, and the dates on which records fell (`insights.recordsFeed`)
+— as annotations that name what happened. Annotation flags SHALL be placed
+without overlapping one another.
+
+#### Scenario: A record is marked where it fell
+- **WHEN** a timeline chart spans a date in `insights.recordsFeed`
+- **THEN** an annotation marks that date and names the distance whose record fell
+
+#### Scenario: Crowded annotations do not collide
+- **WHEN** several annotations fall close together on the x axis
+- **THEN** they are placed in separate lanes and remain individually legible

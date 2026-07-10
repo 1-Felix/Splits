@@ -183,6 +183,40 @@ if (mode === "baseline") {
       console.log(`${ok ? "ok " : "FAIL"} topbar parity ${sel} { ${p}: cockpit=${a} progress=${b} }`);
     }
   }
+
+  // chart-engine 9.1: every trend chart carries y-axis tick labels and x-axis
+  // labels; a legend exists wherever >= 2 series render; and no chart bridges
+  // a null — the svg's data-line-paths stamp is the spec's own post-split
+  // segment count, checked against the paths actually in the DOM.
+  for (const [pgName, url] of [["cockpit", PAGE], ["/progress", PROGRESS]]) {
+    await page.setViewportSize({ width: 1200, height: 1600 });
+    await page.goto(url, { waitUntil: "networkidle" });
+    await page.waitForSelector("svg.chart-svg", { timeout: 15000 });
+    const charts = await page.evaluate(() =>
+      [...document.querySelectorAll("svg.chart-svg")].map((svg) => {
+        const frame = svg.closest(".chart-frame");
+        return {
+          kind: svg.getAttribute("data-chart"),
+          label: (svg.getAttribute("aria-label") || "").slice(0, 44),
+          yticks: frame ? frame.querySelectorAll(".chart-ytick").length : 0,
+          xticks: frame ? frame.querySelectorAll(".chart-xtick").length : 0,
+          legend: frame ? frame.querySelectorAll(".chart-legend-item").length : 0,
+          series: Number(svg.getAttribute("data-series") || 0),
+          declaredPaths: Number(svg.getAttribute("data-line-paths") || 0),
+          domPaths: svg.querySelectorAll("path[data-series-line]").length,
+        };
+      })
+    );
+    const trends = charts.filter((c) => c.kind === "trend");
+    if (!trends.length) { console.log(`FAIL ${pgName}: no trend charts found`); code = 1; }
+    for (const c of trends) {
+      const axisOk = c.yticks >= 2 && c.xticks >= 1;
+      const legendOk = c.series >= 2 ? c.legend >= 2 : c.legend === 0;
+      const gapOk = c.declaredPaths === c.domPaths;
+      if (!axisOk || !legendOk || !gapOk) code = 1;
+      console.log(`${axisOk && legendOk && gapOk ? "ok " : "FAIL"} chart ${pgName} "${c.label}" yticks=${c.yticks} xticks=${c.xticks} series=${c.series} legend=${c.legend} paths=${c.domPaths}/${c.declaredPaths}`);
+    }
+  }
   console.log(code ? "LAYOUT: FAIL" : "LAYOUT: ALL PASS");
 }
 

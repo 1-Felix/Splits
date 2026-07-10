@@ -54,13 +54,32 @@ function makeArchive(dir) {
     name TEXT, distance_m REAL, duration_s REAL, avg_hr INTEGER, max_hr INTEGER,
     avg_cadence REAL, elevation_gain_m REAL, summary_json TEXT NOT NULL,
     detail_json TEXT, detail_fetched_at TEXT, first_seen_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL, detail_distilled_json TEXT)`);
+    updated_at TEXT NOT NULL, detail_distilled_json TEXT, detail_streams_json TEXT)`);
   const ins = db.prepare(`INSERT INTO activities (activity_id, start_time_local,
     type_key, name, distance_m, duration_s, avg_hr, max_hr, avg_cadence,
-    elevation_gain_m, summary_json, first_seen_at, updated_at)
-    VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, '{}', 'x', 'x')`);
-  ins.run(1, "2026-05-01 07:00:00", "Morning Run", 10000, 3000, 150, 165, 168, 40);
-  ins.run(2, "2026-05-08 07:00:00", "Long Run", 21000, 7200, 148, 162, 166, 120);
+    elevation_gain_m, summary_json, first_seen_at, updated_at, detail_distilled_json,
+    detail_streams_json)
+    VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, '{}', 'x', 'x', ?, ?)`);
+  // run 1 carries a distilled detail + full streams so /run/1 renders its
+  // tracks and trace under the origin block (run-detail 8.2)
+  const N = 300;
+  const streams = JSON.stringify({
+    t: Array.from({ length: N }, (_, i) => i * 3),
+    d: Array.from({ length: N }, (_, i) => Math.round(i * 33.4)),
+    hr: Array.from({ length: N }, (_, i) => 140 + Math.round(10 * Math.sin(i / 30))),
+    v: Array.from({ length: N }, (_, i) => +(2.8 + 0.3 * Math.sin(i / 20)).toFixed(2)),
+    cad: Array.from({ length: N }, (_, i) => 165 + (i % 4)),
+    elev: Array.from({ length: N }, (_, i) => +(410 + 15 * Math.sin(i / 60)).toFixed(1)),
+    lat: Array.from({ length: N }, (_, i) => +(47.37 + 0.003 * Math.sin(i / 70)).toFixed(5)),
+    lon: Array.from({ length: N }, (_, i) => +(8.53 + 0.005 * (i / N)).toFixed(5)),
+  });
+  const detail = JSON.stringify({
+    splits: Array.from({ length: 10 }, (_, i) => ({ km: i + 1, pace: 300 + i * 3, hr: 145 + i })),
+    hrSeries: [140, 145, 150], driftBpm: 5, zoneMin: [5, 20, 10, 3, 0],
+    tempC: 20, te: 3.0, load: 120, elevGain: 40, splitShape: "even",
+  });
+  ins.run(1, "2026-05-01 07:00:00", "Morning Run", 10000, 3000, 150, 165, 168, 40, detail, streams);
+  ins.run(2, "2026-05-08 07:00:00", "Long Run", 21000, 7200, 148, 162, 166, 120, null, null);
   db.close();
 }
 
@@ -198,7 +217,26 @@ try {
   assert.strictEqual(archive.status, 200, "same-origin archive API returns 200 under the origin block");
   assert.strictEqual(archive.total, 2, "same-origin archive API returns its rows");
 
-  // Still zero foreign-origin requests after both pages.
+  // ── /run/:id ─────────────────────────────────────────────────────────────
+  // The trace-not-basemap decision is exactly what makes this page render with
+  // every third-party origin blocked: no tiles, no tile host (run-detail 8.2).
+  await page.goto(ORIGIN + "/run/1", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => document.querySelectorAll("svg[data-chart='trend']").length >= 3 &&
+          document.querySelectorAll("svg[data-chart='trace']").length === 1,
+    null, { timeout: 15000 });
+  const runPage = await page.evaluate(() => ({
+    reactVersion: window.React && window.React.version,
+    tracks: document.querySelectorAll("svg[data-chart='trend']").length,
+    trace: document.querySelectorAll("svg[data-chart='trace']").length,
+    splits: document.body.innerText.includes("Splits"),
+  }));
+  assert.strictEqual(runPage.reactVersion, "18.3.1", "run page: React is the vendored 18.3.1");
+  assert.ok(runPage.tracks >= 3, "run page: the track stack renders");
+  assert.strictEqual(runPage.trace, 1, "run page: the GPS trace renders — with no tile origin to block");
+  assert.ok(runPage.splits, "run page: the splits table renders");
+
+  // Still zero foreign-origin requests after all three pages.
   assert.strictEqual(blocked.length, 0,
     "no page attempted any non-same-origin request; blocked=" + JSON.stringify(blocked));
 
@@ -217,7 +255,7 @@ try {
     "no console errors beyond documented template/data noise; got: " + JSON.stringify(significant));
 
   // ── task 4.4 guard: the invariant fails at the source, not only in a browser ──
-  for (const f of ["Running Dashboard.dc.html", "progress.dc.html", "dashboard.css"]) {
+  for (const f of ["Running Dashboard.dc.html", "progress.dc.html", "run.dc.html", "dashboard.css"]) {
     const src = await readFile(join(ROOT, f), "utf8");
     const m = src.match(/https?:\/\/[^\s"')]+/);
     assert.ok(!m, `${f} must contain no absolute http(s) subresource URL; found: ${m && m[0]}`);

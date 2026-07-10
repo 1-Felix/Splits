@@ -11,14 +11,17 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | File | What it is |
 |------|------------|
 | `Running Dashboard.dc.html` | **The cockpit** (served at `/`). Today / this week / this block: hero, KPIs, plan, heatmap, recent runs. Renders complete from static files alone — no API. |
-| `progress.dc.html` | **The progress page** (served at `/progress`). The long game: weekly volume, the 30-month chart grid, the records wall (all-time / 90 d / by year, click-through to any archived run), and year-over-year volume. |
+| `progress.dc.html` | **The progress page** (served at `/progress`). The long game: weekly volume, the 30-month chart grid, the records wall (all-time / 90 d / by year — records click through to `/run/:id`), and year-over-year volume. |
+| `run.dc.html` | **The run page** (served at `/run/:id` — the one parameterised route). Full-resolution sample streams as synchronised tracks under one crosshair, the GPS trace as a projected polyline, splits vs the run's own median, best efforts, and planned-vs-actual from the compliance join. |
 | `topbar.js` | **Shared topbar behavior** — theme registry + `localStorage` persistence, the sync-pill state machine, greeting, and the page nav model. Markup is duplicated per page; behavior lives here once. |
 | `dashboard.css` | The dashboard's visual language — design tokens, semantic component classes, and the responsive `@media` layer. |
 | `support.js` | The `dc-runtime` that renders the `.dc.html` — a **generated** artifact (never hand-edited). Its CDN React loader is short-circuited: each page pre-seeds `window.React` / `window.ReactDOM` from `vendor/`, so it mounts the component with no network. |
 | `vendor/` | **Vendored client runtime** — React 18.3.1 UMD (pinned) plus self-hosted Archivo / JetBrains Mono `woff2` and the OFL licence, all served from our own origin. This project vendors; it does not CDN. See `vendor/README.md`. |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
 | `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
-| `chart-hover.js` | **The inspection layer.** Pure `bandRects` + `cardPlace` geometry behind the hover/tap crosshair-and-card that every chart, the heatmap, and the ring show for each datapoint. |
+| `chart-core.js` | **The chart engine's brain.** Pure, DOM-free geometry and policy: domain resolution (minimum spans, zero anchoring, goal inclusion), tick selection, null segmentation, rolling-median baseline bands, confidence weighting, annotation lanes, and `buildSpec(descriptor) → ChartSpec`. Consumes `chart-hover.js`; tested in `test_chart_core.mjs` with no browser. |
+| `chart-view.js` | **The chart engine's hands.** `renderChart(spec, React) → element` — the only file that turns a ChartSpec into elements. SVG carries the stretch-safe marks; all text and dots are HTML overlays so labels stay crisp at any card width. Tested against a stub React in `test_chart_view.mjs`. |
+| `chart-hover.js` | **The inspection layer.** Pure `bandRects` + `cardPlace` geometry behind the hover/tap crosshair-and-card — consumed by `chart-core.js`, never reimplemented. |
 | `garmin-data.js` | **Telemetry — sync-owned.** Overwritten by `sync_garmin.py` every run. Don't hand-edit. (`FROM GARMIN`) — lives in the `/data` volume when containerized. |
 | `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) — lives in the `/data` volume (seeded from the default below). |
 | `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
@@ -67,6 +70,56 @@ constraint is recorded beside the script tags and in `vendor/README.md`.
 `serve.mjs` also gzips `text/*`, JavaScript, and JSON responses (via the built-in
 `node:zlib` — still zero-dependency); the vendored `woff2` are served as-is
 (already compressed) and cached immutably.
+
+### The chart engine (core → view → spec)
+
+Every chart on both pages renders through one pipeline:
+
+```
+descriptor (data + policy + hover payloads)
+    │  chart-core.js   — pure geometry: domains, ticks, gaps, bands, lanes
+    ▼
+ChartSpec (px geometry + a11y contract, no DOM)
+    │  chart-view.js   — the only file that makes elements
+    ▼
+React element  →  {{ vo2.chart }} in the page template
+```
+
+`chart-core.js` is testable in node with no browser; `chart-view.js` is tested
+against a stub `createElement`. The d3 primitives underneath (`d3-scale`,
+`d3-shape`, `d3-array`, `d3-time-format`) are vendored as ONE checked-in ESM
+artifact, `vendor/d3-lite.js`, built from `vendor/entry.js` (the declared symbol
+surface) by the documented esbuild one-liner in `vendor/README.md` — no bundler
+enters the runtime, no CDN enters the page, and `test_chart_core.mjs` fails if
+the artifact goes stale against the core's imports.
+
+**The domain-policy table** (`POLICIES` in `chart-core.js`) is where to argue
+about how charts look. A chart's y domain is never just the data's extent —
+that's how a +0.3 VO₂ month used to sweep the full card height. Each metric
+declares its policy; the minimum spans are judgement calls, kept in one table so
+they can be changed together:
+
+| Chart | Domain rule | Reference layer |
+|---|---|---|
+| Trajectory (cockpit) | nice; must include `goalSec`; min span 15 min | goal rule + Riegel↔model ribbon |
+| VO₂ max | nice; min span 5.0 pts | 12-mo rolling median band |
+| Avg run pace | nice; must include goal pace; min span 60 s/km | goal rule |
+| Cadence | nice; min span 20 spm | 12-mo rolling median band |
+| Weekly volume | zero-based | 4-wk rolling mean line |
+| Fitness & fatigue | shared domain, zero-based | — (legend) |
+| Sleep hours | zero-based, 0–10 h | 7–9 h target band |
+| HRV | nice; min span 20 ms | personal baseline band (7-night median) |
+| Pace @ ref HR | nice; min span 60 s/km | 7-mo median band + `inBandMin` weighted dots |
+| Cadence @ ref pace | nice; min span 10 spm | 7-mo median band + weighted dots |
+| Year-over-year | zero-based, shared across years | — (legend) |
+| Heatmap | sequential single-hue ramp (`hm0…hm4`) | — |
+
+Two rules the engine enforces everywhere: a line never bridges a null month
+(gaps stay gaps), and series colours (`series1…series4` in `topbar.js`) are
+validated by script — `test_palette.mjs` runs the vendored checker in
+`tools/validate-palette.mjs` against every theme's own surface, so status
+colours can never impersonate a series and the zone ramp stays legible under
+colour-vision deficiency.
 
 ## Self-hosting with Docker (recommended)
 
@@ -245,9 +298,13 @@ never break the telemetry sync — it degrades to a warning.
   only, filterable (`type`, `year`, `from`/`to`), paginated (`limit` ≤ 100,
   `offset`), newest-first.
 - `GET /api/archive/activities/:id` — one activity's summary plus its stored
-  distilled detail, exactly the shape recent runs use in `garmin-data.js`, so
-  the drill-down UI opens any archived run. Raw Garmin payloads never leave the
-  server.
+  distilled detail (exactly the shape recent runs use in `garmin-data.js`), its
+  planned-vs-actual row joined from `plan_compliance`, and the best efforts it
+  set from `run_metrics`. Raw Garmin payloads never leave the server.
+- `GET /api/archive/activities/:id/streams` — the run's full-resolution sample
+  stream, served **verbatim** from `detail_streams_json` and gzipped on the
+  wire (~29 KB for the largest archived run). 404 for a run with no stored
+  streams; never computed on the fly.
 
 The API is a *window, not an engine*: it performs no derivation — everything it
 returns was computed by the deterministic Python sync. It opens the database
@@ -299,6 +356,34 @@ archive is entirely derived from Garmin, so any copy can be rebuilt with
 `--backfill` — don't sync archive files between machines (and don't run SQLite
 across an SMB mount). A corrupt database is quarantined as
 `activity-archive.db.corrupt-<date>` and recreated automatically.
+
+### Run streams and the run page (`/run/:id`)
+
+Every archived run's raw detail holds ~1,670 samples × 19 metrics. The sync's
+**stream distiller** (`distill_run_streams`) reshapes that row-oriented payload
+into rounded COLUMNS — `t`/`d`/`hr`/`v`/`gap`/`cad`/`elev`/`pwr`/`lat`/`lon`/`pc`
+— stored in `activities.detail_streams_json` (schema v6, additive). Full
+resolution, no downsampling: reshaped and rounded, the largest run costs ~115 KB
+raw and **~29 KB gzipped** on the wire. Cadence comes from
+`directDoubleCadence`, never `directRunCadence` (which is single-side strides
+per minute despite its descriptor). Like the distilled detail, streams are
+derived and disposable — the sync writes them for every newly archived run, and
+the same pass acts as the **recovery pass** over a pre-v6 archive: stored
+payloads in, no Garmin calls, raw payloads byte-identical afterwards.
+`--verify-archive` reports stream coverage and fails on regression.
+
+`/run/:id` renders those streams as synchronised tracks (pace with
+grade-adjusted pace, heart rate over zone shading, cadence, elevation, power
+and performance condition when present) under **one crosshair**, switchable
+between distance and time — plus splits against the run's own median, the best
+efforts the run set, and what the plan asked for beside what happened.
+
+**Why is there no basemap?** Every map-tile provider is a third-party origin,
+and this project vendors rather than CDNs — `test_offline.mjs` loads `/run/:id`
+with every non-same-origin request aborted and the route still renders. The GPS
+track draws as a projected polyline (equirectangular, cos-latitude corrected,
+aspect preserved): the *shape* of the run, not a picture of a city. It works
+offline, prints, themes with the page, and costs ~9 KB.
 
 ## How the AI coach fits in
 

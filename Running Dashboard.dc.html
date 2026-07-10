@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
+     ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
+     already present and never reaches for its unpkg CDN fallback. This pin is
+     load-bearing: React 19 ships no UMD build, so React cannot be pre-seeded as
+     a global — a version bump would blank the page until a bundler is adopted. -->
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
 <script src="./support.js"></script>
 <!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
      before support.js mounts on DOMContentLoaded, so the persisted theme is
@@ -12,9 +19,9 @@
 <body>
 <x-dc>
 <helmet>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Archivo + JetBrains Mono are vendored under ./vendor/fonts and declared via
+     @font-face in dashboard.css; no fonts.googleapis.com / fonts.gstatic.com
+     origin is contacted. -->
 <link rel="stylesheet" href="./dashboard.css">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}

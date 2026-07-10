@@ -18,6 +18,7 @@ import { createServer } from "node:http";
 import { readFile, writeFile, rename, unlink, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPlan, validatePlanText } from "./plan-io.mjs";
@@ -93,13 +94,52 @@ const MIME = {
 let syncing = false;
 let lastResult = null; // { ok, code, at, error } of the most recent sync attempt
 
-function json(res, status, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
+// ── response compression (design D4) ─────────────────────────────────────────
+// gzip via the built-in node:zlib (the server stays dependency-free) when the
+// client advertises it AND the resolved content type is compressible text/JS/
+// JSON. Already-compressed types (woff2, images) pass through untouched —
+// gzipping them costs CPU and *grows* the body. We never set Content-Length
+// ourselves: res.end(buf) lets Node size the exact bytes it sends, so a gzipped
+// response can never go out carrying the pre-gzip length (the classic bug).
+function acceptsGzip(req) {
+  const ae = req.headers["accept-encoding"];
+  if (typeof ae !== "string") return false;
+  return ae.split(",").some((part) => {
+    const seg = part.trim().split(";");
+    if (seg[0].toLowerCase() !== "gzip") return false;
+    const q = seg.slice(1).map((s) => s.trim()).find((s) => s.toLowerCase().startsWith("q="));
+    return !q || Number(q.slice(2)) > 0; // gzip;q=0 means "do not use gzip"
+  });
+}
+
+function isCompressible(contentType) {
+  if (!contentType) return false;
+  return /^text\//i.test(contentType)
+    || /^application\/javascript\b/i.test(contentType)
+    || /^application\/json\b/i.test(contentType);
+}
+
+// Send a fully-buffered response, negotiating gzip. `headers` MUST NOT carry a
+// Content-Length — Node derives it from the buffer handed to res.end().
+function sendBuffer(req, res, status, headers, body, contentType) {
+  const h = { ...headers };
+  if (isCompressible(contentType)) {
+    h["Vary"] = "Accept-Encoding";
+    if (acceptsGzip(req) && body.length > 0) {
+      body = gzipSync(body);
+      h["Content-Encoding"] = "gzip";
+    }
+  }
+  res.writeHead(status, h);
+  res.end(body);
+}
+
+function json(req, res, status, body) {
+  const payload = Buffer.from(JSON.stringify(body), "utf8");
+  sendBuffer(req, res, status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-  });
-  res.end(payload);
+  }, payload, "application/json; charset=utf-8");
 }
 
 // Constant-time string compare (equal-length only; unequal lengths are trivially unequal).
@@ -250,29 +290,29 @@ function getArchiveActivity(db, id) {
 }
 
 async function handleArchive(req, res, pathname, url) {
-  if (req.method !== "GET") { json(res, 405, { ok: false, error: "use GET" }); return; }
+  if (req.method !== "GET") { json(req, res, 405, { ok: false, error: "use GET" }); return; }
   let db;
   try {
     db = await openArchive();
   } catch {
     // missing db / unopenable file / no driver — pages and other APIs keep working
-    json(res, 503, { ok: false, error: "archive unavailable" });
+    json(req, res, 503, { ok: false, error: "archive unavailable" });
     return;
   }
   try {
     if (pathname === "/api/archive/activities") {
-      json(res, 200, listArchiveActivities(db, url.searchParams));
+      json(req, res, 200, listArchiveActivities(db, url.searchParams));
       return;
     }
     const idStr = pathname.slice("/api/archive/activities/".length);
-    if (!/^\d+$/.test(idStr)) { json(res, 404, { ok: false, error: "unknown activity" }); return; }
+    if (!/^\d+$/.test(idStr)) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
     const activity = getArchiveActivity(db, Number(idStr));
-    if (!activity) { json(res, 404, { ok: false, error: "unknown activity" }); return; }
-    json(res, 200, activity);
+    if (!activity) { json(req, res, 404, { ok: false, error: "unknown activity" }); return; }
+    json(req, res, 200, activity);
   } catch {
     // SQLITE_BUSY under the sync's write lock, or any other read failure:
     // an honest 503, never a partial payload
-    json(res, 503, { ok: false, error: "archive unavailable" });
+    json(req, res, 503, { ok: false, error: "archive unavailable" });
   } finally {
     if (db) try { db.close(); } catch { /* already closed */ }
   }
@@ -374,13 +414,13 @@ const server = createServer(async (req, res) => {
 
     // ── API ──────────────────────────────────────────────────────────────────
     if (pathname === "/api/sync") {
-      if (req.method !== "POST") { json(res, 405, { ok: false, error: "use POST" }); return; }
+      if (req.method !== "POST") { json(req, res, 405, { ok: false, error: "use POST" }); return; }
       const result = await triggerSync();
-      json(res, result.status === "already-running" ? 409 : result.ok ? 200 : 502, result);
+      json(req, res, result.status === "already-running" ? 409 : result.ok ? 200 : 502, result);
       return;
     }
     if (pathname === "/api/status") {
-      json(res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
+      json(req, res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
       return;
     }
     if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")) {
@@ -391,15 +431,15 @@ const server = createServer(async (req, res) => {
     // ── plan push: replace the canonical plan-data.js. Gated on PLAN_TOKEN — when unset
     //    the route falls through to the static handler and 404s, as if it didn't exist.
     if (pathname === "/api/plan" && PLAN_TOKEN) {
-      if (req.method !== "PUT") { json(res, 405, { ok: false, error: "use PUT" }); return; }
+      if (req.method !== "PUT") { json(req, res, 405, { ok: false, error: "use PUT" }); return; }
       // auth
       const auth = req.headers["authorization"] || "";
       const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      if (!safeEqual(token, PLAN_TOKEN)) { json(res, 401, { ok: false, error: "unauthorized" }); return; }
+      if (!safeEqual(token, PLAN_TOKEN)) { json(req, res, 401, { ok: false, error: "unauthorized" }); return; }
       // reject an oversized declared body up front (streaming cap is the fallback)
       const declared = Number(req.headers["content-length"]);
       if (Number.isFinite(declared) && declared > PLAN_MAX_BYTES) {
-        json(res, 413, { ok: false, error: "body too large" });
+        json(req, res, 413, { ok: false, error: "body too large" });
         return;
       }
       // body (size-capped)
@@ -407,13 +447,13 @@ const server = createServer(async (req, res) => {
       try {
         body = await readBody(req, PLAN_MAX_BYTES);
       } catch (e) {
-        json(res, e.code === "TOO_LARGE" ? 413 : 400, { ok: false, error: e.message });
+        json(req, res, e.code === "TOO_LARGE" ? 413 : 400, { ok: false, error: e.message });
         return;
       }
       // version guard → validate → atomic write, serialized so concurrent pushes can't
       // interleave (a bad or stale push never touches the live file)
       const out = await planPushExclusive(() => applyPlanPush(body, req.headers["if-match"]));
-      json(res, out.status, out.body);
+      json(req, res, out.status, out.body);
       return;
     }
 
@@ -435,11 +475,18 @@ const server = createServer(async (req, res) => {
     }
 
     const body = await readFile(filePath);
-    res.writeHead(200, {
-      "Content-Type": MIME[extname(filePath).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": "no-cache, no-store, must-revalidate",
-    });
-    res.end(body);
+    const contentType = MIME[extname(filePath).toLowerCase()] || "application/octet-stream";
+    // Vendored assets (react + fonts) are content-stable and version-pinned, so
+    // cache them hard; everything else stays uncacheable so a data edit shows up
+    // on the next load. sendBuffer negotiates gzip (text/js/json only — the
+    // vendored woff2 pass through as-is).
+    const cacheControl = pathname.startsWith("/vendor/")
+      ? "public, max-age=31536000, immutable"
+      : "no-cache, no-store, must-revalidate";
+    sendBuffer(req, res, 200, {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+    }, body, contentType);
   } catch (err) {
     res.writeHead(500, { "Content-Type": "text/plain" }).end(`500 — ${err.message}`);
   }

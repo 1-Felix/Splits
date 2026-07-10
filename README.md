@@ -14,7 +14,8 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `progress.dc.html` | **The progress page** (served at `/progress`). The long game: weekly volume, the 30-month chart grid, the records wall (all-time / 90 d / by year, click-through to any archived run), and year-over-year volume. |
 | `topbar.js` | **Shared topbar behavior** — theme registry + `localStorage` persistence, the sync-pill state machine, greeting, and the page nav model. Markup is duplicated per page; behavior lives here once. |
 | `dashboard.css` | The dashboard's visual language — design tokens, semantic component classes, and the responsive `@media` layer. |
-| `support.js` | The `dc-runtime` that renders the `.dc.html` (loads React from a CDN, mounts the component). |
+| `support.js` | The `dc-runtime` that renders the `.dc.html` — a **generated** artifact (never hand-edited). Its CDN React loader is short-circuited: each page pre-seeds `window.React` / `window.ReactDOM` from `vendor/`, so it mounts the component with no network. |
+| `vendor/` | **Vendored client runtime** — React 18.3.1 UMD (pinned) plus self-hosted Archivo / JetBrains Mono `woff2` and the OFL licence, all served from our own origin. This project vendors; it does not CDN. See `vendor/README.md`. |
 | `running-data.js` | **The contract.** Merges the two data files below into the `athleteData` object the dashboard reads, and attaches each run's coach-read. |
 | `coach-read.js` | **The read.** Turns a run's stored `detail` (per-km splits, HR-drift, zones) + the plan into the one-line coach-read shown when you click a run in *Recent Activities* to drill into it. |
 | `chart-hover.js` | **The inspection layer.** Pure `bandRects` + `cardPlace` geometry behind the hover/tap crosshair-and-card that every chart, the heatmap, and the ring show for each datapoint. |
@@ -44,6 +45,28 @@ plan-data.js    (EDITABLE,   coach-owned) ┘     { ...garmin, ...plan }
 
 A nightly `sync_garmin.py` can overwrite `garmin-data.js` freely and never risks
 your training plan.
+
+### Why vendor React and the fonts?
+
+**This project vendors; it does not CDN.** The cockpit's promise — it renders
+complete from static files alone — only holds if *every* subresource comes from
+our own origin. So the React runtime and both typefaces are checked into
+`vendor/` and served by `serve.mjs`; no page loads `unpkg.com`,
+`fonts.googleapis.com`, or any other third-party host. `test_offline.mjs`
+enforces this by loading the pages with every non-same-origin request aborted and
+asserting they still render.
+
+React is pinned to **18.3.1** on purpose: it is the last version published as a
+UMD global. Two `<script>` tags in each page pre-seed `window.React` /
+`window.ReactDOM` before the generated `support.js` runs, so its CDN loader takes
+its `if (w.React && w.ReactDOM) return` early exit and `support.js` stays
+byte-for-byte the artifact it ships as. React 19 ships no UMD build, so bumping
+the version is not a one-line change — it means adopting a bundler. That
+constraint is recorded beside the script tags and in `vendor/README.md`.
+
+`serve.mjs` also gzips `text/*`, JavaScript, and JSON responses (via the built-in
+`node:zlib` — still zero-dependency); the vendored `woff2` are served as-is
+(already compressed) and cached immutably.
 
 ## Self-hosting with Docker (recommended)
 

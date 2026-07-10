@@ -35,3 +35,7 @@ fixtures
 .DS_Store
 Thumbs.db
 splits-*.png
+
+# NB: vendor/ (React UMD builds + self-hosted woff2 fonts) is deliberately NOT
+# ignored — it is application code and MUST ship in the image so the cockpit
+# renders with outbound network access removed. Do not add vendor/ here.

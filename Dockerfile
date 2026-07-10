@@ -19,8 +19,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# App code. Personal data files are excluded via .dockerignore — they live in the
-# /data volume, never in the image.
+# App code, including vendor/ (the React UMD builds + self-hosted fonts). These
+# vendored client assets ship as application code in the image — never in the
+# /data volume — so the cockpit renders with outbound network access removed.
+# .dockerignore must NOT exclude vendor/. Personal data files ARE excluded there;
+# they live in the /data volume, never in the image.
 COPY . .
 RUN chmod +x docker-entrypoint.sh
 

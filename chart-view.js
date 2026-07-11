@@ -249,11 +249,25 @@ export function renderChart(spec, React) {
     const ty = c.place === "above" ? "calc(-100% - 9px)" : "9px";
     card = h("div", {
       key: "card", "data-card": hover.id, className: "pop",
-      onClick: hover.drill ? (e) => { if (e.stopPropagation) e.stopPropagation(); hover.drill.action(); } : undefined,
+      onClick: hover.drill ? (e) => {
+        if (e.stopPropagation) e.stopPropagation();
+        // a mouse drill mirrors the keyboard one: the chart svg takes focus
+        // BEFORE the action, so whoever opens an evidence view and closes it
+        // gets focus back on the chart (the card itself is not focusable and
+        // the mousedown just blurred whatever was)
+        const svgEl = e.currentTarget && e.currentTarget.parentElement
+          && e.currentTarget.parentElement.querySelector("svg.chart-svg");
+        if (svgEl && svgEl.focus) svgEl.focus();
+        hover.drill.action();
+      } : undefined,
       style: {
         position: "absolute", left: c.leftPct + "%", top: c.topPct + "%",
         transform: `translate(${tx}, ${ty})`, zIndex: 6,
         cursor: hover.drill ? "pointer" : undefined,
+        // .pop is pointer-transparent so hover cards never steal the mouse
+        // from the chart; a DRILL card is a click target and must override
+        // that, or every click lands on the chart behind it
+        pointerEvents: hover.drill ? "auto" : undefined,
       },
     }, ...c.rows.map((r, ri) => h("div", {
       key: "r" + ri,

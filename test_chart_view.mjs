@@ -189,6 +189,11 @@ function demoSpec(overrides = {}) {
     const aff = collect(card, (n) => text(n) === "view evidence →");
     assert.ok(aff.length >= 1, "the affordance row is visible on the card");
     assert.strictEqual(typeof card.props.onClick, "function", "the pinned card is clickable");
+    // .pop ships pointer-events: none (hover cards must stay transparent to
+    // the mouse) — a DRILL card must override it or every click lands on the
+    // chart behind the card
+    assert.strictEqual(card.props.style.pointerEvents, "auto",
+      "a drillable card accepts the pointer (overrides .pop's pointer-events: none)");
     card.props.onClick({ stopPropagation: () => {} });
     assert.deepStrictEqual(log, ["drill0"], "card click invokes the point's action");
 
@@ -223,6 +228,8 @@ function demoSpec(overrides = {}) {
     const card = collect(el, (n) => n.props["data-card"] === "eff")[0];
     assert.strictEqual(collect(card, (n) => text(n) === "view evidence →").length, 0, "no affordance on a null point");
     assert.strictEqual(card.props.onClick, undefined, "null-point card is not clickable");
+    assert.strictEqual(card.props.style.pointerEvents, undefined,
+      "a non-drill card keeps .pop's pointer transparency");
     const svg = collect(el, (n) => n.type === "svg")[0];
     svg.props.onKeyDown(key("Enter"));
     assert.deepStrictEqual(log, ["pageKey:Enter"], "Enter on a null point keeps page semantics");

@@ -173,9 +173,10 @@ try {
     null, { timeout: 10000 });
   assert.strictEqual(archiveRequests.length, 0, "the pinned affordance alone fetches nothing");
 
-  // ── Enter drills: panel opens, focus lands on the heading, rows split ─────
+  // ── clicking the pinned CARD drills (the mouse path — .pop is pointer-
+  // transparent for hover cards, so the drill card must accept the click) ────
   step = "drill opens the panel";
-  await page.keyboard.press("Enter");
+  await page.click('[data-card="insEff"]');
   await page.waitForFunction(() =>
     document.querySelector("#drill-panel") &&
     document.querySelectorAll("#drill-panel a.drill-run").length >= 2,

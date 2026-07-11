@@ -169,7 +169,7 @@ try {
     document.querySelector('[data-card="traj"]').innerText.includes("view anchor run"),
     null, { timeout: 10000 });
   assert.strictEqual(archiveRequests.length, 0, "the anchor affordance needs no API");
-  await page.keyboard.press("Enter");
+  await page.click('[data-card="traj"]');   // a real mouse click on the card drills
   await page.waitForFunction(() => window.location.pathname === "/run/777", null, { timeout: 10000 });
   assert.strictEqual(archiveRequests.filter((u) => !u.includes("/api/archive/activities/777")).length, 0,
     "navigation came from static data — the only archive requests are the run page's own");

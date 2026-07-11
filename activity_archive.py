@@ -26,12 +26,15 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import sqlite3
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -201,6 +204,38 @@ def _apply_schema_v7(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE run_metrics ADD COLUMN {name} REAL")
 
 
+# Schema v8 (route-basemap, design D2/D8): map tiles for the run-detail trace.
+# `map_tiles` is deduped GLOBALLY — one row per unique OSM tile, shared by
+# every run through the same neighbourhood; blobs are the tile PNGs verbatim.
+# `activity_maps` records each run's tile rect plus its crop box (world pixels
+# at the row's zoom) so the client never re-derives the framing heuristics.
+# A run's row exists only when its rect is COMPLETE in map_tiles (design D6);
+# both tables are additive, raw v1 tables untouched.
+SCHEMA_V8_SQL = """
+CREATE TABLE IF NOT EXISTS map_tiles (
+  z          INTEGER NOT NULL,
+  x          INTEGER NOT NULL,
+  y          INTEGER NOT NULL,
+  png        BLOB NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (z, x, y)
+);
+
+CREATE TABLE IF NOT EXISTS activity_maps (
+  activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+  z           INTEGER NOT NULL,
+  x0          INTEGER NOT NULL,
+  y0          INTEGER NOT NULL,
+  x1          INTEGER NOT NULL,
+  y1          INTEGER NOT NULL,
+  crop_x      REAL NOT NULL,
+  crop_y      REAL NOT NULL,
+  crop_size   REAL NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+"""
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -236,7 +271,8 @@ def _open(db: Path) -> sqlite3.Connection:
         _apply_schema_v5(conn)
         _apply_schema_v6(conn)
         _apply_schema_v7(conn)
-        # Forward-only migration: v1→…→v7 is purely additive (CREATE IF
+        conn.executescript(SCHEMA_V8_SQL)
+        # Forward-only migration: v1→…→v8 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -701,6 +737,173 @@ def streams_coverage(conn: sqlite3.Connection) -> dict:
         f"WHERE a.detail_streams_json IS NOT NULL AND {_RUN_TYPE_SQL}").fetchone()[0]
     return {"detailed_runs": detailed_runs, "streamed": streamed,
             "missing": detailed_runs - streamed}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# route-basemap tile math (schema v8 — pure and deterministic; the fetch step
+# below is the only place in this module that ever touches the network)
+# ──────────────────────────────────────────────────────────────────────────────
+TILE_MAX_ZOOM = 16     # OSM standard tiles stay crisp enough for a fitted card
+TILE_MAX_SPAN = 3      # crop side, in tiles, at the chosen zoom
+TILE_PAD_FRAC = 0.08   # breathing room around the route bbox
+# Floor on the normalized crop side so a near-stationary track (GPS warm-up
+# in the garden) still frames ~250 m of world instead of a degenerate sliver.
+_TILE_MIN_SPAN_NORM = 6e-6
+
+
+def merc_world_px(lat: float, lon: float, z: int) -> tuple[float, float]:
+    """Web Mercator world-pixel coordinates at zoom z — THE tile-alignment
+    formula, mirrored verbatim by chart-core's projectTrackMercator. Both
+    sides are pinned to the same known values by their tests."""
+    world = 256 * (2 ** z)
+    x = (lon + 180.0) / 360.0 * world
+    y = (1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * world
+    return x, y
+
+
+def compute_tile_rect(lat, lon):
+    """A run's map coverage from its stored lat/lon columns (design D3):
+    bbox → ~8% pad → squarify → highest zoom ≤ 16 whose crop spans ≤ 3 tiles
+    → covering tile rect. Returns {z, x0, y0, x1, y1, crop_x, crop_y,
+    crop_size} with the crop in world pixels at z, or None when the streams
+    carry fewer than two GPS fixes. Pure: same columns, same answer."""
+    n = min(len(lat or []), len(lon or []))
+    pts = [(lat[i], lon[i]) for i in range(n) if lat[i] is not None and lon[i] is not None]
+    if len(pts) < 2:
+        return None
+    # normalized [0,1] Mercator space is zoom-independent; scale once at the end
+    xs = [(lo + 180.0) / 360.0 for _, lo in pts]
+    ys = [(1.0 - math.asinh(math.tan(math.radians(la))) / math.pi) / 2.0 for la, _ in pts]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    span = max(x1 - x0, y1 - y0, _TILE_MIN_SPAN_NORM)
+    side = span * (1 + 2 * TILE_PAD_FRAC)                 # pad, then squarify
+    z = min(TILE_MAX_ZOOM, int(math.floor(math.log2(TILE_MAX_SPAN / side))))
+    z = max(z, 0)
+    scale = 256 * (2 ** z)
+    crop_size = side * scale
+    crop_x = (x0 + x1) / 2 * scale - crop_size / 2
+    crop_y = (y0 + y1) / 2 * scale - crop_size / 2
+    last = 2 ** z - 1
+    return {
+        "z": z,
+        "x0": max(0, math.floor(crop_x / 256)),
+        "y0": max(0, math.floor(crop_y / 256)),
+        "x1": min(last, math.floor((crop_x + crop_size) / 256)),
+        "y1": min(last, math.floor((crop_y + crop_size) / 256)),
+        "crop_x": round(crop_x, 2),
+        "crop_y": round(crop_y, 2),
+        "crop_size": round(crop_size, 2),
+    }
+
+
+# ── the fetch step (route-basemap D5/D6): sync-side only — the browser never
+#    learns the tile host exists. Throttled, identified, complete-or-absent. ──
+TILE_URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+# OSM tile usage policy asks bulk users to identify the app and a contact.
+TILE_USER_AGENT = ("SPLITS-training-dashboard/1.0 "
+                   "(personal self-hosted dashboard; felixkeller98@gmail.com)")
+
+
+def _tile_request(z: int, x: int, y: int) -> urllib.request.Request:
+    return urllib.request.Request(
+        TILE_URL_TEMPLATE.format(z=z, x=x, y=y),
+        headers={"User-Agent": TILE_USER_AGENT})
+
+
+def fetch_tile(z: int, x: int, y: int, timeout: int = 30) -> bytes:
+    with urllib.request.urlopen(_tile_request(z, x, y), timeout=timeout) as r:
+        return r.read()
+
+
+def ensure_activity_map(conn: sqlite3.Connection, activity_id, streams,
+                        fetch=None, pace_s: float = 1.0, _sleep=None) -> str:
+    """Bring one run's basemap to complete-or-absent (design D6). Probes the
+    deduped tile store first and fetches only the gap, one pause between
+    consecutive fetches (design D5). The per-run row lands only after the
+    whole rect is stored; tiles fetched before a failure stay (they are
+    globally useful), so a retry fetches only what is still missing.
+
+    Returns 'exists' (row already there), 'skipped' (no usable GPS),
+    'done' (rect completed and row written), or 'failed' (a fetch died;
+    no row written)."""
+    if conn.execute("SELECT 1 FROM activity_maps WHERE activity_id = ?",
+                    (activity_id,)).fetchone():
+        return "exists"
+    rect = compute_tile_rect((streams or {}).get("lat"), (streams or {}).get("lon"))
+    if rect is None:
+        return "skipped"
+    fetch = fetch or fetch_tile
+    sleep = _sleep if _sleep is not None else time.sleep
+    missing = [
+        (rect["z"], x, y)
+        for x in range(rect["x0"], rect["x1"] + 1)
+        for y in range(rect["y0"], rect["y1"] + 1)
+        if conn.execute("SELECT 1 FROM map_tiles WHERE z = ? AND x = ? AND y = ?",
+                        (rect["z"], x, y)).fetchone() is None
+    ]
+    for i, (z, x, y) in enumerate(missing):
+        if i:
+            sleep(pace_s)
+        try:
+            png = fetch(z, x, y)
+        except Exception:
+            png = None
+        if not png:
+            return "failed"
+        # commit per tile: an interrupted pass keeps every tile it landed
+        conn.execute("INSERT OR IGNORE INTO map_tiles (z, x, y, png, fetched_at) "
+                     "VALUES (?, ?, ?, ?, ?)", (z, x, y, png, _now()))
+        conn.commit()
+    conn.execute(
+        "INSERT OR REPLACE INTO activity_maps "
+        "(activity_id, z, x0, y0, x1, y1, crop_x, crop_y, crop_size, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (activity_id, rect["z"], rect["x0"], rect["y0"], rect["x1"], rect["y1"],
+         rect["crop_x"], rect["crop_y"], rect["crop_size"], _now()))
+    conn.commit()
+    return "done"
+
+
+def runs_missing_maps(conn: sqlite3.Connection) -> list:
+    """activity_ids of archived runs whose stored streams carry GPS but which
+    have no activity_maps row — the map step's work list, oldest first. The
+    LIKE probe keeps treadmill runs (no lat column at all) off the list, so
+    they cost nothing sync after sync."""
+    rows = conn.execute(
+        f"""SELECT a.activity_id FROM activities a
+            LEFT JOIN activity_maps m ON m.activity_id = a.activity_id
+            WHERE a.detail_streams_json IS NOT NULL
+              AND a.detail_streams_json LIKE '%"lat":%'
+              AND m.activity_id IS NULL
+              AND {_RUN_TYPE_SQL}
+            ORDER BY a.start_time_local""").fetchall()
+    return [r[0] for r in rows]
+
+
+def streams_payload(conn: sqlite3.Connection, activity_id):
+    """The parsed columnar streams for one activity, or None — the map step
+    needs the lat/lon columns. Fetched one at a time, like detail_payload."""
+    row = conn.execute(
+        "SELECT detail_streams_json FROM activities WHERE activity_id = ?",
+        (activity_id,)).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def maps_coverage(conn: sqlite3.Connection) -> dict:
+    """The maps section --verify-archive reports: runs holding GPS streams vs
+    runs holding a map row, plus the deduped tile store's size. Treadmill runs
+    (no lat column) are out of the denominator — they never get maps."""
+    streamed_runs = conn.execute(
+        f"""SELECT COUNT(*) FROM activities a
+            WHERE a.detail_streams_json IS NOT NULL
+              AND a.detail_streams_json LIKE '%"lat":%'
+              AND {_RUN_TYPE_SQL}""").fetchone()[0]
+    mapped = conn.execute("SELECT COUNT(*) FROM activity_maps").fetchone()[0]
+    tiles, tile_bytes = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(LENGTH(png)), 0) FROM map_tiles").fetchone()
+    return {"streamed_runs": streamed_runs, "mapped": mapped,
+            "tiles": tiles, "tile_bytes": tile_bytes}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

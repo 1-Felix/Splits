@@ -5,7 +5,7 @@ import {
   resolveDomain, segmentNulls, bandFromSeries, rollingMean,
   confidenceRadius, isConfident, placeAnnotations, buildSpec,
   monthKeyToDate, isoWeekToDate, datesBackFrom, POLICIES, fmt,
-  crosshairAt, projectTrack, multiTrackSpec,
+  crosshairAt, projectTrack, projectTrackMercator, tileLayout, multiTrackSpec,
 } from "./chart-core.js";
 import { scaleLinear } from "./vendor/d3-lite.js";
 
@@ -419,6 +419,61 @@ import { scaleLinear } from "./vendor/d3-lite.js";
   assert.strictEqual(pr3.points[1], null);
   // fewer than two valid points is no track
   assert.strictEqual(projectTrack([47], [8], 300, 300), null);
+}
+
+// ── projectTrackMercator + tileLayout (route-basemap): tile alignment ────────
+{
+  // the anchor points every tile server agrees on — the same values pin the
+  // Python side's merc_world_px in test_activity_archive.py
+  const merc = (lat, lon, z) => {
+    const world = 256 * 2 ** z;
+    return [
+      (lon + 180) / 360 * world,
+      (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * world,
+    ];
+  };
+  assert.deepStrictEqual(merc(0, 0, 0), [128, 128], "reference formula sanity");
+
+  const z0map = { z: 0, x0: 0, y0: 0, x1: 0, y1: 0, cropX: 0, cropY: 0, cropSize: 256 };
+  const pr = projectTrackMercator([0, 85.0511287798066], [0, -180], z0map);
+  assert.ok(pr, "two valid fixes make a track");
+  assert.deepStrictEqual(pr.points[0], [128, 128], "origin lands mid-tile at z0");
+  assert.ok(Math.abs(pr.points[1][0]) < 1e-6 && Math.abs(pr.points[1][1]) < 1e-6,
+    "top-left of the Mercator square lands at the tile corner");
+  assert.strictEqual(pr.size, 256, "the viewport is the crop, square");
+
+  // alignment by construction: at z15, every projected point equals the
+  // reference world-pixel minus the crop origin
+  const lat = [47.72, 47.725, null, 47.73];
+  const lon = [10.30, 10.31, 10.31, 10.32];
+  const m15 = { z: 15, cropX: 17330 * 256 + 53.5, cropY: 11341 * 256 + 10.25, cropSize: 700 };
+  const pm = projectTrackMercator(lat, lon, m15);
+  for (let i = 0; i < lat.length; i++) {
+    if (lat[i] == null || lon[i] == null) {
+      assert.strictEqual(pm.points[i], null, "null samples stay null");
+      continue;
+    }
+    const [wx, wy] = merc(lat[i], lon[i], 15);
+    assert.ok(Math.abs(pm.points[i][0] - (wx - m15.cropX)) < 0.01
+           && Math.abs(pm.points[i][1] - (wy - m15.cropY)) < 0.01,
+      `sample ${i} sits exactly where the tile math puts it`);
+  }
+  // shifting the crop origin shifts every point by exactly the opposite amount
+  const pmShift = projectTrackMercator(lat, lon, { ...m15, cropX: m15.cropX + 100, cropY: m15.cropY + 50 });
+  assert.ok(Math.abs(pmShift.points[0][0] - (pm.points[0][0] - 100)) < 1e-9
+         && Math.abs(pmShift.points[0][1] - (pm.points[0][1] - 50)) < 1e-9,
+    "crop origin is a pure translation");
+  // fewer than two valid fixes is no track (same contract as projectTrack)
+  assert.strictEqual(projectTrackMercator([47.72], [10.30], m15), null);
+  assert.strictEqual(projectTrackMercator(null, null, m15), null);
+
+  // tileLayout: every tile of the rect, placed relative to the crop origin
+  const layout = tileLayout({ z: 15, x0: 17330, y0: 11341, x1: 17331, y1: 11341,
+                              cropX: 17330 * 256 + 53.5, cropY: 11341 * 256 + 10.25, cropSize: 700 });
+  assert.deepStrictEqual(layout, [
+    { z: 15, x: 17330, y: 11341, px: -53.5, py: -10.25 },
+    { z: 15, x: 17331, y: 11341, px: 202.5, py: -10.25 },
+  ], "one entry per rect tile at its world position minus the crop origin");
 }
 
 // ── multiTrackSpec (run-detail D4): one x domain, n y domains ────────────────

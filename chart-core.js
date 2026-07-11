@@ -614,6 +614,42 @@ export function projectTrack(lat, lon, w, h, pad = 8) {
   return { points, scale: s };
 }
 
+// ── Mercator trace projection (route-basemap D4) ─────────────────────────────
+// For a run with a stored tile rect: Web Mercator world pixels at the rect's
+// zoom, minus the crop origin — the SAME formula that positions the tiles
+// (activity_archive.merc_world_px mirrors it; both are pinned to the same
+// anchor values by their tests), so route and basemap align by construction.
+// Null samples stay null so the polyline can gap honestly. projectTrack above
+// remains the path for runs without a map — untouched.
+export function projectTrackMercator(lat, lon, map) {
+  const n = Math.min((lat || []).length, (lon || []).length);
+  const world = 256 * 2 ** map.z;
+  const points = [];
+  let valid = 0;
+  for (let i = 0; i < n; i++) {
+    if (lat[i] == null || lon[i] == null) { points.push(null); continue; }
+    valid++;
+    points.push([
+      +((lon[i] + 180) / 360 * world - map.cropX).toFixed(2),
+      +((1 - Math.asinh(Math.tan(lat[i] * Math.PI / 180)) / Math.PI) / 2 * world - map.cropY).toFixed(2),
+    ]);
+  }
+  if (valid < 2) return null;
+  return { points, size: map.cropSize };
+}
+
+// Every tile of the rect, placed relative to the crop origin — pure layout;
+// the page turns each {z,x,y} into a same-origin /api/archive/tiles URL.
+export function tileLayout(map) {
+  const tiles = [];
+  for (let y = map.y0; y <= map.y1; y++) {
+    for (let x = map.x0; x <= map.x1; x++) {
+      tiles.push({ z: map.z, x, y, px: x * 256 - map.cropX, py: y * 256 - map.cropY });
+    }
+  }
+  return tiles;
+}
+
 // The x scale multiTrackSpec builds each track with — exported so the page's
 // pointer handler bisects against EXACTLY the geometry the tracks rendered.
 export function sharedXScale(values, w = 600, padL = 46, padR = 10) {

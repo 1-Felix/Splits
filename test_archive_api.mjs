@@ -29,6 +29,9 @@ const DETAIL = {
 
 const RAW_MARKER = "raw-garmin-payload-marker";
 
+// A recognisable fake tile blob — the endpoint must serve these exact bytes.
+const TILE_PNG = Buffer.from("\x89PNG-fake-tile-bytes-15/17000/11300", "latin1");
+
 // Columnar streams (run-detail D1), stored as ONE exact string — the endpoint
 // must serve these bytes verbatim, never parse-and-reserialise. Long enough
 // that gzip negotiation engages.
@@ -109,6 +112,25 @@ function makeArchive(dir) {
   mins.run(10, 2, "2025-03-10 08:01:00", 0, 1543.2, 3390.7, 1201.0, 204170.0, 455.2, 170.0);
   mins.run(60, 2, "2025-03-22 06:45:00", 1, 0.0, 0.0, 0.0, 0.0, null, null);
   mins.run(20, 2, "2026-02-14 09:00:00", 0, 900.0, 2000.0, 0.0, 0.0, 450.0, null);
+  // route-basemap (schema v8): the deduped tile store + run 10's map rect —
+  // run 20 deliberately has NO map row (its payload must omit `map`)
+  db.exec(`CREATE TABLE map_tiles (
+    z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL,
+    png BLOB NOT NULL, fetched_at TEXT NOT NULL,
+    PRIMARY KEY (z, x, y))`);
+  db.exec(`CREATE TABLE activity_maps (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+    z INTEGER NOT NULL, x0 INTEGER NOT NULL, y0 INTEGER NOT NULL,
+    x1 INTEGER NOT NULL, y1 INTEGER NOT NULL,
+    crop_x REAL NOT NULL, crop_y REAL NOT NULL, crop_size REAL NOT NULL,
+    updated_at TEXT NOT NULL)`);
+  const tins = db.prepare("INSERT INTO map_tiles (z, x, y, png, fetched_at) VALUES (?, ?, ?, ?, 'x')");
+  tins.run(15, 17000, 11300, TILE_PNG);
+  tins.run(15, 17001, 11300, Buffer.from("second-fake-tile"));
+  db.prepare(`INSERT INTO activity_maps (activity_id, z, x0, y0, x1, y1,
+      crop_x, crop_y, crop_size, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'x')`)
+    .run(10, 15, 17000, 11300, 17001, 11300, 4352123.5, 2893456.25, 412.75);
   db.close();
 }
 
@@ -145,7 +167,7 @@ function makeBareArchive(dir) {
     name TEXT, distance_m REAL, duration_s REAL, avg_hr INTEGER, max_hr INTEGER,
     avg_cadence REAL, elevation_gain_m REAL, summary_json TEXT NOT NULL,
     detail_json TEXT, detail_fetched_at TEXT, first_seen_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL)`);
+    updated_at TEXT NOT NULL, detail_distilled_json TEXT)`);
   db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key,
       name, distance_m, duration_s, avg_hr, max_hr, avg_cadence,
       elevation_gain_m, summary_json, first_seen_at, updated_at)
@@ -347,6 +369,38 @@ try {
   const bareRows = (await bare.json()).runs;
   assert.deepStrictEqual(bareRows.map((r) => [r.activityId, r.refhrTimeS, r.metricsVersion]),
     [[70, null, null]], "pre-metrics archive rows carry null metric fields");
+
+  // ── route-basemap: the map field + the same-origin tile endpoint ──────────
+  const mapped = await (await byId(B, 10)).json();
+  assert.deepStrictEqual(mapped.map,
+    { z: 15, x0: 17000, y0: 11300, x1: 17001, y1: 11300,
+      cropX: 4352123.5, cropY: 2893456.25, cropSize: 412.75 },
+    "a mapped run carries zoom, tile rect and crop box");
+  const unmapped = await (await byId(B, 20)).json();
+  assert.ok(!("map" in unmapped), "an activity without a map row omits the field");
+
+  const tile = await rawGet(B, "/api/archive/tiles/15/17000/11300.png", { "accept-encoding": "gzip" });
+  assert.strictEqual(tile.status, 200, "a stored tile is served");
+  assert.strictEqual(tile.headers["content-type"], "image/png");
+  assert.ok(/max-age=\d{6,}/.test(tile.headers["cache-control"] || ""),
+    "tiles carry a long-lived cache header — the blobs never change");
+  assert.ok(!tile.headers["content-encoding"], "PNG is never gzipped (already compressed)");
+  assert.ok(tile.body.equals(TILE_PNG), "the stored blob, byte for byte");
+
+  assert.strictEqual((await fetch(B + "/api/archive/tiles/15/1/1.png")).status, 404, "missing tile → quiet 404");
+  assert.strictEqual((await fetch(B + "/api/archive/tiles/xx/1/1.png")).status, 404, "malformed coords → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/tiles/15/17000/11300.png",
+    { method: "POST", body: "x" })).status, 405, "POST tile → 405");
+  assert.strictEqual((await fetch(Bmissing + "/api/archive/tiles/15/17000/11300.png")).status, 503,
+    "missing db → 503 on tiles (fail-soft, like every archive endpoint)");
+
+  // a pre-v8 archive (no map_tiles/activity_maps tables): by-id serves
+  // without a map field and tiles are absent — "no maps yet", never an outage
+  const bareRun = await (await byId(Bbare, 70)).json();
+  assert.strictEqual(bareRun.activityId, 70, "an archive without map tables still serves by-id");
+  assert.ok(!("map" in bareRun), "pre-v8 archive: no map field");
+  assert.strictEqual((await fetch(Bbare + "/api/archive/tiles/15/17000/11300.png")).status, 404,
+    "pre-v8 archive: tile → 404, not a 503");
 
   // write methods rejected, no state change
   assert.strictEqual((await fetch(B + "/api/archive/activities", { method: "POST", body: "x" })).status, 405, "POST → 405");

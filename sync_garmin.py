@@ -1046,6 +1046,8 @@ def build_garmin_data_js(data: dict) -> str:
 #    if archive, metrics and insights all fail.
 # ──────────────────────────────────────────────────────────────────────────────
 DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
+MAPS_PER_SYNC = 10           # basemap backlog drains the same way; the full
+                             # sweep is `--backfill-maps` (route-basemap D5)
 
 
 def archive_step(client, acts: list[dict]) -> None:
@@ -1058,10 +1060,12 @@ def archive_step(client, acts: list[dict]) -> None:
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         distilled = _distill_pass(conn)
         streamed = _streams_pass(conn)
+        mapped = _maps_pass(conn, limit=MAPS_PER_SYNC)
         _record_expectations(conn)
         log(f"✓ archive: +{added} activities, {topped} details topped up"
             + (f", {distilled} runs distilled" if distilled else "")
-            + (f", {streamed} runs streamed" if streamed else ""))
+            + (f", {streamed} runs streamed" if streamed else "")
+            + (f", {mapped} runs mapped" if mapped else ""))
     finally:
         conn.close()
 
@@ -1246,6 +1250,36 @@ def _streams_pass(conn) -> int:
     return done
 
 
+def _maps_pass(conn, limit: int | None = None) -> int:
+    """Fetch OSM basemap tiles for archived runs holding GPS streams but no
+    map row (route-basemap D5/D6) — the only network this pipeline touches
+    besides Garmin, throttled to the OSM tile policy inside
+    ensure_activity_map. Bounded per nightly sync so the backlog drains over
+    nights; `--backfill-maps` runs it unbounded. One log line per run."""
+    todo = activity_archive.runs_missing_maps(conn)
+    if limit is not None:
+        todo = todo[:limit]
+    mapped = 0
+    for aid in todo:
+        streams = activity_archive.streams_payload(conn, aid)
+        before = conn.execute("SELECT COUNT(*) FROM map_tiles").fetchone()[0]
+        status = activity_archive.ensure_activity_map(conn, aid, streams)
+        if status == "done":
+            after = conn.execute("SELECT COUNT(*) FROM map_tiles").fetchone()[0]
+            z, x0, y0, x1, y1 = conn.execute(
+                "SELECT z, x0, y0, x1, y1 FROM activity_maps WHERE activity_id = ?",
+                (aid,)).fetchone()
+            total = (x1 - x0 + 1) * (y1 - y0 + 1)
+            log(f"  map {aid}: z{z}, {after - before} tiles fetched, "
+                f"{total - (after - before)} reused")
+            mapped += 1
+        elif status == "failed":
+            warn(f"map {aid}: tile fetch failed — retries next sync")
+        elif status == "skipped":
+            log(f"  map {aid}: skipped (no usable GPS)")
+    return mapped
+
+
 def _record_expectations(conn) -> None:
     """Ratchet the coverage expectations --verify-archive checks against: the
     archive never deletes, so the count can only grow and the earliest date
@@ -1270,6 +1304,24 @@ def _record_expectations(conn) -> None:
         activity_archive.set_meta(conn, "expected_streamed_runs", scov["streamed"])
     activity_archive.set_meta(conn, "last_append_at",
                               dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+
+
+def run_maps_backfill() -> None:
+    """Basemap tiles for every archived GPS run (route-basemap D5): offline
+    from Garmin — only the OSM tile server is contacted, throttled and
+    identified. Idempotent and resumable: completed rects never refetch, an
+    interrupted run keeps its tiles, and a rerun fetches only the gaps."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        todo = activity_archive.runs_missing_maps(conn)
+        log(f"… maps backfill: {len(todo)} runs need tiles (throttled ~1/s)")
+        mapped = _maps_pass(conn)
+        mcov = activity_archive.maps_coverage(conn)
+        log(f"✓ maps backfill: {mapped} runs mapped this pass — "
+            f"{mcov['mapped']}/{mcov['streamed_runs']} GPS runs covered, "
+            f"{mcov['tiles']} tiles ({mcov['tile_bytes'] / 1e6:.1f} MB)")
+    finally:
+        conn.close()
 
 
 def run_backfill(client) -> None:
@@ -1353,6 +1405,10 @@ def verify_archive() -> int:
         scov = activity_archive.streams_coverage(conn)
         log(f"  streams    : {scov['streamed']}/{scov['detailed_runs']} detailed runs"
             + (f", {scov['missing']} missing" if scov["missing"] else ""))
+
+        mapcov = activity_archive.maps_coverage(conn)
+        log(f"  maps       : {mapcov['mapped']}/{mapcov['streamed_runs']} GPS-streamed runs, "
+            f"{mapcov['tiles']} tiles ({mapcov['tile_bytes'] / 1e6:.1f} MB)")
 
         mcov = activity_archive.metrics_coverage(conn, insight_metrics.METRICS_VERSION)
         log(f"  metrics    : {mcov['at_version']}/{mcov['detailed_runs']} detailed runs at "
@@ -1458,6 +1514,10 @@ def main() -> None:
     p.add_argument("--since", metavar="YYYY-MM-DD",
                    help="lower bound for --backfill-wellness, so a long backfill "
                         "can be spread across nights")
+    p.add_argument("--backfill-maps", action="store_true",
+                   help="fetch OSM basemap tiles for every archived GPS run "
+                        "(no Garmin login; throttled per the OSM tile policy; "
+                        "idempotent and resumable)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1465,6 +1525,9 @@ def main() -> None:
 
     if args.verify_archive:
         raise SystemExit(verify_archive())
+    if args.backfill_maps:      # OSM only — no Garmin connect() needed
+        run_maps_backfill()
+        return
 
     client = connect()
     if args.backfill:

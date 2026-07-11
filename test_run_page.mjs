@@ -69,6 +69,34 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_metrics (activity_id, metrics_version, best_1k_s,
       best_mile_s, best_5k_s, best_10k_s, best_half_s)
     VALUES (7, 1, 315.2, 512.0, 1660.4, NULL, NULL)`).run();
+  // ── route-basemap: run 8 = run 7's streams PLUS a stored map (schema v8).
+  // The rect/crop values are compute_tile_rect's real output for these
+  // streams (z16, 3×3 tiles) — the fixture is what the sync would write.
+  // Run 7 stays mapless on purpose: it pins the unchanged bare-shape path.
+  db.exec(`CREATE TABLE map_tiles (
+    z INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL,
+    png BLOB NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY (z, x, y))`);
+  db.exec(`CREATE TABLE activity_maps (
+    activity_id INTEGER PRIMARY KEY, z INTEGER NOT NULL,
+    x0 INTEGER NOT NULL, y0 INTEGER NOT NULL, x1 INTEGER NOT NULL, y1 INTEGER NOT NULL,
+    crop_x REAL NOT NULL, crop_y REAL NOT NULL, crop_size REAL NOT NULL,
+    updated_at TEXT NOT NULL)`);
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (8, '2026-07-09 07:30:00', 'running', 'Mapped Morning', 6030, 1198, 143, 168,
+      164, 60, '{}', '{}', 'x', 'x', ?, ?)`)
+    .run(JSON.stringify(DETAIL), JSON.stringify(STREAMS));
+  db.prepare(`INSERT INTO activity_maps (activity_id, z, x0, y0, x1, y1,
+      crop_x, crop_y, crop_size, updated_at)
+    VALUES (8, 16, 34320, 22950, 34322, 22952, 8785955.1, 5875295.98, 638.57, 'x')`).run();
+  // a real 1×1 PNG so every <image> load succeeds under networkidle
+  const PNG1 = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64");
+  const tins = db.prepare("INSERT INTO map_tiles (z, x, y, png, fetched_at) VALUES (?, ?, ?, ?, 'x')");
+  for (let x = 34320; x <= 34322; x++) for (let y = 22950; y <= 22952; y++) tins.run(16, x, y, PNG1);
   db.close();
 }
 
@@ -123,11 +151,16 @@ try {
       splits: t.includes("Splits") && t.includes("km 6"),
       xTick: t.includes("km"),
       power: t.includes("POWER"),
+      traceImages: document.querySelectorAll("svg[data-chart='trace'] image").length,
+      chipLabels: [...document.querySelectorAll("button.scope-chip")].map((b) => b.textContent),
     };
   });
   assert.ok(before.tracks >= 4, `pace/hr/cad/elev tracks render (got ${before.tracks})`);
   assert.strictEqual(before.power, false, "a power-less run renders NO power track — absence is silent");
   assert.strictEqual(before.trace, 1, "the GPS trace renders");
+  assert.strictEqual(before.traceImages, 0, "a mapless run renders the bare shape — no tiles");
+  assert.deepStrictEqual(before.chipLabels, ["distance", "time"],
+    "a mapless run offers NO map/shape toggle");
   assert.ok(before.verdict && before.plan && before.bests && before.splits, JSON.stringify(before));
   assert.ok(before.reason, "a partial session names its reason");
 
@@ -166,6 +199,62 @@ try {
   const timeTicks = await page.evaluate(() =>
     [...document.querySelectorAll(".chart-xtick")].map((e) => e.textContent).filter((t) => /^\d+:\d{2}$/.test(t)).length);
   assert.ok(timeTicks >= 2, "time mode: m:ss tick labels on the shared axis");
+
+  // ── route-basemap: the mapped run draws tiles behind the route ────────────
+  const tileResponses = [];
+  page.on("response", (r) => {
+    if (r.url().includes("/api/archive/tiles/")) tileResponses.push(r.status());
+  });
+  await page.goto(B + "/run/8", { waitUntil: "networkidle" });
+  await page.waitForSelector("svg[data-chart='trace'] image", { timeout: 15000 });
+  const mapped = await page.evaluate(() => {
+    const imgs = [...document.querySelectorAll("svg[data-chart='trace'] image")];
+    return {
+      images: imgs.length,
+      hrefs: imgs.map((i) => i.getAttribute("href")),
+      layer: !!document.querySelector("svg[data-chart='trace'] g.trace-basemap"),
+      attribution: document.body.innerText.includes("© OpenStreetMap contributors"),
+      chips: [...document.querySelectorAll("button.scope-chip")].map((b) => b.textContent),
+      routeD: (document.querySelector("svg[data-chart='trace'] path") || {}).getAttribute?.("d") || "",
+    };
+  });
+  assert.strictEqual(mapped.images, 9, "the full 3×3 tile rect renders");
+  assert.ok(mapped.hrefs.every((h) => /^api\/archive\/tiles\/16\/\d+\/\d+\.png$/.test(h)),
+    "every tile href is our own origin, relative: " + mapped.hrefs[0]);
+  assert.ok(mapped.layer, "tiles live in the dark-treatable .trace-basemap layer");
+  assert.ok(mapped.attribution, "OSM attribution on the card");
+  assert.deepStrictEqual(mapped.chips, ["distance", "time", "map", "shape"],
+    "the mapped run offers the map/shape toggle");
+  assert.strictEqual(tileResponses.length, 9, "nine tile requests hit the archive API");
+  assert.ok(tileResponses.every((s) => s === 200), "every tile serves 200: " + tileResponses.join(","));
+  assert.ok(mapped.routeD.length > 0, "the route path renders over the tiles");
+
+  // the crosshair pin still tracks on a Mercator-projected trace
+  const mappedCircles = await page.evaluate(() =>
+    document.querySelectorAll("svg[data-chart='trace'] circle").length);
+  const trackSvgs = await page.$$("svg[data-chart='trend']");
+  const tbox = await trackSvgs[0].boundingBox();
+  await page.mouse.move(tbox.x + tbox.width * 0.4, tbox.y + tbox.height / 2);
+  await page.mouse.move(tbox.x + tbox.width * 0.6, tbox.y + tbox.height / 2, { steps: 3 });
+  await page.waitForFunction((n) =>
+    document.querySelectorAll("svg[data-chart='trace'] circle").length > n,
+    mappedCircles, { timeout: 5000 });
+
+  // the shape toggle hides ONLY the backdrop — the route geometry stays put
+  await page.getByRole("button", { name: "shape" }).click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll("svg[data-chart='trace'] image").length === 0,
+    null, { timeout: 5000 });
+  const bare = await page.evaluate(() => ({
+    layer: !!document.querySelector("svg[data-chart='trace'] g.trace-basemap"),
+    routeD: (document.querySelector("svg[data-chart='trace'] path") || {}).getAttribute?.("d") || "",
+  }));
+  assert.strictEqual(bare.layer, false, "shape mode: the basemap layer is gone");
+  assert.strictEqual(bare.routeD, mapped.routeD, "toggling never moves the route");
+  await page.getByRole("button", { name: "map", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll("svg[data-chart='trace'] image").length === 9,
+    null, { timeout: 5000 });
 
   // ── degradation: archive offline / unknown run — chrome still renders ─────
   await page.goto(Bmissing + "/run/7", { waitUntil: "domcontentloaded" });

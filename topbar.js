@@ -31,15 +31,18 @@ export const THEMES = {
   volt: {bg:'#0E0F12',panel:'#15171C',panel2:'#1B1E25',ink:'#F3F5F0',sub:'#8B919B',line:'#23262E',grid:'#1E232B',accent:'#C7F646',accent2:'#4DA3FF',accentFade:'rgba(199,246,70,.13)',good:'#34D399',warn:'#FF6A4D',
     series1:'#78A326',series2:'#3E89D7',series3:'#CD5A97',series4:'#C0851F',
     hm0:'#191D24',hm1:'rgba(199,246,70,.22)',hm2:'rgba(199,246,70,.42)',hm3:'rgba(199,246,70,.66)',hm4:'#C7F646',
-    z1:'#4A6125',z2:'#668336',z3:'#83A748',z4:'#A2D055',z5:'#BFFD4A'},
+    z1:'#4A6125',z2:'#668336',z3:'#83A748',z4:'#A2D055',z5:'#BFFD4A',
+    mapFilter:'grayscale(1) invert(.92) brightness(1.06) contrast(.88)'},
   track:{bg:'#ECEAE3',panel:'#FFFFFF',panel2:'#F6F4EE',ink:'#181612',sub:'#6E6A60',line:'#E0DCD2',grid:'#ECE9E1',accent:'#E8472B',accent2:'#1F6FEB',accentFade:'rgba(232,71,43,.12)',good:'#1F9D57',warn:'#B45309',
     series1:'#DA452C',series2:'#245FD4',series3:'#7A41AF',series4:'#009390',
     hm0:'#E6E3DA',hm1:'rgba(232,71,43,.22)',hm2:'rgba(232,71,43,.42)',hm3:'rgba(232,71,43,.64)',hm4:'#E8472B',
-    z1:'#D79E92',z2:'#CC7867',z3:'#BF4E3A',z4:'#A52C18',z5:'#791B0C'},
+    z1:'#D79E92',z2:'#CC7867',z3:'#BF4E3A',z4:'#A52C18',z5:'#791B0C',
+    mapFilter:'grayscale(.85) brightness(1.03) contrast(.9)'},
   sunset:{bg:'#150F0C',panel:'#1E1612',panel2:'#261B15',ink:'#F8EFE7',sub:'#A89486',line:'#2C211A',grid:'#271C16',accent:'#FF7A3D',accent2:'#FFC24B',accentFade:'rgba(255,122,61,.15)',good:'#6BD49A',warn:'#FF5A4D',
     series1:'#DB703B',series2:'#388EC4',series3:'#BC598C',series4:'#479D73',
     hm0:'#221813',hm1:'rgba(255,122,61,.24)',hm2:'rgba(255,122,61,.46)',hm3:'rgba(255,122,61,.7)',hm4:'#FF7A3D',
-    z1:'#794B36',z2:'#A36649',z3:'#D57F57',z4:'#FF9C6B',z5:'#FFBD7F'},
+    z1:'#794B36',z2:'#A36649',z3:'#D57F57',z4:'#FF9C6B',z5:'#FFBD7F',
+    mapFilter:'grayscale(1) invert(.9) sepia(.28) brightness(1.02) contrast(.88)'},
 };
 
 function defaultStorage() {

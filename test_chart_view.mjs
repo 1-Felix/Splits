@@ -3,7 +3,7 @@
 // it. This proves structure, ARIA and keyboard wiring; pixels stay covered by
 // the Playwright style audit.
 import assert from "node:assert";
-import { renderChart } from "./chart-view.js";
+import { renderChart, renderTrace } from "./chart-view.js";
 import { buildSpec, POLICIES, monthKeyToDate } from "./chart-core.js";
 
 const React = {
@@ -265,6 +265,44 @@ function demoSpec(overrides = {}) {
   const flags = collect(el, (n) => n.props.className === "chart-flag");
   assert.ok(flags.some((f) => text(f) === "5K record"), "annotation label renders");
   assert.ok(flags.some((f) => text(f) === "goal 5:41"), "rule label renders");
+}
+
+// ── renderTrace (route-basemap 4.3): optional tile layer behind the route ────
+{
+  const proj = { points: [[10, 10], [50, 50], null, [90, 40], [120, 60]], size: 300 };
+  const tiles = [
+    { href: "api/archive/tiles/15/17330/11341.png", px: -53.5, py: -10.25 },
+    { href: "api/archive/tiles/15/17331/11341.png", px: 202.5, py: -10.25 },
+  ];
+  const el = renderTrace(proj, React, { w: 300, h: 300, pin: [50, 50], tiles });
+  const svg = collect(el, (n) => n.type === "svg")[0];
+
+  // the tile layer is ONE group, painted first, hookable by the dark treatment
+  const layer = svg.children[0];
+  assert.strictEqual(layer.type, "g", "tile layer paints before everything else");
+  assert.ok(/trace-basemap/.test(layer.props.className || ""), "dark treatment hooks on .trace-basemap");
+  assert.strictEqual(layer.props["aria-hidden"], "true", "the backdrop is decorative");
+  const images = collect(layer, (n) => n.type === "image");
+  assert.strictEqual(images.length, 2, "one <image> per tile");
+  assert.strictEqual(images[0].props.href, tiles[0].href, "same-origin tile URL, verbatim");
+  assert.strictEqual(images[0].props.x, -53.5);
+  assert.strictEqual(images[0].props.y, -10.25);
+  assert.strictEqual(images[0].props.width, 256);
+  assert.strictEqual(images[0].props.height, 256);
+
+  // the route is unaffected: gap still splits it, markers and pin still on top
+  const paths = collect(svg, (n) => n.type === "path");
+  assert.strictEqual(paths.length, 2, "null gap still splits the route over tiles");
+  const circles = collect(svg, (n) => n.type === "circle");
+  assert.strictEqual(circles.length, 3, "start, finish and pin all render");
+  assert.ok(svg.children.indexOf(layer) < svg.children.findIndex((c) => c.type === "path"),
+    "tiles behind the route in paint order");
+
+  // no tiles passed → exactly today's output shape: no images, no layer group
+  const bare = renderTrace(proj, React, { w: 300, h: 300 });
+  assert.strictEqual(collect(bare, (n) => n.type === "image").length, 0, "no tiles → no images");
+  assert.strictEqual(collect(bare, (n) => /trace-basemap/.test((n.props || {}).className || "")).length, 0,
+    "no tiles → no basemap layer");
 }
 
 console.log("ALL PASS");

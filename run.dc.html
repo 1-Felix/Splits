@@ -157,8 +157,15 @@
     <div style="display:flex;flex-direction:column;gap:var(--sp-4)">
       <sc-for list="{{ pg.trace }}" as="tc" hint-placeholder-count="0">
         <div class="card">
-          <div class="card-title" style="margin-bottom:var(--sp-2)">The route, as a shape</div>
-          <div class="card-sub" style="margin-bottom:var(--sp-2)">No basemap by design — the trace renders offline and follows the crosshair</div>
+          <div class="card-head" style="margin-bottom:var(--sp-2)">
+            <div>
+              <div class="card-title">{{ tc.title }}</div>
+              <div class="card-sub">{{ tc.sub }}</div>
+            </div>
+            <div class="scope-row" style="margin:0">
+              <sc-for list="{{ tc.modes }}" as="tm" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ tm.on }}" onClick="{{ tm.pick }}">{{ tm.label }}</button></sc-for>
+            </div>
+          </div>
           {{ tc.chart }}
         </div>
       </sc-for>
@@ -207,7 +214,7 @@ class Component extends DCLogic {
   // location.pathname — never from the served filename (run-detail D6)
   state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
             data: null, run: null, streams: null, streamsStatus: 'loading',
-            xMode: 'dist', cross: null, now: new Date() };
+            xMode: 'dist', cross: null, traceMap: true, now: new Date() };
 
   tb() { return window.SplitsTopbar; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
@@ -419,12 +426,33 @@ class Component extends DCLogic {
           liveText = cells.map((c) => c.k + ' ' + c.v).join(', ');
         }
 
-        // the trace (6.5): projected polyline, crosshair sample pinned on it
+        // the trace (6.5 + route-basemap): with a stored map rect the polyline
+        // projects in Web Mercator so it lands exactly on the archive's own
+        // tiles; the map/shape toggle only hides the tile layer — geometry
+        // stays put. Mapless runs keep the equirectangular shape unchanged.
         if (has(S.lat) && has(S.lon)) {
-          const proj = cc.projectTrack(S.lat, S.lon, 300, 300);
+          const mapMeta = run.map || null;
+          const proj = mapMeta ? cc.projectTrackMercator(S.lat, S.lon, mapMeta)
+                               : cc.projectTrack(S.lat, S.lon, 300, 300);
           if (proj) {
+            const size = proj.size || 300;
+            const showMap = mapMeta && this.state.traceMap;
+            const tiles = showMap ? cc.tileLayout(mapMeta).map((t) => ({
+              href: 'api/archive/tiles/' + t.z + '/' + t.x + '/' + t.y + '.png',
+              px: t.px, py: t.py,
+            })) : null;
             const pin = (ci != null && proj.points[ci]) ? proj.points[ci] : null;
-            pg.trace = [{ chart: cv.renderTrace(proj, R, { w: 300, h: 300, pin, ariaLabel: 'GPS trace of ' + pg.name }) }];
+            pg.trace = [{
+              title: mapMeta ? 'The route' : 'The route, as a shape',
+              sub: mapMeta
+                ? 'Basemap © OpenStreetMap contributors — tiles served from this archive'
+                : 'No basemap for this run — the trace renders offline and follows the crosshair',
+              modes: mapMeta ? [
+                { label: 'map', on: String(!!this.state.traceMap), pick: () => this.setState({ traceMap: true }) },
+                { label: 'shape', on: String(!this.state.traceMap), pick: () => this.setState({ traceMap: false }) }
+              ] : [],
+              chart: cv.renderTrace(proj, R, { w: size, h: size, pin, tiles, ariaLabel: 'GPS trace of ' + pg.name })
+            }];
           }
         }
       } else if (sst === 'loading') {

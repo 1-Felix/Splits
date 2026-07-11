@@ -288,10 +288,12 @@ export function renderChart(spec, React) {
     ...(legend ? [legend] : []), plotBox);
 }
 
-// ── the GPS trace (run-detail D2): a projected polyline, not a basemap ───────
-// proj comes from chart-core's projectTrack; null samples gap the line
-// honestly. No tiles, no third-party origin — the trace renders offline,
-// prints, and themes with the page.
+// ── the GPS trace (run-detail D2 + route-basemap): a projected polyline, with
+// an optional basemap behind it. proj comes from chart-core's projectTrack or
+// projectTrackMercator; null samples gap the line honestly. opts.tiles
+// ({href, px, py} from tileLayout, hrefs SAME-ORIGIN) paints a single
+// dark-treatable <g> before the route — the route, markers and pin never
+// depend on it: a tile that fails to load is a bare patch, not an error.
 export function renderTrace(proj, React, opts = {}) {
   const h = React.createElement;
   const W = opts.w || 300, H = opts.h || 300;
@@ -316,6 +318,13 @@ export function renderTrace(proj, React, opts = {}) {
   }
   if (opts.pin) {
     kids.push(h("circle", { key: "pin", cx: opts.pin[0], cy: opts.pin[1], r: 5, style: { fill: "var(--ink)", pointerEvents: "none" }, stroke: "var(--bg)", strokeWidth: 2 }));
+  }
+  if (opts.tiles && opts.tiles.length) {
+    kids.unshift(h("g", { key: "basemap", className: "trace-basemap", "aria-hidden": "true" },
+      ...opts.tiles.map((t) => h("image", {
+        key: t.href, href: t.href, x: t.px, y: t.py, width: 256, height: 256,
+        preserveAspectRatio: "none",
+      }))));
   }
   return h("svg", {
     viewBox: `0 0 ${W} ${H}`,

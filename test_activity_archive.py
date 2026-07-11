@@ -983,6 +983,264 @@ def test_wellness_backfilled_row_needs_no_readiness():
     conn.close()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# route-basemap: tile-rect math (pure, deterministic — no network here)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _loop_track(lat0=47.720, lat1=47.735, lon0=10.300, lon1=10.320, n=40):
+    """A rectangular loop around the Allgäu (~1.7 × 1.5 km) as lat/lon columns."""
+    lat, lon = [], []
+    for i in range(n):                       # south edge, east edge, north, west
+        t = i / (n - 1)
+        if t < 0.25:
+            lat.append(lat0); lon.append(lon0 + (lon1 - lon0) * t * 4)
+        elif t < 0.5:
+            lat.append(lat0 + (lat1 - lat0) * (t - 0.25) * 4); lon.append(lon1)
+        elif t < 0.75:
+            lat.append(lat1); lon.append(lon1 - (lon1 - lon0) * (t - 0.5) * 4)
+        else:
+            lat.append(lat1 - (lat1 - lat0) * (t - 0.75) * 4); lon.append(lon0)
+    return lat, lon
+
+
+def test_merc_world_px_known_values():
+    """The Mercator anchor points every tile server agrees on — these same
+    values pin the JS mirror in test_chart_core.mjs."""
+    assert arch.merc_world_px(0.0, 0.0, 0) == (128.0, 128.0), "origin: centre of the z0 tile"
+    x, y = arch.merc_world_px(0.0, 180.0, 1)
+    assert (x, y) == (512.0, 256.0), "date line at z1: right edge, vertical centre"
+    _, y_top = arch.merc_world_px(85.0511287798066, 0.0, 0)
+    assert abs(y_top) < 1e-6, "top of the Mercator square projects to y=0"
+
+
+def test_tile_rect_is_deterministic():
+    lat, lon = _loop_track()
+    assert arch.compute_tile_rect(lat, lon) == arch.compute_tile_rect(lat, lon)
+
+
+def test_tile_rect_crop_is_padded_squarified_and_covered():
+    lat, lon = _loop_track()
+    m = arch.compute_tile_rect(lat, lon)
+    z = m["z"]
+    assert z <= 16
+    # the crop is square by construction and spans at most three tiles
+    assert m["crop_size"] <= 3 * 256 + 1e-6
+    # highest such zoom: one step closer would blow past three tiles (or z hit the cap)
+    assert z == 16 or m["crop_size"] * 2 > 3 * 256
+    # the crop covers the route's own bbox with ~8% margin on the longer side
+    pts = [arch.merc_world_px(la, lo, z) for la, lo in zip(lat, lon)]
+    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+    span = max(max(xs) - min(xs), max(ys) - min(ys))
+    assert m["crop_x"] <= min(xs) and m["crop_x"] + m["crop_size"] >= max(xs)
+    assert m["crop_y"] <= min(ys) and m["crop_y"] + m["crop_size"] >= max(ys)
+    margin = min(min(xs) - m["crop_x"], m["crop_x"] + m["crop_size"] - max(xs),
+                 min(ys) - m["crop_y"], m["crop_y"] + m["crop_size"] - max(ys))
+    assert margin >= 0.079 * span, f"padding must survive squarify (margin {margin})"
+    # the tile rect covers the crop exactly
+    assert m["x0"] * 256 <= m["crop_x"] and (m["x1"] + 1) * 256 >= m["crop_x"] + m["crop_size"]
+    assert m["y0"] * 256 <= m["crop_y"] and (m["y1"] + 1) * 256 >= m["crop_y"] + m["crop_size"]
+    assert 0 <= m["x0"] <= m["x1"] < 2 ** z and 0 <= m["y0"] <= m["y1"] < 2 ** z
+
+
+def test_tile_rect_thin_route_squarifies():
+    """An out-and-back on a straight east-west road still gets a square crop."""
+    lon = [10.300 + i * 0.001 for i in range(20)]
+    lat = [47.720] * 20
+    m = arch.compute_tile_rect(lat, lon)
+    z = m["z"]
+    pts = [arch.merc_world_px(la, lo, z) for la, lo in zip(lat, lon)]
+    xs = [p[0] for p in pts]
+    assert m["crop_size"] >= (max(xs) - min(xs)), "square side covers the long axis"
+    y_mid = pts[0][1]
+    assert m["crop_y"] < y_mid < m["crop_y"] + m["crop_size"], "thin axis centred in the square"
+
+
+def test_tile_rect_small_route_caps_at_zoom_16():
+    lat = [47.7200 + i * 0.0001 for i in range(10)]     # ~100 m
+    lon = [10.3000 + i * 0.0001 for i in range(10)]
+    m = arch.compute_tile_rect(lat, lon)
+    assert m["z"] == 16, "zoom never exceeds the cap"
+    assert m["crop_size"] >= 64, "near-stationary tracks keep a usable viewport"
+
+
+def test_tile_rect_long_route_zooms_out():
+    lat = [47.5 + i * 0.005 for i in range(60)]          # ~33 km point-to-point
+    lon = [10.0 + i * 0.005 for i in range(60)]
+    m = arch.compute_tile_rect(lat, lon)
+    assert m["z"] < 16
+    assert m["crop_size"] <= 3 * 256 + 1e-6, "a long route zooms out, never widens the rect"
+
+
+def test_schema_v8_adds_map_tables_additively():
+    """v8 creates map_tiles + activity_maps and stamps the version; every
+    pre-existing table and its columns survive untouched (design D8)."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"map_tiles", "activity_maps"} <= tables
+    assert {"activities", "daily_wellness", "archive_meta", "run_metrics",
+            "race_predictions", "plan_snapshots", "plan_compliance"} <= tables
+    act_cols = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
+    assert {"summary_json", "detail_json", "detail_distilled_json",
+            "detail_streams_json"} <= act_cols, "v1–v6 activity columns intact"
+    map_cols = {r[1] for r in conn.execute("PRAGMA table_info(activity_maps)")}
+    assert {"activity_id", "z", "x0", "y0", "x1", "y1",
+            "crop_x", "crop_y", "crop_size", "updated_at"} == map_cols
+    assert arch.get_meta(conn, "schema_version") == "8"
+    # re-opening an already-v8 archive is a no-op, not an error
+    conn.close()
+    conn = arch.open_archive(d)
+    assert arch.get_meta(conn, "schema_version") == "8"
+    conn.close()
+
+
+def test_tile_rect_ignores_null_gaps_and_refuses_no_gps():
+    lat, lon = _loop_track()
+    gappy_lat = [None, *lat, None]; gappy_lon = [None, *lon, None]
+    gappy_lat[5] = None; gappy_lon[5] = None
+    clean = [v for i, v in enumerate(lat) if i != 4], [v for i, v in enumerate(lon) if i != 4]
+    assert arch.compute_tile_rect(gappy_lat, gappy_lon) == arch.compute_tile_rect(*clean)
+    assert arch.compute_tile_rect([], []) is None
+    assert arch.compute_tile_rect([None, None], [None, None]) is None
+    assert arch.compute_tile_rect([47.7], [10.3]) is None, "a single fix is not a route"
+    assert arch.compute_tile_rect(None, None) is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# route-basemap: the fetch step (mocked fetcher — still no network)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _gps_streams():
+    lat, lon = _loop_track()
+    return {"t": list(range(len(lat))), "d": list(range(len(lat))), "lat": lat, "lon": lon}
+
+
+class _FetchLog:
+    """A fetcher that records calls and can fail on cue."""
+    def __init__(self, fail_at=None):
+        self.calls = []
+        self.fail_at = fail_at
+
+    def __call__(self, z, x, y):
+        self.calls.append((z, x, y))
+        if self.fail_at is not None and len(self.calls) >= self.fail_at:
+            raise OSError("tile server unreachable")
+        return b"\x89PNG-fake-" + f"{z}/{x}/{y}".encode()
+
+
+def _rect_tiles(rect):
+    return {(rect["z"], x, y)
+            for x in range(rect["x0"], rect["x1"] + 1)
+            for y in range(rect["y0"], rect["y1"] + 1)}
+
+
+def test_map_step_fetches_only_missing_tiles_and_writes_row():
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1)])
+    streams = _gps_streams()
+    rect = arch.compute_tile_rect(streams["lat"], streams["lon"])
+    tiles = sorted(_rect_tiles(rect))
+    # pre-seed two tiles, as if an earlier run through the area stored them
+    for z, x, y in tiles[:2]:
+        conn.execute("INSERT INTO map_tiles (z, x, y, png, fetched_at) VALUES (?, ?, ?, ?, ?)",
+                     (z, x, y, b"seeded", "2026-07-01T00:00:00"))
+    conn.commit()
+
+    fetch = _FetchLog()
+    assert arch.ensure_activity_map(conn, 1, streams, fetch=fetch, _sleep=lambda s: None) == "done"
+    assert sorted(fetch.calls) == tiles[2:], "the two seeded tiles are never re-fetched"
+    stored = {tuple(r) for r in conn.execute("SELECT z, x, y FROM map_tiles")}
+    assert stored == set(tiles), "the rect is complete in the store"
+    row = conn.execute(
+        "SELECT z, x0, y0, x1, y1, crop_x, crop_y, crop_size FROM activity_maps "
+        "WHERE activity_id = 1").fetchone()
+    assert row == (rect["z"], rect["x0"], rect["y0"], rect["x1"], rect["y1"],
+                   rect["crop_x"], rect["crop_y"], rect["crop_size"])
+    # a second call is a cheap no-op — no fetches, no sleeps
+    fetch2 = _FetchLog()
+    assert arch.ensure_activity_map(conn, 1, streams, fetch=fetch2) == "exists"
+    assert fetch2.calls == []
+    conn.close()
+
+
+def test_map_step_paces_its_fetches():
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1)])
+    sleeps = []
+    fetch = _FetchLog()
+    assert arch.ensure_activity_map(conn, 1, _gps_streams(), fetch=fetch,
+                                    pace_s=1.25, _sleep=sleeps.append) == "done"
+    assert len(fetch.calls) >= 2, "fixture must need several tiles"
+    assert sleeps == [1.25] * (len(fetch.calls) - 1), \
+        "one pause between consecutive fetches, none before the first"
+    conn.close()
+
+
+def test_tile_request_identifies_splits_to_osm():
+    req = arch._tile_request(15, 17203, 11342)
+    assert req.full_url == "https://tile.openstreetmap.org/15/17203/11342.png"
+    ua = req.get_header("User-agent") or ""
+    assert "SPLITS" in ua and "@" in ua, "OSM policy: identify the app and a contact"
+
+
+def test_map_step_failure_keeps_tiles_but_no_row_then_retry_heals():
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1)])
+    streams = _gps_streams()
+
+    fetch = _FetchLog(fail_at=3)          # two tiles land, the third dies
+    assert arch.ensure_activity_map(conn, 1, streams, fetch=fetch, _sleep=lambda s: None) == "failed"
+    stored = {tuple(r) for r in conn.execute("SELECT z, x, y FROM map_tiles")}
+    assert stored == set(fetch.calls[:2]), "tiles fetched before the failure stay stored"
+    assert conn.execute("SELECT 1 FROM activity_maps WHERE activity_id = 1").fetchone() is None, \
+        "no partial map row (design D6)"
+
+    retry = _FetchLog()
+    assert arch.ensure_activity_map(conn, 1, streams, fetch=retry, _sleep=lambda s: None) == "done"
+    assert not (set(retry.calls) & stored), "the retry fetches only the gap"
+    assert conn.execute("SELECT 1 FROM activity_maps WHERE activity_id = 1").fetchone() is not None
+    conn.close()
+
+
+def test_map_step_skips_runs_without_gps():
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1, type_key="treadmill_running")])
+    fetch = _FetchLog()
+    treadmill = {"t": [0, 1, 2], "d": [0, 5, 10], "hr": [120, 130, 140]}
+    assert arch.ensure_activity_map(conn, 1, treadmill, fetch=fetch) == "skipped"
+    assert arch.ensure_activity_map(conn, 1, None, fetch=fetch) == "skipped"
+    assert fetch.calls == []
+    assert conn.execute("SELECT COUNT(*) FROM activity_maps").fetchone()[0] == 0
+    conn.close()
+
+
+def test_sync_maps_pass_maps_gps_runs_and_ignores_treadmills():
+    """The sync hook end-to-end (no network): a GPS run gains a map row, a
+    treadmill run never enters the work list, and a second pass is a no-op."""
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1), _act(2, type_key="treadmill_running")])
+    arch.write_streams(conn, 1, _gps_streams())
+    arch.write_streams(conn, 2, {"t": [0, 1], "d": [0, 5], "hr": [120, 121]})
+
+    assert arch.runs_missing_maps(conn) == [1], "only the GPS run is work"
+    fetch = _FetchLog()
+    orig_fetch = sg.activity_archive.fetch_tile
+    orig_sleep = sg.activity_archive.time.sleep
+    sg.activity_archive.fetch_tile = fetch
+    sg.activity_archive.time.sleep = lambda s: None
+    try:
+        assert sg._maps_pass(conn) == 1
+        assert sg._maps_pass(conn) == 0, "idempotent — nothing left to map"
+    finally:
+        sg.activity_archive.fetch_tile = orig_fetch
+        sg.activity_archive.time.sleep = orig_sleep
+    assert conn.execute("SELECT COUNT(*) FROM activity_maps").fetchone()[0] == 1
+    assert len(fetch.calls) > 0 and len(set(fetch.calls)) == len(fetch.calls), \
+        "real fetches, no tile requested twice"
+    conn.close()
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

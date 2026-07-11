@@ -388,6 +388,19 @@ function getArchiveActivity(db, id) {
       };
     }
   } catch { /* no run_metrics table in this archive */ }
+  // the run's basemap rect + crop (route-basemap): plain SELECT over the row
+  // the sync's map step wrote; a pre-v8 archive has no table — no map, not an
+  // outage. The field is OMITTED (not null) when absent, per the API spec.
+  let map;
+  try {
+    const t = db.prepare(
+      `SELECT z, x0, y0, x1, y1, crop_x, crop_y, crop_size
+       FROM activity_maps WHERE activity_id = ?`).get(id);
+    if (t) {
+      map = { z: t.z, x0: t.x0, y0: t.y0, x1: t.x1, y1: t.y1,
+              cropX: t.crop_x, cropY: t.crop_y, cropSize: t.crop_size };
+    }
+  } catch { /* no activity_maps table in this archive */ }
   return {
     ...archiveSummaryRow(r),
     maxHr: r.max_hr,
@@ -395,6 +408,7 @@ function getArchiveActivity(db, id) {
     detail: r.detail_distilled_json ? JSON.parse(r.detail_distilled_json) : null,
     plan,
     bests,
+    ...(map ? { map } : {}),
   };
 }
 
@@ -416,6 +430,31 @@ async function handleArchive(req, res, pathname, url) {
     if (pathname === "/api/archive/run-metrics") {
       const out = listRunMetrics(db, url.searchParams);
       json(req, res, out.status, out.body);
+      return;
+    }
+    // /api/archive/tiles/:z/:x/:y.png — stored OSM tile blobs, verbatim
+    // (route-basemap). Immutable by construction (the fetch step never
+    // replaces a stored tile), hence the year-long cache. A pre-v8 archive
+    // has no map_tiles table: that is "no tiles yet", never an outage.
+    const tm = /^\/api\/archive\/tiles\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(pathname);
+    if (tm) {
+      let row;
+      try {
+        row = db.prepare("SELECT png FROM map_tiles WHERE z = ? AND x = ? AND y = ?")
+          .get(Number(tm[1]), Number(tm[2]), Number(tm[3]));
+      } catch (e) {
+        if (!/no such table/i.test(String(e && e.message))) throw e;
+        row = undefined;
+      }
+      if (!row) { json(req, res, 404, { ok: false, error: "unknown tile" }); return; }
+      sendBuffer(req, res, 200, {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      }, Buffer.from(row.png), "image/png");
+      return;
+    }
+    if (pathname.startsWith("/api/archive/tiles/")) {
+      json(req, res, 404, { ok: false, error: "unknown tile" });
       return;
     }
     // /api/archive/activities/:id and …/:id/streams — the parse accepts the
@@ -570,7 +609,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")
-        || pathname === "/api/archive/run-metrics") {
+        || pathname === "/api/archive/run-metrics" || pathname.startsWith("/api/archive/tiles/")) {
       await handleArchive(req, res, pathname, url);
       return;
     }

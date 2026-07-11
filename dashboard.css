@@ -154,6 +154,11 @@
 .chart-legend { display: flex; justify-content: flex-end; gap: var(--sp-3); font-size: var(--fs-2xs); font-weight: var(--fw-bold); color: var(--sub); margin-bottom: var(--sp-1); flex-wrap: wrap; }
 .chart-legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
 
+/* route-basemap: OSM tiles dimmed to a quiet monochrome backdrop behind the
+   trace. Each theme supplies its own --mapFilter (the dark themes invert, the
+   light one only desaturates) so the themed route stays the hero everywhere. */
+.trace-basemap { filter: var(--mapFilter, grayscale(1) invert(.92)); opacity: .65; }
+
 /* scope row (progress-views: per-chart range chips, offered only where the
    series can honour them; the subtitle states the true span) */
 .scope-row  { display: flex; justify-content: flex-end; gap: var(--sp-1); margin: var(--sp-1) 0 var(--sp-0); }

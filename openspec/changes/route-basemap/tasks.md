@@ -35,5 +35,5 @@
 
 ## 7. Deploy and backfill
 
-- [ ] 7.1 Deploy to the NUC (watch the Windows CRLF docker gotcha from chart-drill), verify a mapped run renders at the deployed origin
-- [ ] 7.2 Run `--backfill-maps` on the homeserver, throttled; confirm every GPS run gains a map row and spot-check tile reuse in the log
+- [x] 7.1 Deploy to the NUC (watch the Windows CRLF docker gotcha from chart-drill), verify a mapped run renders at the deployed origin (commit bd94dc2 → CI image → compose pull/up; schema self-migrated to v8; run 15351521612 renders 6 tiles, all 200, attribution shown)
+- [x] 7.2 Run `--backfill-maps` on the homeserver, throttled; confirm every GPS run gains a map row and spot-check tile reuse in the log (160/161 mapped — the one skip is a 1-valid-fix GPS-failure run, skipped by design; 192 unique tiles / 3.9 MB for the whole archive; late runs logged "0 fetched, 9 reused")

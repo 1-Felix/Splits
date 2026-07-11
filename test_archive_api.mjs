@@ -81,6 +81,34 @@ function makeArchive(dir) {
     8000.0, 2900.0, 140, 150, 165.0, 30.0, raw, raw, null, null);
   ins.run(50, "2025-11-20 07:30:00", "running", "November Base",
     9000.0, 3200.0, 141, 152, 165.0, 35.0, raw, raw, null, null);
+  // a second March-2025 run (treadmill) + run_metrics rows for the
+  // run-metrics endpoint (chart-drill 2.x): run 10 contributed (in-band time),
+  // run 60 has zero in-band time, run 15 has NO metrics row at all
+  ins.run(60, "2025-03-22 06:45:00", "treadmill_running", "Belt Miles",
+    6000.0, 2100.0, 151, 160, 167.0, 0.0, raw, raw, null, null);
+  ins.run(15, "2025-03-30 10:00:00", "running", "Unanalysed Sunday",
+    5000.0, 1800.0, 139, 149, 164.0, 20.0, raw, raw, null, null);
+  db.exec(`CREATE TABLE run_metrics (
+    activity_id      INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+    metrics_version  INTEGER NOT NULL,
+    start_time_local TEXT NOT NULL,
+    is_treadmill     INTEGER NOT NULL,
+    best_1k_s REAL, best_mile_s REAL, best_5k_s REAL,
+    best_10k_s REAL, best_half_s REAL,
+    refhr_time_s REAL, refhr_dist_m REAL,
+    refpace_time_s REAL, refpace_cadence_x_time REAL,
+    refhr_pace_s_per_km REAL, refpace_cadence_spm REAL,
+    computed_at TEXT NOT NULL
+  )`);
+  const mins = db.prepare(
+    `INSERT INTO run_metrics (activity_id, metrics_version, start_time_local,
+       is_treadmill, refhr_time_s, refhr_dist_m, refpace_time_s,
+       refpace_cadence_x_time, refhr_pace_s_per_km, refpace_cadence_spm,
+       computed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'x')`);
+  mins.run(10, 2, "2025-03-10 08:01:00", 0, 1543.2, 3390.7, 1201.0, 204170.0, 455.2, 170.0);
+  mins.run(60, 2, "2025-03-22 06:45:00", 1, 0.0, 0.0, 0.0, 0.0, null, null);
+  mins.run(20, 2, "2026-02-14 09:00:00", 0, 900.0, 2000.0, 0.0, 0.0, 450.0, null);
   db.close();
 }
 
@@ -107,9 +135,30 @@ async function waitReady(base, errRef) {
   throw new Error("server not ready\n" + (errRef ? errRef() : ""));
 }
 
+// A pre-insight-metrics archive: activities only, NO run_metrics table. The
+// run-metrics endpoint must serve identity rows with null metric fields — a
+// missing derived table is "not yet analysed", never an outage.
+function makeBareArchive(dir) {
+  const db = new DatabaseSync(join(dir, "activity-archive.db"));
+  db.exec(`CREATE TABLE activities (
+    activity_id INTEGER PRIMARY KEY, start_time_local TEXT NOT NULL, type_key TEXT,
+    name TEXT, distance_m REAL, duration_s REAL, avg_hr INTEGER, max_hr INTEGER,
+    avg_cadence REAL, elevation_gain_m REAL, summary_json TEXT NOT NULL,
+    detail_json TEXT, detail_fetched_at TEXT, first_seen_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL)`);
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key,
+      name, distance_m, duration_s, avg_hr, max_hr, avg_cadence,
+      elevation_gain_m, summary_json, first_seen_at, updated_at)
+    VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, '{}', 'x', 'x')`)
+    .run(70, "2025-03-05 07:00:00", "Old Faithful", 7000.0, 2500.0, 142, 155, 164.0, 25.0);
+  db.close();
+}
+
 const dataDir = await mkdtemp(join(tmpdir(), "splits-archive-test-"));
 const emptyDir = await mkdtemp(join(tmpdir(), "splits-archive-empty-"));
+const bareDir = await mkdtemp(join(tmpdir(), "splits-archive-bare-"));
 makeArchive(dataDir);
+makeBareArchive(bareDir);
 const dbPath = join(dataDir, "activity-archive.db");
 const dbBytesBefore = await readFile(dbPath);
 
@@ -117,14 +166,17 @@ const PORT = 8140;
 const B = "http://localhost:" + PORT;          // archive in DATA_DIR (default flow)
 const Bmissing = "http://localhost:" + (PORT + 1); // no archive anywhere → 503
 const Boverride = "http://localhost:" + (PORT + 2); // SPLITS_ARCHIVE_DIR override
+const Bbare = "http://localhost:" + (PORT + 3);    // pre-metrics archive (no run_metrics table)
 
 const server = startServer(PORT, { SPLITS_DATA_DIR: dataDir });
 const serverMissing = startServer(PORT + 1, { SPLITS_DATA_DIR: emptyDir });
 const serverOverride = startServer(PORT + 2, { SPLITS_DATA_DIR: emptyDir, SPLITS_ARCHIVE_DIR: dataDir });
+const serverBare = startServer(PORT + 3, { SPLITS_DATA_DIR: bareDir });
 
 const list = (base, qs = "") => fetch(base + "/api/archive/activities" + qs);
 const byId = (base, id) => fetch(base + "/api/archive/activities/" + id);
 const streams = (base, id) => fetch(base + "/api/archive/activities/" + id + "/streams");
+const runMetrics = (base, qs = "") => fetch(base + "/api/archive/run-metrics" + qs);
 
 // raw node:http request (undici's fetch silently decompresses, hiding the very
 // Content-Encoding the gzip assertion needs to observe — test_compression.mjs
@@ -144,11 +196,12 @@ try {
   await waitReady(B, server.errRef);
   await waitReady(Bmissing, serverMissing.errRef);
   await waitReady(Boverride, serverOverride.errRef);
+  await waitReady(Bbare, serverBare.errRef);
 
   // ── listing: newest-first promoted rows ────────────────────────────────────
   const all = await (await list(B)).json();
-  assert.strictEqual(all.total, 5, "all activities listed");
-  assert.deepStrictEqual(all.activities.map((a) => a.activityId), [20, 50, 40, 30, 10], "newest first");
+  assert.strictEqual(all.total, 7, "all activities listed");
+  assert.deepStrictEqual(all.activities.map((a) => a.activityId), [20, 50, 40, 30, 15, 60, 10], "newest first");
   const first = all.activities[0];
   assert.deepStrictEqual(Object.keys(first).sort(),
     ["activityId", "avgCadence", "avgHr", "distanceM", "durationS", "elevationGainM", "name", "startTimeLocal", "type"],
@@ -157,7 +210,7 @@ try {
 
   // filters
   const runs2025 = await (await list(B, "?type=running&year=2025")).json();
-  assert.deepStrictEqual(runs2025.activities.map((a) => a.activityId), [50, 40, 10], "type+year filter");
+  assert.deepStrictEqual(runs2025.activities.map((a) => a.activityId), [50, 40, 15, 10], "type+year filter");
   const ranged = await (await list(B, "?from=2025-06-01&to=2025-09-30")).json();
   assert.deepStrictEqual(ranged.activities.map((a) => a.activityId), [40, 30], "date range filter, bounds inclusive");
 
@@ -185,8 +238,11 @@ try {
   assert.strictEqual(page1.activities.length, 2);
   assert.strictEqual(page1.nextOffset, 2, "more rows → cursor to the next page");
   const page2 = await (await list(B, "?type=running&limit=2&offset=2")).json();
-  assert.deepStrictEqual(page2.activities.map((a) => a.activityId), [40, 10]);
-  assert.strictEqual(page2.nextOffset, null, "last page → no cursor");
+  assert.deepStrictEqual(page2.activities.map((a) => a.activityId), [40, 15]);
+  assert.strictEqual(page2.nextOffset, 4, "still more rows → cursor advances");
+  const page3 = await (await list(B, "?type=running&limit=2&offset=4")).json();
+  assert.deepStrictEqual(page3.activities.map((a) => a.activityId), [10]);
+  assert.strictEqual(page3.nextOffset, null, "last page → no cursor");
   const clamped = await (await list(B, "?limit=5000")).json();
   assert.strictEqual(clamped.limit, 100, "page size clamped to the server maximum");
 
@@ -243,6 +299,55 @@ try {
   assert.strictEqual((await fetch(B + "/api/archive/activities/10/streams", { method: "POST", body: "x" })).status, 405, "POST streams → 405");
   assert.ok(!stText.includes(RAW_MARKER), "raw payloads never leave via streams");
 
+  // ── run-metrics endpoint (chart-drill 2.x): stored rows over a bounded range ──
+  const march = await runMetrics(B, "?from=2025-03-01&to=2025-03-31");
+  assert.strictEqual(march.status, 200, "a month range is served");
+  const marchRows = (await march.json()).runs;
+  assert.deepStrictEqual(marchRows.map((r) => r.activityId), [15, 60, 10],
+    "every March RUNNING activity (treadmill included), newest-first; the strength session never appears");
+  const tempo = marchRows.find((r) => r.activityId === 10);
+  assert.deepStrictEqual(tempo, {
+    activityId: 10, startTimeLocal: "2025-03-10 08:01:00", name: "Tempo Tuesday",
+    distanceM: 10210.5, durationS: 3480.0, isTreadmill: false,
+    refhrTimeS: 1543.2, refhrDistM: 3390.7, refhrPaceSPerKm: 455.2,
+    refpaceTimeS: 1201.0, refpaceCadenceSpm: 170.0, metricsVersion: 2,
+  }, "identity + metric fields byte-equal to the stored columns, nothing derived");
+  const belt = marchRows.find((r) => r.activityId === 60);
+  assert.strictEqual(belt.isTreadmill, true, "the treadmill flag is honest");
+  assert.strictEqual(belt.refhrTimeS, 0, "zero in-band time survives as zero…");
+  assert.strictEqual(belt.refhrPaceSPerKm, null, "…while its display value stays null");
+  const unanalysed = marchRows.find((r) => r.activityId === 15);
+  assert.strictEqual(unanalysed.refhrTimeS, null, "a run without a metrics row appears…");
+  assert.strictEqual(unanalysed.metricsVersion, null, "…with null metric fields, not omitted");
+  assert.strictEqual(unanalysed.name, "Unanalysed Sunday");
+
+  // bounds: both params required, invalid dates and >92-day spans rejected
+  for (const qs of ["", "?from=2025-03-01", "?to=2025-03-31",
+                    "?from=not-a-date&to=2025-03-31", "?from=2025-04-01&to=2025-03-01"]) {
+    assert.strictEqual((await runMetrics(B, qs)).status, 400, "bad params → 400: " + (qs || "(none)"));
+  }
+  assert.strictEqual((await runMetrics(B, "?from=2025-01-01&to=2025-04-03")).status, 200,
+    "a 92-day span is the allowed maximum");
+  const oversized = await runMetrics(B, "?from=2025-01-01&to=2025-04-04");
+  assert.strictEqual(oversized.status, 400, "a 93-day span → 400");
+  assert.ok(/92/.test((await oversized.json()).error), "the refusal names the constraint");
+
+  // non-GET rejected; fail-soft 503 without a database; raw payloads never leave
+  assert.strictEqual((await fetch(B + "/api/archive/run-metrics?from=2025-03-01&to=2025-03-31",
+    { method: "POST", body: "x" })).status, 405, "POST run-metrics → 405");
+  assert.strictEqual((await runMetrics(Bmissing, "?from=2025-03-01&to=2025-03-31")).status, 503,
+    "missing db → 503 on run-metrics");
+  assert.ok(!(await (await runMetrics(B, "?from=2025-03-01&to=2025-03-31")).text()).includes(RAW_MARKER),
+    "raw payloads never leave via run-metrics");
+
+  // a pre-metrics archive (no run_metrics table): identity rows with null
+  // metric fields — "not yet analysed", not an outage
+  const bare = await runMetrics(Bbare, "?from=2025-03-01&to=2025-03-31");
+  assert.strictEqual(bare.status, 200, "an archive without run_metrics still serves");
+  const bareRows = (await bare.json()).runs;
+  assert.deepStrictEqual(bareRows.map((r) => [r.activityId, r.refhrTimeS, r.metricsVersion]),
+    [[70, null, null]], "pre-metrics archive rows carry null metric fields");
+
   // write methods rejected, no state change
   assert.strictEqual((await fetch(B + "/api/archive/activities", { method: "POST", body: "x" })).status, 405, "POST → 405");
   assert.strictEqual((await fetch(B + "/api/archive/activities/10", { method: "PUT", body: "x" })).status, 405, "PUT → 405");
@@ -257,7 +362,7 @@ try {
 
   // ── SPLITS_ARCHIVE_DIR: archive from a local dir, data files elsewhere ────
   const overridden = await (await list(Boverride, "?type=running")).json();
-  assert.strictEqual(overridden.total, 4, "archive read from SPLITS_ARCHIVE_DIR");
+  assert.strictEqual(overridden.total, 5, "archive read from SPLITS_ARCHIVE_DIR");
 
   // ── read-only: the database file is byte-identical after everything ───────
   assert.ok(dbBytesBefore.equals(await readFile(dbPath)), "no request may write to the archive");
@@ -270,7 +375,9 @@ try {
   server.kill();
   serverMissing.kill();
   serverOverride.kill();
+  serverBare.kill();
   await rm(dataDir, { recursive: true, force: true }).catch(() => {});
   await rm(emptyDir, { recursive: true, force: true }).catch(() => {});
+  await rm(bareDir, { recursive: true, force: true }).catch(() => {});
 }
 process.exit(failed ? 1 : 0);

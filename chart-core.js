@@ -265,7 +265,14 @@ function timeTickLabel(d, first) {
 //   rules?: [{ v, label?, color?, dash? }], // horizontal reference rules
 //   annotations?: [{ at: Date, label }],
 //   hoverPoints?: [{ i, aria, lines:[{t,em}] }],   // hoverable indices, in order
-//   hover?: { index, pinned, onEnter(bi), onPin(bi,e), onKey(e), onLeave() },
+//   hover?: { index, pinned, onEnter(bi), onPin(bi,e), onKey(e), onLeave(),
+//             drilled?, onDrillExit? },
+//   drill?: [{ label, action } | null, …],  // per-hoverPoint drill (chart-drill D1/D2):
+//                                           // the pinned card's second activation.
+//                                           // Pure pass-through — the engine renders
+//                                           // and announces the affordance, the PAGE's
+//                                           // action fetches or navigates. Entries are
+//                                           // aligned with hoverPoints; null = inert.
 //   extraLayers?: [...]                     // pre-built layers (heatmap cells)
 // }
 export function buildSpec(desc) {
@@ -470,11 +477,18 @@ export function buildSpec(desc) {
   // rects tile the frame and no crosshair tracks the x — only the card
   const cellsMode = desc.hoverMode === "cells";
   const bands = cellsMode ? [] : bandRects(hoverPts, w, h).map((b, bi) => ({ ...b, i: bi }));
-  let card = null, cross = null, activeDots = [];
+  // drill (chart-drill D1): the active entry surfaces only on a PINNED reading
+  // — hover reads first, the pin's second activation drills — and only when
+  // the point's descriptor yields an action; a card row announces it so the
+  // pages' existing aria-live plumbing speaks it with the reading
+  const drillArr = desc.drill || null;
+  let card = null, cross = null, activeDots = [], activeDrill = null;
   if (hstate.index != null && hstate.index >= 0 && hstate.index < hoverPts.length) {
     const p = hoverPts[hstate.index];
     const pl = cardPlace(p.x, p.y, w, h);
-    card = { ...pl, rows: p.lines };
+    const d = (drillArr && hstate.pinned) ? drillArr[hstate.index] : null;
+    if (d && d.action) activeDrill = d;
+    card = { ...pl, rows: activeDrill ? [...p.lines, { t: activeDrill.label, drill: true }] : p.lines };
     if (!cellsMode) cross = { x: p.x, top: 0, bot: h };
     activeDots = p.dots;
   }
@@ -515,6 +529,10 @@ export function buildSpec(desc) {
       onEnter: hstate.onEnter, onPin: hstate.onPin, onKey: hstate.onKey, onLeave: hstate.onLeave,
       onMove: hstate.onMove,
       card, cross, activeDots,
+      drillDeclared: !!drillArr,
+      drill: activeDrill,
+      drilled: !!hstate.drilled,
+      onDrillExit: hstate.onDrillExit,
     },
     a11y: { role: "img", label: desc.ariaLabel || "", keyboard: true },
   };

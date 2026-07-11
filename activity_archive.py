@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS run_metrics (
   best_10k_s REAL, best_half_s REAL,
   refhr_time_s REAL, refhr_dist_m REAL,
   refpace_time_s REAL, refpace_cadence_x_time REAL,
+  refhr_pace_s_per_km REAL, refpace_cadence_spm REAL,
   computed_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_run_metrics_start ON run_metrics(start_time_local);
@@ -186,6 +187,20 @@ def _apply_schema_v6(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE activities ADD COLUMN detail_streams_json TEXT")
 
 
+# Schema v7 (chart-drill, design D3): TWO additive NULL-able columns on
+# run_metrics — the run's own reference-band display values, written by the
+# insight engine at its METRICS_VERSION bump so the archive API can serve them
+# verbatim (derivation stays in Python). Like every run_metrics column they are
+# derived and disposable; the version bump's self-heal fills them with no
+# manual step. The CREATE above carries them for fresh databases; this guarded
+# ALTER upgrades existing ones.
+def _apply_schema_v7(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(run_metrics)")}
+    for name in ("refhr_pace_s_per_km", "refpace_cadence_spm"):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE run_metrics ADD COLUMN {name} REAL")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -220,7 +235,8 @@ def _open(db: Path) -> sqlite3.Connection:
         _apply_schema_v4(conn)
         _apply_schema_v5(conn)
         _apply_schema_v6(conn)
-        # Forward-only migration: v1→…→v6 is purely additive (CREATE IF
+        _apply_schema_v7(conn)
+        # Forward-only migration: v1→…→v7 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -412,6 +428,7 @@ _RUN_METRICS_COLS = (
     "activity_id", "metrics_version", "start_time_local", "is_treadmill",
     "best_1k_s", "best_mile_s", "best_5k_s", "best_10k_s", "best_half_s",
     "refhr_time_s", "refhr_dist_m", "refpace_time_s", "refpace_cadence_x_time",
+    "refhr_pace_s_per_km", "refpace_cadence_spm",
 )
 
 

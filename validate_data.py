@@ -165,6 +165,11 @@ def validate_insights(ins: dict, e: list[str]) -> None:
               and (w.get("garminSec") is None or _num(w.get("garminSec"))))
         check(ok, f"insights.trajectory.weekly {label} must be "
                   "{week, riegelSec: num|null, garminSec: num|null}", e)
+        # anchorId (chart-drill) — OPTIONAL: pre-anchor files stay valid, but a
+        # present anchor must be the numeric activity id the drill navigates to
+        if isinstance(w, dict) and "anchorId" in w:
+            check(_num(w.get("anchorId")),
+                  f"insights.trajectory.weekly {label} anchorId must be numeric", e)
 
 
 _COMPLIANCE_STATUSES = {"done", "partial", "missed", "swapped", "unplanned", "pending"}

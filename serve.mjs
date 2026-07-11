@@ -285,6 +285,72 @@ function listArchiveActivities(db, params) {
   };
 }
 
+// Run-metrics rows over a bounded date range (chart-drill D4): running
+// activities' promoted identity columns LEFT-JOINed with their stored
+// run_metrics band-aggregate and display columns — verbatim, newest-first.
+// The endpoint exists to explain ONE period (a contribution panel's month),
+// not to bulk-export, hence the hard span cap and no pagination. Returns
+// { status, body } so the caller can express 400s without exceptions.
+const RUN_METRICS_MAX_SPAN_DAYS = 92;
+
+function listRunMetrics(db, params) {
+  const from = params.get("from");
+  const to = params.get("to");
+  if (!from || !to) {
+    return { status: 400, body: { ok: false, error: "from and to are required (YYYY-MM-DD)" } };
+  }
+  const t0 = Date.parse(from + "T00:00:00Z");
+  const t1 = Date.parse(to + "T00:00:00Z");
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 < t0) {
+    return { status: 400, body: { ok: false, error: "from/to must be dates with from <= to" } };
+  }
+  if ((t1 - t0) / 86400000 > RUN_METRICS_MAX_SPAN_DAYS) {
+    return { status: 400, body: { ok: false, error: `span exceeds ${RUN_METRICS_MAX_SPAN_DAYS} days — this endpoint explains one period, not the whole archive` } };
+  }
+  // mirrors the Python side's run-type SQL (activity_archive._RUN_TYPE_SQL)
+  const runType = "(a.type_key LIKE '%run%' AND a.type_key NOT LIKE '%cycling%')";
+  const identityCols = `a.activity_id, a.start_time_local, a.type_key, a.name,
+       a.distance_m, a.duration_s`;
+  const metricCols = `m.refhr_time_s, m.refhr_dist_m, m.refhr_pace_s_per_km,
+       m.refpace_time_s, m.refpace_cadence_spm, m.metrics_version`;
+  const cond = `WHERE ${runType}
+       AND substr(a.start_time_local, 1, 10) >= ? AND substr(a.start_time_local, 1, 10) <= ?
+     ORDER BY a.start_time_local DESC, a.activity_id DESC`;
+  let rows;
+  try {
+    rows = db.prepare(
+      `SELECT ${identityCols}, ${metricCols}
+       FROM activities a
+       LEFT JOIN run_metrics m ON m.activity_id = a.activity_id
+       ${cond}`).all(from, to);
+  } catch (e) {
+    // a pre-insight-metrics archive has no run_metrics table — that means
+    // "nothing analysed yet", never an outage; anything else 503s upstream
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+    rows = db.prepare(`SELECT ${identityCols} FROM activities a ${cond}`).all(from, to);
+  }
+  return {
+    status: 200,
+    body: {
+      from, to,
+      runs: rows.map((r) => ({
+        activityId: r.activity_id,
+        startTimeLocal: r.start_time_local,
+        name: r.name,
+        distanceM: r.distance_m,
+        durationS: r.duration_s,
+        isTreadmill: r.type_key === "treadmill_running",
+        refhrTimeS: r.refhr_time_s ?? null,
+        refhrDistM: r.refhr_dist_m ?? null,
+        refhrPaceSPerKm: r.refhr_pace_s_per_km ?? null,
+        refpaceTimeS: r.refpace_time_s ?? null,
+        refpaceCadenceSpm: r.refpace_cadence_spm ?? null,
+        metricsVersion: r.metrics_version ?? null,
+      })),
+    },
+  };
+}
+
 function getArchiveActivity(db, id) {
   const r = db.prepare(
     `SELECT ${ARCHIVE_SUMMARY_COLS}, max_hr, detail_distilled_json
@@ -345,6 +411,11 @@ async function handleArchive(req, res, pathname, url) {
   try {
     if (pathname === "/api/archive/activities") {
       json(req, res, 200, listArchiveActivities(db, url.searchParams));
+      return;
+    }
+    if (pathname === "/api/archive/run-metrics") {
+      const out = listRunMetrics(db, url.searchParams);
+      json(req, res, out.status, out.body);
       return;
     }
     // /api/archive/activities/:id and …/:id/streams — the parse accepts the
@@ -498,7 +569,8 @@ const server = createServer(async (req, res) => {
       json(req, res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
       return;
     }
-    if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")) {
+    if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")
+        || pathname === "/api/archive/run-metrics") {
       await handleArchive(req, res, pathname, url);
       return;
     }

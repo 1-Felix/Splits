@@ -161,6 +161,85 @@ function demoSpec(overrides = {}) {
   assert.ok(sizes.size >= 2, "weights produce visibly different dot sizes");
 }
 
+// ── drill affordance (chart-drill 3.2/3.3): rendered + key ladder from the engine ──
+{
+  const months = ["2026-01", "2026-02", "2026-03", "2026-04"];
+  const dates = months.map(monthKeyToDate);
+  const values = [430, 425, 428, 420];
+  const makeSpec = (hover, log) => buildSpec({
+    id: "eff", ariaLabel: "efficiency",
+    x: { kind: "time", dates },
+    y: { policy: POLICIES.efficiency },
+    series: [{ key: "p", name: "Pace", color: "var(--series2)", values }],
+    hoverPoints: values.map((v, i) => ({ i, aria: "m" + i, lines: [{ t: "m" + i, em: true }] })),
+    drill: values.map((_, i) => (i === 1 ? null : { label: "view evidence →", action: () => log.push("drill" + i) })),
+    hover,
+  });
+  const key = (k) => ({ key: k, preventDefault: () => {}, stopPropagation: () => {} });
+
+  // pinned on a drillable point: the card carries the visible affordance row,
+  // the card is clickable, and Enter invokes the action (not a re-pin)
+  {
+    const log = [];
+    const spec = makeSpec({ index: 0, pinned: true, drilled: false,
+      onKey: (e) => log.push("pageKey:" + e.key), onDrillExit: () => log.push("exit") }, log);
+    const el = renderChart(spec, React);
+    const card = collect(el, (n) => n.props["data-card"] === "eff")[0];
+    assert.ok(card, "pinned card renders");
+    const aff = collect(card, (n) => text(n) === "view evidence →");
+    assert.ok(aff.length >= 1, "the affordance row is visible on the card");
+    assert.strictEqual(typeof card.props.onClick, "function", "the pinned card is clickable");
+    card.props.onClick({ stopPropagation: () => {} });
+    assert.deepStrictEqual(log, ["drill0"], "card click invokes the point's action");
+
+    const svg = collect(el, (n) => n.type === "svg")[0];
+    svg.props.onKeyDown(key("Enter"));
+    assert.deepStrictEqual(log, ["drill0", "drill0"], "Enter on the pinned point drills");
+    // arrows still belong to the page handler
+    svg.props.onKeyDown(key("ArrowRight"));
+    assert.deepStrictEqual(log, ["drill0", "drill0", "pageKey:ArrowRight"]);
+    // Escape while NOT drilled falls through to the page (dismiss ladder)
+    svg.props.onKeyDown(key("Escape"));
+    assert.deepStrictEqual(log[log.length - 1], "pageKey:Escape");
+  }
+
+  // drilled state: Escape steps back to the pinned reading, not all the way out
+  {
+    const log = [];
+    const spec = makeSpec({ index: 0, pinned: true, drilled: true,
+      onKey: (e) => log.push("pageKey:" + e.key), onDrillExit: () => log.push("exit") }, log);
+    const svg = collect(renderChart(spec, React), (n) => n.type === "svg")[0];
+    svg.props.onKeyDown(key("Escape"));
+    assert.deepStrictEqual(log, ["exit"], "Escape while drilled exits the drill only");
+  }
+
+  // a pinned point whose descriptor yields no action is inert: no affordance,
+  // Enter falls through to the page handler (today's re-pin semantics)
+  {
+    const log = [];
+    const spec = makeSpec({ index: 1, pinned: true, drilled: false,
+      onKey: (e) => log.push("pageKey:" + e.key) }, log);
+    const el = renderChart(spec, React);
+    const card = collect(el, (n) => n.props["data-card"] === "eff")[0];
+    assert.strictEqual(collect(card, (n) => text(n) === "view evidence →").length, 0, "no affordance on a null point");
+    assert.strictEqual(card.props.onClick, undefined, "null-point card is not clickable");
+    const svg = collect(el, (n) => n.type === "svg")[0];
+    svg.props.onKeyDown(key("Enter"));
+    assert.deepStrictEqual(log, ["pageKey:Enter"], "Enter on a null point keeps page semantics");
+  }
+}
+
+// ── a chart without a descriptor is untouched (chart-drill 3.3) ──────────────
+{
+  const pageKey = () => {};
+  const spec = demoSpec({ hover: { index: 1, pinned: true, onEnter: () => {}, onPin: () => {}, onKey: pageKey, onLeave: () => {} } });
+  const el = renderChart(spec, React);
+  const svg = collect(el, (n) => n.type === "svg")[0];
+  assert.strictEqual(svg.props.onKeyDown, pageKey, "no descriptor → the page's key handler is wired UNWRAPPED");
+  const card = collect(el, (n) => n.props["data-card"] === "vo2")[0];
+  assert.strictEqual(card.props.onClick, undefined, "no descriptor → the card is not clickable");
+}
+
 // ── rules + annotations reach the DOM tree ────────────────────────────────────
 {
   const months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];

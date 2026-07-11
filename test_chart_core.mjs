@@ -322,6 +322,66 @@ import { scaleLinear } from "./vendor/d3-lite.js";
   assert.notStrictEqual(ann.flags[0].lane, ann.flags[1].lane, "adjacent flags separate lanes");
 }
 
+// ── drill descriptor (chart-drill 3.1): pure pass-through, no DOM ────────────
+{
+  const months = ["2026-01", "2026-02", "2026-03", "2026-04"];
+  const dates = months.map(monthKeyToDate);
+  const values = [430, 425, 428, 420];
+  const actions = [];
+  // per-hoverPoint entries; the null entry models a point with no evidence
+  const drill = [
+    { label: "view evidence →", action: () => actions.push(0) },
+    null,
+    { label: "view evidence →", action: () => actions.push(2) },
+    { label: "view evidence →", action: () => actions.push(3) },
+  ];
+  const base = {
+    id: "eff", ariaLabel: "efficiency",
+    x: { kind: "time", dates },
+    y: { policy: POLICIES.efficiency },
+    series: [{ key: "p", name: "Pace", color: "var(--series2)", values }],
+    hoverPoints: values.map((v, i) => ({ i, aria: "m" + i, lines: [{ t: "m" + i, em: true }] })),
+    drill,
+  };
+
+  // pinned on a drillable point: the affordance row joins the card and the
+  // action is exposed — the engine renders/announces, the PAGE acts
+  const pinned = buildSpec({ ...base, hover: { index: 0, pinned: true, drilled: false } });
+  assert.ok(pinned.hover.drillDeclared, "the spec knows a drill was declared");
+  assert.ok(pinned.hover.drill, "active pinned point exposes its drill entry");
+  assert.strictEqual(pinned.hover.drill.label, "view evidence →");
+  const lastRow = pinned.hover.card.rows[pinned.hover.card.rows.length - 1];
+  assert.strictEqual(lastRow.t, "view evidence →", "the card's last row is the affordance");
+  assert.strictEqual(lastRow.drill, true, "…marked as the drill row");
+  pinned.hover.drill.action();
+  assert.deepStrictEqual(actions, [0], "the exposed action is the declared one");
+
+  // merely hovered (not pinned): no affordance, no action — reading first
+  const hovered = buildSpec({ ...base, hover: { index: 0, pinned: false } });
+  assert.strictEqual(hovered.hover.drill, null, "hover without pin exposes no drill");
+  assert.ok(!hovered.hover.card.rows.some((r) => r.drill), "no affordance row on a hover card");
+
+  // a null entry (no action for this point) is inert even when pinned
+  const nullPoint = buildSpec({ ...base, hover: { index: 1, pinned: true } });
+  assert.strictEqual(nullPoint.hover.drill, null, "a point without an action carries none");
+  assert.ok(!nullPoint.hover.card.rows.some((r) => r.drill), "…and no affordance row");
+
+  // drilled state + exit handler thread through untouched
+  const exits = [];
+  const drilled = buildSpec({ ...base, hover: { index: 2, pinned: true, drilled: true, onDrillExit: () => exits.push(1) } });
+  assert.strictEqual(drilled.hover.drilled, true);
+  drilled.hover.onDrillExit();
+  assert.deepStrictEqual(exits, [1]);
+
+  // a chart WITHOUT a descriptor is byte-identical in the hover contract
+  const { drill: _d, ...noDrillBase } = base;
+  const plain = buildSpec({ ...noDrillBase, hover: { index: 0, pinned: true } });
+  assert.strictEqual(plain.hover.drillDeclared, false);
+  assert.strictEqual(plain.hover.drill, null);
+  assert.deepStrictEqual(plain.hover.card.rows, [{ t: "m0", em: true }],
+    "no descriptor → the pinned card rows are exactly the point's lines");
+}
+
 // ── crosshairAt (run-detail D3): bisection, clamped at both ends ─────────────
 {
   const xs = Array.from({ length: 101 }, (_, i) => i * 10);   // 0..1000 m

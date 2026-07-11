@@ -29,7 +29,9 @@ import activity_archive
 # ──────────────────────────────────────────────────────────────────────────────
 # algorithm parameters — all covered by METRICS_VERSION (design D2/D4)
 # ──────────────────────────────────────────────────────────────────────────────
-METRICS_VERSION = 1
+# v2 (chart-drill D3): per-run in-band display values become stored columns
+# (refhr_pace_s_per_km, refpace_cadence_spm) — the bump self-heals every row.
+METRICS_VERSION = 2
 
 # Bands frozen after the task-3.1 density check against the real archive
 # (2026-07-05, 162 runs): HR 125–145 yields ≥31 in-band min for every month
@@ -158,7 +160,13 @@ def band_aggregates(samples: list[tuple]) -> dict:
     """Time-weighted in-band sums (design D4). Each inter-sample interval is
     weighted by its duration and judged by its endpoint sample; warm-up,
     walking-pace, and recording-gap intervals contribute nothing. The sums are
-    additive across runs, so monthly series are plain SQL SUMs."""
+    additive across runs, so monthly series are plain SQL SUMs.
+
+    The per-run DISPLAY values (chart-drill D3) are the same sums' quotients —
+    the run's own in-band pace and time-weighted in-band cadence — stored so
+    the contribution panel can show them without anyone deriving downstream.
+    NULL when the run has no in-band time, never zero: "no evidence" and
+    "slow" must stay distinguishable."""
     refhr_time = refhr_dist = refpace_time = refpace_cxt = 0.0
     for k in range(1, len(samples)):
         t, _d, hr, cad, spd = samples[k]
@@ -176,12 +184,21 @@ def band_aggregates(samples: list[tuple]) -> dict:
         if cad and REF_PACE_BAND[0] <= pace <= REF_PACE_BAND[1]:
             refpace_time += gap
             refpace_cxt += cad * gap
-    return {
+    out = {
         "refhr_time_s": round(refhr_time, 1),
         "refhr_dist_m": round(refhr_dist, 1),
         "refpace_time_s": round(refpace_time, 1),
         "refpace_cadence_x_time": round(refpace_cxt, 1),
     }
+    # display values from the STORED (rounded) sums, so a consumer can always
+    # reproduce them from the row's own aggregate columns exactly
+    out["refhr_pace_s_per_km"] = (
+        round(out["refhr_time_s"] / (out["refhr_dist_m"] / 1000.0), 1)
+        if out["refhr_time_s"] > 0 and out["refhr_dist_m"] > 0 else None)
+    out["refpace_cadence_spm"] = (
+        round(out["refpace_cadence_x_time"] / out["refpace_time_s"], 1)
+        if out["refpace_time_s"] > 0 and out["refpace_cadence_x_time"] > 0 else None)
+    return out
 
 
 def extract_run_metrics(conn) -> int:
@@ -361,9 +378,13 @@ def _week_end(d: dt.date) -> dt.date:
 def weekly_trajectory(conn, today: dt.date) -> list[dict]:
     """Weekly Riegel-vs-Garmin series (design D6), from the first qualifying
     10k effort to the current week. No 10k in a week's trailing window ⇒ null
-    — never substituted from a shorter distance."""
-    efforts = [(dt.date.fromisoformat(d), s) for d, s in conn.execute(
-        """SELECT substr(start_time_local, 1, 10), best_10k_s FROM run_metrics
+    — never substituted from a shorter distance. Each Riegel week carries the
+    anchoring effort's `anchorId` so the dashboard can link the prediction to
+    the run that demonstrated it (chart-drill D8); null weeks omit the key
+    entirely, so pre-anchor consumers and data files stay untouched."""
+    efforts = [(dt.date.fromisoformat(d), s, aid) for d, s, aid in conn.execute(
+        """SELECT substr(start_time_local, 1, 10), best_10k_s, activity_id
+           FROM run_metrics
            WHERE metrics_version = ? AND is_treadmill = 0
              AND best_10k_s IS NOT NULL
            ORDER BY start_time_local""", (METRICS_VERSION,))]
@@ -379,16 +400,22 @@ def weekly_trajectory(conn, today: dt.date) -> list[dict]:
     factor = (21.0975 / 10.0) ** RIEGEL_EXPONENT
     while wk <= last:
         window_start = wk - dt.timedelta(days=RIEGEL_WINDOW_DAYS)
-        anchor = min((s for d, s in efforts if window_start < d <= wk), default=None)
+        # min on (seconds, activity_id): the fastest effort anchors; a dead
+        # heat resolves deterministically to the lower activity id
+        anchor = min(((s, aid) for d, s, aid in efforts
+                      if window_start < d <= wk), default=None)
         garmin = None
         for d, h in preds:
             if d > wk:
                 break
             garmin = h
         y, w, _ = wk.isocalendar()
-        out.append({"week": f"{y}-W{w:02d}",
-                    "riegelSec": round(anchor * factor) if anchor else None,
-                    "garminSec": round(garmin) if garmin else None})
+        row = {"week": f"{y}-W{w:02d}",
+               "riegelSec": round(anchor[0] * factor) if anchor else None,
+               "garminSec": round(garmin) if garmin else None}
+        if anchor:
+            row["anchorId"] = anchor[1]
+        out.append(row)
         wk += dt.timedelta(days=7)
     return out
 

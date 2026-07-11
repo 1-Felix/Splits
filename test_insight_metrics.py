@@ -177,6 +177,28 @@ def test_band_sums_none_hr_or_cadence_skipped():
         "samples without HR/cadence must not enter the pools"
 
 
+def test_per_run_display_values_consistent_with_aggregates():
+    # 20 min at 2.2 m/s: in both bands after the warm-up cutoff — the stored
+    # display values must be exactly the stored aggregates' quotients
+    # (chart-drill 1.2: derivation lives here, the server serves verbatim).
+    agg = im.band_aggregates(im.read_stream(_detail(_steady(1200, 2.2))))
+    assert agg["refhr_pace_s_per_km"] == round(
+        agg["refhr_time_s"] / (agg["refhr_dist_m"] / 1000.0), 1), \
+        "per-run pace is exactly reproducible from the row's own aggregates"
+    assert agg["refpace_cadence_spm"] == round(
+        agg["refpace_cadence_x_time"] / agg["refpace_time_s"], 1), \
+        "per-run cadence is exactly reproducible from the row's own aggregates"
+
+
+def test_per_run_display_values_null_when_out_of_band():
+    # HR 160 / pace 250 s/km: zero in-band time in both pools — the display
+    # values must be NULL, never zero, so "no evidence" ≠ "slow" (chart-drill 1.2)
+    agg = im.band_aggregates(im.read_stream(_detail(_steady(1200, 4.0, hr=160))))
+    assert agg["refhr_time_s"] == 0.0 and agg["refpace_time_s"] == 0.0
+    assert agg["refhr_pace_s_per_km"] is None
+    assert agg["refpace_cadence_spm"] is None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 2.4 extraction driver
 # ──────────────────────────────────────────────────────────────────────────────
@@ -227,6 +249,39 @@ def test_version_bump_recomputes():
         assert rows == [(orig_version + 1,)], "stale row replaced, not duplicated"
     finally:
         im.METRICS_VERSION = orig_version
+    conn.close()
+
+
+def test_extraction_stores_per_run_display_columns():
+    # chart-drill 1.1/1.2: the columns exist in the schema, the extraction
+    # writes them, and a version bump self-heals them onto a pre-bump row.
+    conn = arch.open_archive(_tmp())
+    # in-band run (2.2 m/s ⇒ pace ~455 s/km, HR 135) + an out-of-band run
+    _seed_run(conn, 1, _detail(_steady(1200, 2.2)))
+    _seed_run(conn, 2, _detail(_steady(1200, 4.0, hr=160)),
+              start="2026-07-02 08:00:00")
+    assert im.extract_run_metrics(conn) == 2
+    rows = {r[0]: r for r in conn.execute(
+        "SELECT activity_id, refhr_pace_s_per_km, refpace_cadence_spm,"
+        " refhr_time_s, refhr_dist_m FROM run_metrics")}
+    pace, spm, t, d = rows[1][1:]
+    assert pace == round(t / (d / 1000.0), 1), \
+        "stored per-run pace = stored aggregates' quotient, exactly"
+    assert spm is not None and abs(spm - 170) <= 1, "cadence 85 doubled → 170 spm"
+    assert rows[2][1] is None and rows[2][2] is None, \
+        "out-of-band run stores NULL display values, never zero"
+
+    # a row extracted at the PREVIOUS version has no display values; the bump
+    # (already applied in this checkout) recomputes it with them on next sync
+    conn.execute("UPDATE run_metrics SET metrics_version = ?,"
+                 " refhr_pace_s_per_km = NULL, refpace_cadence_spm = NULL"
+                 " WHERE activity_id = 1", (im.METRICS_VERSION - 1,))
+    conn.commit()
+    assert im.extract_run_metrics(conn) == 1, "pre-bump row self-heals"
+    healed = conn.execute(
+        "SELECT metrics_version, refhr_pace_s_per_km FROM run_metrics"
+        " WHERE activity_id = 1").fetchone()
+    assert healed[0] == im.METRICS_VERSION and healed[1] is not None
     conn.close()
 
 
@@ -337,6 +392,9 @@ def test_weekly_trajectory_riegel_vs_garmin():
     assert weekly[3]["garminSec"] == 7300, "last banked value on or before the week end"
     assert weekly[5]["riegelSec"] == round(3480 * factor), "faster effort takes over"
     assert weekly[-1]["garminSec"] == 7255
+    # chart-drill 1.3: each Riegel week names the run that demonstrated it
+    assert weekly[0]["anchorId"] == 1, "week anchored on effort 1 carries its id"
+    assert weekly[5]["anchorId"] == 2, "the faster effort's id takes over with it"
     conn.close()
 
 
@@ -350,6 +408,10 @@ def test_riegel_null_over_substitution_and_aging_out():
     assert weekly[0]["riegelSec"] is not None
     assert weekly[-1]["riegelSec"] is None, \
         "no 10k in the trailing 84 days → null, never a 1k-based estimate"
+    # chart-drill 1.3: a null-Riegel week carries NO anchor key at all —
+    # older consumers and validation must never see anchorId: null
+    assert "anchorId" not in weekly[-1], "null week omits anchorId entirely"
+    assert weekly[0]["anchorId"] == 1
     # treadmill 10k must not anchor either
     _seed_metrics(conn, 3, "2026-06-28 09:00:00", best_10k_s=3400.0, treadmill=1)
     weekly = im.weekly_trajectory(conn, TODAY)
@@ -558,6 +620,24 @@ def test_validate_pre_3a_block_stays_valid():
     e = []
     vd.validate_insights(ins, e)
     assert e == [], f"a pre-3a block (no byYear/yoy) must stay valid: {e}"
+
+
+def test_validate_anchor_id_optional_and_typed():
+    # a pre-anchor trajectory (no anchorId anywhere) stays valid
+    ins = _valid_block()
+    for w in ins["trajectory"]["weekly"]:
+        w.pop("anchorId", None)
+    e = []
+    vd.validate_insights(ins, e)
+    assert e == [], f"a trajectory without anchorId must stay valid: {e}"
+
+    # a present anchorId must be numeric — a string is named and rejected
+    ins = _valid_block()
+    ins["trajectory"]["weekly"][0]["anchorId"] = "19790873891"
+    e = []
+    vd.validate_insights(ins, e)
+    assert any("anchorId" in m for m in e), \
+        f"a non-numeric anchorId must fail naming the member: {e}"
 
 
 def test_validate_malformed_byyear_and_yoy_named():

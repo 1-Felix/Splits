@@ -144,6 +144,13 @@
       {{ eff.chart }}
     </div>
 
+    <!-- contribution panel (chart-drill D6): a full-width expanse directly
+         beneath its chart — one panel open per page, built in JS like the
+         charts themselves -->
+    <sc-for list="{{ effPanel }}" as="pp" hint-placeholder-count="0">
+      <div style="grid-column:1/-1">{{ pp.el }}</div>
+    </sc-for>
+
     <!-- CADENCE @ REFERENCE PACE -->
     <div class="card">
       <div class="card-head">
@@ -153,6 +160,10 @@
       <div class="scope-row"><sc-for list="{{ cadRef.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
       {{ cadRef.chart }}
     </div>
+
+    <sc-for list="{{ cadPanel }}" as="pp" hint-placeholder-count="0">
+      <div style="grid-column:1/-1">{{ pp.el }}</div>
+    </sc-for>
 
     <!-- RECORDS FEED -->
     <div class="card">
@@ -237,6 +248,9 @@
       </div>
     </div>
     {{ yoy.chart }}
+    <sc-for list="{{ yoyPanel }}" as="pp" hint-placeholder-count="0">
+      <div>{{ pp.el }}</div>
+    </sc-for>
   </div>
 
   </sc-if>
@@ -248,7 +262,7 @@
 class Component extends DCLogic {
   // theme, registry, sync machine, greeting and nav all live in topbar.js
   // (shared across pages, design D8); this component only holds the state.
-  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {} };
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, panel: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {} };
 
   tb() { return window.SplitsTopbar; }
 
@@ -262,7 +276,10 @@ class Component extends DCLogic {
   hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
   leaveChart = (chart) => { const h = this.state.hover; if (h && !h.pinned && h.chart === chart) this.setState({ hover: null }); };
   pinPoint = (chart, i, e) => { if (e && e.stopPropagation) e.stopPropagation(); const h = this.state.hover; if (h && h.pinned && h.chart === chart && h.i === i) { this.setState({ hover: null }); return; } this.setState({ hover: { chart, i, pinned: true } }); };
-  dismissHover = () => { if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null }); };
+  dismissHover = () => {
+    if (this.state.panel) this.closePanel();
+    if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null });
+  };
   chartKey = (chart, n, e) => {
     const k = e.key; const h = this.state.hover;
     const cur = (h && h.chart === chart) ? h.i : -1;
@@ -274,6 +291,173 @@ class Component extends DCLogic {
 
   // ---- record click-through: navigate to the run's own page (run-detail 7.1)
   openRecord = (id) => { window.location.href = './run/' + id; };
+
+  // ---- contribution panel (chart-drill D5/D6) --------------------------------
+  // One panel open per page; evidence is lazy-fetched ON DRILL, never before,
+  // and every failure mode degrades inside the panel. The header restates the
+  // plotted value from the STATIC insights block — the panel is evidence, not
+  // recomputation, and never re-derives the point from fetched rows.
+  openPanel = (model) => {
+    this._panelReturn = document.activeElement;
+    this.fetchPanel(model);
+    this._focusPanel();
+  };
+  fetchPanel = (model) => {
+    const seq = this._panelSeq = (this._panelSeq || 0) + 1;
+    this.setState({ panel: { ...model, state: 'loading', runs: null, more: 0 } });
+    const settle = (patch) => {
+      const cur = this.state.panel;
+      if (seq !== this._panelSeq || !cur || cur.key !== model.key) return; // superseded
+      this.setState({ panel: { ...cur, ...patch } });
+    };
+    const url = model.kind === 'yoy'
+      ? './api/archive/activities?type=running&limit=100&from=' + model.from + '&to=' + model.to
+      : './api/archive/run-metrics?from=' + model.from + '&to=' + model.to;
+    fetch(url)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((j) => settle(model.kind === 'yoy'
+        ? { state: 'ready', runs: j.activities, more: Math.max(0, j.total - j.activities.length) }
+        : { state: 'ready', runs: j.runs }))
+      .catch(() => settle({ state: 'offline' }));
+  };
+  closePanel = () => {
+    if (!this.state.panel) return;
+    this._panelSeq = (this._panelSeq || 0) + 1; // cancel any in-flight fetch
+    const root = document.getElementById('drill-panel');
+    const hadFocus = !!(root && root.contains(document.activeElement));
+    this.setState({ panel: null });
+    const el = this._panelReturn;
+    this._panelReturn = null;
+    // focus returns to the chart (pin intact) only when it was in the panel —
+    // a click-away dismissal must not yank focus around the page
+    if (hadFocus && el && el.focus && document.contains(el)) el.focus();
+  };
+  _focusPanel() {
+    let tries = 0;
+    const tick = () => {
+      const el = document.getElementById('drill-panel-heading');
+      if (el) { el.focus(); return; }
+      if (++tries < 40) setTimeout(tick, 25);
+    };
+    setTimeout(tick, 0);
+  }
+  openInsightPanel = (chartId, kind, m, monthLabel) => {
+    const D = this.state.data || this.buildData();
+    const INS = D.insights || {};
+    const eff = kind === 'eff';
+    const band = eff
+      ? (((INS.efficiency || {}).refHrBand || []).join('–') + ' bpm')
+      : (INS.cadence ? this.fmtPace(INS.cadence.refPaceBand[0]) + '–' + this.fmtPace(INS.cadence.refPaceBand[1]) + ' /km' : '');
+    const val = eff ? m.paceSecPerKm : m.spm;
+    const y = m.month.slice(0, 4), mo = +m.month.slice(5, 7);
+    const lastDay = new Date(Date.UTC(+y, mo, 0)).getUTCDate();
+    this.openPanel({
+      key: chartId + ':' + m.month, chart: chartId, kind,
+      title: monthLabel + (eff ? ' — Pace @ ' : ' — Cadence @ ') + band,
+      restated: val != null
+        ? (eff ? this.fmtPace(val) + ' /km' : val + ' spm') + ' plotted · ' + m.inBandMin + ' min in band'
+        : 'no plotted point — only ' + m.inBandMin + ' min of in-band evidence this month',
+      from: m.month + '-01', to: m.month + '-' + String(lastDay).padStart(2, '0'),
+      year: y, showExcluded: false,
+    });
+  };
+  openYoyPanel = (year, monthNum, e, monthLabel) => {
+    const mm = String(monthNum).padStart(2, '0');
+    const lastDay = new Date(Date.UTC(+year, monthNum, 0)).getUTCDate();
+    this.openPanel({
+      key: 'yoy:' + year + '-' + mm, chart: 'yoy', kind: 'yoy',
+      title: monthLabel + ' — every run of the month',
+      restated: e.km.toFixed(1) + ' km plotted · ' + e.runs + (e.runs === 1 ? ' run' : ' runs')
+        + (e.paceSecPerKm ? ' · ' + this.fmtPace(e.paceSecPerKm) + ' /km' : ''),
+      from: year + '-' + mm + '-01', to: year + '-' + mm + '-' + String(lastDay).padStart(2, '0'),
+      year: String(year), showExcluded: false,
+    });
+  };
+
+  // ---- the panel element (chart-drill D5): contributed / didn't-count -------
+  // Built in JS like the charts themselves and interpolated into the template;
+  // Escape closes (one rung of the ladder), clicks inside never bubble to the
+  // page's dismiss-on-click.
+  renderDrillPanel() {
+    const p = this.state.panel;
+    const R = window.React;
+    if (!p || !R) return null;
+    const h = R.createElement;
+    const mono = "'JetBrains Mono',monospace";
+    const runHref = (id) => './run/' + id;
+    const rowStyle = { display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)', padding: 'var(--sp-2) 0', borderBottom: '1px solid var(--line)', color: 'var(--ink)', textDecoration: 'none', fontSize: 'var(--fs-sm)' };
+    const dateSpan = (r) => h('span', { style: { color: 'var(--sub)', fontWeight: 600, minWidth: '52px' } }, this.mDate(String(r.startTimeLocal).slice(0, 10)));
+    const nameSpan = (r) => h('span', { style: { fontWeight: 700, flex: 1, minWidth: '120px' } }, r.name || 'Run');
+
+    const body = [];
+    if (p.state === 'loading') {
+      body.push(h('div', { key: 'ld', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, padding: 'var(--sp-3) 0' } }, 'Loading the month’s runs…'));
+    } else if (p.state === 'offline') {
+      body.push(h('div', { key: 'off', style: { padding: 'var(--sp-3) 0' } },
+        h('div', { key: 't', style: { fontWeight: 800 } }, 'Archive offline'),
+        h('div', { key: 'm', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, margin: 'var(--sp-2) 0 var(--sp-3)', lineHeight: 1.5 } },
+          'The runs behind this point live in the activity archive, which isn’t reachable right now. The chart above keeps working — try again once the archive is back.'),
+        h('button', { key: 'r', className: 'drill-retry', onClick: () => this.fetchPanel(p),
+          style: { padding: 'var(--sp-2) var(--sp-4)', border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', background: 'var(--panel2)', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', fontWeight: 700, cursor: 'pointer' } }, 'Try again')));
+    } else if (p.kind === 'yoy') {
+      const runs = p.runs || [];
+      body.push(...runs.map((r) => h('a', { key: r.activityId, className: 'drill-run', href: runHref(r.activityId), style: rowStyle },
+        dateSpan(r), nameSpan(r),
+        h('span', { key: 'km', style: { fontFamily: mono, fontWeight: 700 } }, ((r.distanceM || 0) / 1000).toFixed(1) + ' km'),
+        h('span', { key: 'tm', style: { fontFamily: mono, color: 'var(--sub)' } }, r.durationS ? this.fmtHMS(r.durationS) : '—'))));
+      if (!runs.length) body.push(h('div', { key: 'none', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, padding: 'var(--sp-3) 0' } }, 'The archive holds no running activity for this month.'));
+      if (p.more) body.push(h('div', { key: 'more', style: { color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, padding: 'var(--sp-2) 0' } }, '… and ' + p.more + ' more — open the year in the archive below.'));
+    } else {
+      const eff = p.kind === 'eff';
+      const tKey = eff ? 'refhrTimeS' : 'refpaceTimeS';
+      const valOf = (r) => eff
+        ? (r.refhrPaceSPerKm != null ? this.fmtPace(r.refhrPaceSPerKm) + ' /km' : '—')
+        : (r.refpaceCadenceSpm != null ? Math.round(r.refpaceCadenceSpm) + ' spm' : '—');
+      const runs = p.runs || [];
+      const contributed = runs.filter((r) => r[tKey] != null && r[tKey] > 0);
+      const excluded = runs.filter((r) => !(r[tKey] != null && r[tKey] > 0));
+      const pool = contributed.reduce((a, r) => a + r[tKey], 0) || 1;
+      body.push(h('div', { key: 'chead', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: 'var(--sub)', marginTop: 'var(--sp-3)' } },
+        'CONTRIBUTED · ' + contributed.length + (contributed.length === 1 ? ' RUN' : ' RUNS')));
+      body.push(...contributed.map((r) => h('a', { key: r.activityId, className: 'drill-run', href: runHref(r.activityId), style: rowStyle },
+        dateSpan(r), nameSpan(r),
+        h('span', { key: 'min', style: { fontFamily: mono, color: 'var(--sub)' } }, (r[tKey] < 60 ? '<1' : Math.round(r[tKey] / 60)) + ' min in band'),
+        h('span', { key: 'val', style: { fontFamily: mono, fontWeight: 700 } }, valOf(r)),
+        h('span', { key: 'share', style: { fontFamily: mono, color: 'var(--accent)', fontWeight: 700, minWidth: '38px', textAlign: 'right' } }, Math.round(r[tKey] / pool * 100) + '%'))));
+      if (!contributed.length) body.push(h('div', { key: 'none', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, padding: 'var(--sp-2) 0' } },
+        'No run put time inside the band this month — that is exactly why the chart shows thin or no evidence here.'));
+      if (excluded.length) {
+        body.push(h('button', { key: 'disc', className: 'drill-disclosure',
+          'aria-expanded': String(!!p.showExcluded),
+          onClick: () => this.setState({ panel: { ...p, showExcluded: !p.showExcluded } }),
+          style: { display: 'block', marginTop: 'var(--sp-3)', padding: 'var(--sp-1) 0', border: 'none', background: 'transparent', color: 'var(--sub)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', fontWeight: 700, cursor: 'pointer' } },
+          excluded.length + (excluded.length === 1 ? ' run didn’t count ' : ' runs didn’t count ') + (p.showExcluded ? '▾' : '▸')));
+        if (p.showExcluded) {
+          body.push(...excluded.map((r) => h('a', { key: 'x' + r.activityId, className: 'drill-run drill-excluded', href: runHref(r.activityId), style: { ...rowStyle, opacity: .75 } },
+            dateSpan(r), nameSpan(r),
+            h('span', { key: 'km', style: { fontFamily: mono, color: 'var(--sub)' } }, ((r.distanceM || 0) / 1000).toFixed(1) + ' km'),
+            h('span', { key: 'why', style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700 } }, r[tKey] == null ? 'not yet analysed' : 'no time in band'))));
+        }
+      }
+    }
+
+    return h('div', {
+      id: 'drill-panel', role: 'region', 'aria-label': p.title, className: 'card',
+      onClick: (e) => { if (e.stopPropagation) e.stopPropagation(); },
+      onKeyDown: (e) => { if (e.key === 'Escape') { if (e.stopPropagation) e.stopPropagation(); this.closePanel(); } },
+      style: { marginTop: 'var(--sp-1)', animation: 'rise .18s ease' },
+    },
+      h('div', { key: 'head', style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--sp-3)' } },
+        h('div', { key: 'l' },
+          h('h3', { key: 'h', id: 'drill-panel-heading', tabIndex: -1, style: { fontSize: 'var(--fs-md)', fontWeight: 800, letterSpacing: '-.01em', outline: 'none' } }, p.title),
+          h('div', { key: 's', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 600, marginTop: 'var(--sp-0)' } }, p.restated)),
+        h('button', { key: 'x', className: 'drill-close', 'aria-label': 'Close the evidence panel', onClick: () => this.closePanel(),
+          style: { border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', background: 'transparent', color: 'var(--sub)', width: '28px', height: '28px', cursor: 'pointer', fontFamily: 'inherit', flex: 'none' } }, '✕')),
+      h('div', { key: 'body' }, ...body),
+      p.state === 'ready' ? h('div', { key: 'foot', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--sp-3)', marginTop: 'var(--sp-3)' } },
+        h('span', { key: 'n', style: { color: 'var(--sub)', fontSize: 'var(--fs-2xs)', fontWeight: 600 } }, 'Evidence from the archive as of now — a newer sync may hold runs this chart hasn’t seen.'),
+        h('a', { key: 'a', className: 'drill-archive', href: './archive?type=running&year=' + p.year, style: { color: 'var(--accent)', fontSize: 'var(--fs-sm)', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' } }, 'open ' + p.year + ' in archive →')) : null);
+  }
 
   // ---- chart engine plumbing -------------------------------------------------
   // Wires the shared hover/pin/keyboard state into a descriptor, builds the
@@ -291,7 +475,11 @@ class Component extends DCLogic {
       index: (h && h.chart === id) ? h.i : null, pinned: !!(h && h.pinned),
       onEnter: (i) => this.hoverPoint(id, i), onPin: (i, e) => this.pinPoint(id, i, e),
       onKey: (e) => this.chartKey(id, (desc.hoverPoints || []).length, e),
-      onLeave: () => this.leaveChart(id)
+      onLeave: () => this.leaveChart(id),
+      // drill state (chart-drill D1): the engine's Escape steps a drilled
+      // chart back to its pinned reading by closing the page's panel
+      drilled: !!(this.state.panel && this.state.panel.chart === id),
+      onDrillExit: () => this.closePanel()
     };
     const spec = cc.buildSpec(desc);
     this._specs[id] = spec;
@@ -304,7 +492,7 @@ class Component extends DCLogic {
   // (wider ranges wait for history-depth).
   MONTH_SCOPES = [{ key: '6mo', label: '6 mo', keep: 6 }, { key: '1y', label: '1 y', keep: 12 }, { key: 'all', label: 'all', keep: null }];
   WEEK_SCOPES = [{ key: '3mo', label: '3 mo', keep: 13 }, { key: 'all', label: '6 mo', keep: null }];
-  setScope = (id, key) => this.setState({ scope: { ...this.state.scope, [id]: key }, hover: null });
+  setScope = (id, key) => { if (this.state.panel) this.closePanel(); this.setState({ scope: { ...this.state.scope, [id]: key }, hover: null }); };
   scopeCut(id, n, defs) {
     const avail = defs.filter(d => d.keep == null || d.keep < n);
     const cur = this.state.scope[id];
@@ -563,13 +751,14 @@ class Component extends DCLogic {
       // pooled monthly insight series through the engine: null months stay
       // gaps, inBandMin weights size the dots, below-floor points go hollow
       // and leave the line (insight-metrics D10 + chart-engine D4)
-      const insightMonthly = (chartId, monthly, valKey, fmtVal, color, policy, name) => {
+      const insightMonthly = (chartId, drillKind, monthly, valKey, fmtVal, color, policy, name) => {
         const cut = this.scopeCut(chartId, monthly.length, this.MONTH_SCOPES);
         const rows = monthly.slice(-cut.keep);
         const vals = rows.map(m => m[valKey]);
         const weights = rows.map(m => m.inBandMin);
         const dates = rows.map(m => monthKeyDate(m.month));
         const hp = [];
+        const drill = [];   // aligned with hp (chart-drill D1): pin → drill
         rows.forEach((m, i) => {
           if (m[valKey] == null) return;
           hp.push({ i, aria: M3(dates[i]) + ', ' + fmtVal(m[valKey]) + ', ' + m.inBandMin + ' minutes in band',
@@ -578,6 +767,8 @@ class Component extends DCLogic {
               { t: fmtVal(m[valKey]), em: true },
               { t: m.inBandMin + ' min in band', em: false }
             ] });
+          drill.push({ label: 'view evidence →',
+            action: () => this.openInsightPanel(chartId, drillKind, m, M3(dates[i])) });
         });
         const valid = monthly.map(m => m[valKey]).filter(v => v != null);
         return {
@@ -587,21 +778,22 @@ class Component extends DCLogic {
           lastV: valid.length ? valid[valid.length - 1] : null,
           last: valid.length ? fmtVal(valid[valid.length - 1]) : '—',
           chart: this.engineChart(chartId, {
-            ariaLabel: name + ', monthly, dot size showing minutes of in-band evidence; gaps are months without enough. Arrow keys to inspect.',
+            ariaLabel: name + ', monthly, dot size showing minutes of in-band evidence; gaps are months without enough. Arrow keys to inspect, Enter on a pinned month to view its evidence.',
             height: '130px', frame: { w: 600, h: 150 },
             x: { kind: 'time', dates },
             y: { policy },
             series: [{ key: 'v', name, color, values: vals, marks: ['line', 'dots'], weights }],
-            hoverPoints: hp
+            hoverPoints: hp,
+            drill
           }).chart
         };
       };
-      eff = insightMonthly('insEff', INS.efficiency.monthly, 'paceSecPerKm',
+      eff = insightMonthly('insEff', 'eff', INS.efficiency.monthly, 'paceSecPerKm',
         (v) => this.fmtPace(v) + ' /km', 'var(--series2)', cc ? cc.POLICIES.efficiency : {}, 'Pace at reference HR');
       eff.bandLabel = INS.efficiency.refHrBand[0] + '–' + INS.efficiency.refHrBand[1] + ' bpm';
       eff.delta = (eff.firstV != null && eff.lastV != null && eff.firstV !== eff.lastV)
         ? ((eff.lastV < eff.firstV ? '−' : '+') + this.fmtPace(Math.abs(eff.firstV - eff.lastV)) + ' /km all-time') : '';
-      cadRef = insightMonthly('insCad', INS.cadence.monthly, 'spm',
+      cadRef = insightMonthly('insCad', 'cad', INS.cadence.monthly, 'spm',
         (v) => v + ' spm', 'var(--series1)', cc ? cc.POLICIES.cadenceAtRefPace : {}, 'Cadence at reference pace');
       cadRef.bandLabel = this.fmtPace(INS.cadence.refPaceBand[0]) + '–' + this.fmtPace(INS.cadence.refPaceBand[1]) + ' /km';
       cadRef.delta = (cadRef.firstV != null && cadRef.lastV != null && cadRef.firstV !== cadRef.lastV)
@@ -691,14 +883,25 @@ class Component extends DCLogic {
           });
           return { i, aria: M[i] + ' — ' + ariaParts.join('; '), lines, dots: [] };
         });
+        // drill (chart-drill D7): a YoY month drills to ALL of its runs; the
+        // affordance names its target — the latest year with runs that month
+        const yoyDrill = Array.from({ length: 12 }, (_, i) => {
+          const m = i + 1;
+          const withRuns = years.filter((y) => { const e = byYear[y][m]; return e && e.runs > 0; });
+          if (!withRuns.length) return null;
+          const y = withRuns[withRuns.length - 1];
+          return { label: 'view ' + M[i] + ' ' + y + ' →',
+            action: () => this.openYoyPanel(y, m, byYear[y][m], M[i] + ' ' + y) };
+        });
         yoy = {
           chart: this.engineChart('yoy', {
-            ariaLabel: 'Year over year monthly volume, ' + years.join(' vs ') + ', on one zero-anchored scale. Arrow keys to inspect months.',
+            ariaLabel: 'Year over year monthly volume, ' + years.join(' vs ') + ', on one zero-anchored scale. Arrow keys to inspect months, Enter on a pinned month to view its runs.',
             height: '150px', frame: { w: 600, h: 150 },
             x: { kind: 'band', labels: M },
             y: { policy: cc ? cc.POLICIES.yoy : {}, label: 'km' },
             series: yoySeries,
-            hoverPoints: yoyHp
+            hoverPoints: yoyHp,
+            drill: yoyDrill
           }).chart
         };
       }
@@ -717,6 +920,14 @@ class Component extends DCLogic {
     }) : { label: '', title: '', dotStyle: '', dateLabel: this.mDate(D.today) };
     const sync = { onClick: this.syncNow, label: pill.label, title: pill.title, dotStyle: pill.dotStyle };
 
+    // contribution panel: ONE panel model page-wide, rendered beneath its own
+    // chart via these per-chart 0/1 lists (chart-drill D6)
+    const panelEl = this.renderDrillPanel();
+    const pp = this.state.panel;
+    const effPanel = (panelEl && pp.chart === 'insEff') ? [{ el: panelEl }] : [];
+    const cadPanel = (panelEl && pp.chart === 'insCad') ? [{ el: panelEl }] : [];
+    const yoyPanel = (panelEl && pp.chart === 'yoy') ? [{ el: panelEl }] : [];
+
     return {
       rootStyle, themes, nav, initial: D.profile.name[0],
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
@@ -725,6 +936,7 @@ class Component extends DCLogic {
       race, vol, vo2, pace, fit, form: formObj, cad,
       hasInsights, eff, cadRef, recs, wall,
       hasYoy, yoy,
+      effPanel, cadPanel, yoyPanel,
       liveText
     };
   }

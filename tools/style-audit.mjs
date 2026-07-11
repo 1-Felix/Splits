@@ -301,6 +301,45 @@ if (mode === "baseline") {
       else if (tracks.length) console.log("ok  /compare shared x axis labelled on the stack's last track");
     }
   }
+
+  // chart-drill 6.1: the contribution panel is a registered interactive
+  // surface — a keyboard drill on the first insight chart must open a panel
+  // that spans the chart grid and never overflows the page, desktop and phone.
+  // Skips gracefully when the served data carries no insight charts or the
+  // archive is away (the panel then settles on its offline state, also valid).
+  for (const width of [1200, 390]) {
+    await page.setViewportSize({ width, height: 1600 });
+    await page.goto(PROGRESS, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#sec-charts", { timeout: 15000 });
+    // the insight charts mount only after the data module resolves — wait for
+    // them, and only a real absence (pre-insights data) skips
+    const eff = await page.waitForSelector('svg[aria-label^="Pace at reference HR"]', { timeout: 15000 }).catch(() => null);
+    if (!eff) { console.log(`     ${width} /progress drill panel skipped (no insight charts in the served data)`); continue; }
+    await eff.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    const settled = await page.waitForFunction(() => {
+      const p = document.querySelector("#drill-panel");
+      return p && (p.querySelectorAll("a.drill-run").length > 0
+        || p.innerText.includes("Archive offline")
+        || p.innerText.includes("No run put time"));
+    }, null, { timeout: 15000 }).catch(() => null);
+    if (!settled) { console.log(`FAIL ${width} /progress drill panel did not open on keyboard drill`); code = 1; continue; }
+    const m = await page.evaluate(() => {
+      const p = document.querySelector("#drill-panel");
+      const g = document.querySelector("#sec-charts");
+      return {
+        panelW: p.getBoundingClientRect().width,
+        gridW: g ? g.getBoundingClientRect().width : 0,
+        scrollW: document.documentElement.scrollWidth,
+        focusInPanel: p.contains(document.activeElement),
+      };
+    });
+    const spanOk = m.panelW >= m.gridW * 0.9;
+    const overflowOk = m.scrollW <= width + 1;
+    if (!spanOk || !overflowOk || !m.focusInPanel) code = 1;
+    console.log(`${spanOk && overflowOk && m.focusInPanel ? "ok " : "FAIL"} ${width} /progress drill panel spans the grid (${Math.round(m.panelW)}/${Math.round(m.gridW)}px), focus inside=${m.focusInPanel}, no overflow (scrollWidth=${m.scrollW})`);
+  }
   console.log(code ? "LAYOUT: FAIL" : "LAYOUT: ALL PASS");
 }
 

@@ -23,6 +23,27 @@ export function renderChart(spec, React) {
   const h = React.createElement;
   const { frame, plot, hover } = spec;
   const W = frame.w, H = frame.h;
+
+  // drill key ladder (chart-drill D1) — wrapped ONLY when the chart declared a
+  // descriptor, so every other chart keeps its page handler byte-identical.
+  // Enter on a pinned drillable point invokes the action; Escape steps
+  // drilled → pinned before the page's Escape dismisses the pin. The engine
+  // never fetches or navigates — the action is the chart's.
+  const onChartKey = hover.drillDeclared
+    ? (e) => {
+        if (e.key === "Escape" && hover.drilled) {
+          if (e.preventDefault) e.preventDefault();
+          if (hover.onDrillExit) hover.onDrillExit();
+          return;
+        }
+        if (e.key === "Enter" && hover.pinned && hover.drill) {
+          if (e.preventDefault) e.preventDefault();
+          hover.drill.action();
+          return;
+        }
+        if (hover.onKey) hover.onKey(e);
+      }
+    : hover.onKey;
   const px = (v) => +(v / W * 100).toFixed(3) + "%";
   const py = (v) => +(v / H * 100).toFixed(3) + "%";
   const svgKids = [];
@@ -193,7 +214,7 @@ export function renderChart(spec, React) {
     role: spec.a11y.role,
     "aria-label": spec.a11y.label,
     tabIndex: spec.a11y.keyboard ? 0 : undefined,
-    onKeyDown: hover.onKey,
+    onKeyDown: onChartKey,
     onMouseLeave: hover.onLeave,
     // continuous crosshair (run-detail): normalise the pointer to viewBox x
     // and hand it to the page, which bisects via chart-core's crosshairAt
@@ -218,6 +239,9 @@ export function renderChart(spec, React) {
     : null;
 
   // ── floating card (placement computed by chart-core via cardPlace) ──
+  // A pinned card with a drill becomes the second activation target: clicking
+  // it invokes the action (stopPropagation so the page's dismiss-on-click
+  // never races the drill), and the affordance row renders visibly distinct.
   let card = null;
   if (hover.card) {
     const c = hover.card;
@@ -225,13 +249,18 @@ export function renderChart(spec, React) {
     const ty = c.place === "above" ? "calc(-100% - 9px)" : "9px";
     card = h("div", {
       key: "card", "data-card": hover.id, className: "pop",
+      onClick: hover.drill ? (e) => { if (e.stopPropagation) e.stopPropagation(); hover.drill.action(); } : undefined,
       style: {
         position: "absolute", left: c.leftPct + "%", top: c.topPct + "%",
         transform: `translate(${tx}, ${ty})`, zIndex: 6,
+        cursor: hover.drill ? "pointer" : undefined,
       },
     }, ...c.rows.map((r, ri) => h("div", {
       key: "r" + ri,
-      style: { color: r.em ? "var(--ink)" : "var(--sub)", fontWeight: r.em ? "800" : "600", fontFamily: "'JetBrains Mono',monospace" },
+      style: r.drill
+        ? { color: "var(--accent)", fontWeight: "800", fontFamily: "'JetBrains Mono',monospace",
+            marginTop: "4px", paddingTop: "4px", borderTop: "1px solid var(--line)", whiteSpace: "nowrap" }
+        : { color: r.em ? "var(--ink)" : "var(--sub)", fontWeight: r.em ? "800" : "600", fontFamily: "'JetBrains Mono',monospace" },
     }, r.t)));
   }
 

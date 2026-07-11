@@ -335,6 +335,10 @@
     <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
       <div style="width:{{ heat.w }}px">{{ heat.chart }}</div>
     </div>
+    <!-- day-cell drill (chart-drill D9): chooser / offline note, inline -->
+    <sc-for list="{{ heat.drill }}" as="hd" hint-placeholder-count="0">
+      <div>{{ hd.el }}</div>
+    </sc-for>
   </div>
 
   <!-- ===== RECENT + ADJUSTMENTS ===== -->
@@ -412,7 +416,7 @@
 class Component extends DCLogic {
   // theme, registry, sync machine, greeting and nav all live in topbar.js
   // (shared across pages, design D8); this component only holds the state.
-  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, expandedRun: null, expandedDay: null, selectedWeek: null, hover: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, expandedRun: null, expandedDay: null, selectedWeek: null, hover: null, heatDrill: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false };
 
   tb() { return window.SplitsTopbar; }
 
@@ -432,7 +436,73 @@ class Component extends DCLogic {
   hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
   leaveChart = (chart) => { const h = this.state.hover; if (h && !h.pinned && h.chart === chart) this.setState({ hover: null }); };
   pinPoint = (chart, i, e) => { if (e && e.stopPropagation) e.stopPropagation(); const h = this.state.hover; if (h && h.pinned && h.chart === chart && h.i === i) { this.setState({ hover: null }); return; } this.setState({ hover: { chart, i, pinned: true } }); };
-  dismissHover = () => { if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null }); };
+  dismissHover = () => {
+    if (this.state.heatDrill) this.closeHeatDrill();
+    if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null });
+  };
+
+  // ---- heatmap day-cell drill (chart-drill D9): lazy lookup on activation ----
+  // The cockpit's DISPLAY never needs the API; this fetch happens only when a
+  // pinned day is activated. One archived run navigates straight to its page,
+  // several render a minimal chooser under the heatmap, an unreachable archive
+  // renders an inline note — the cell and the page stay untouched throughout.
+  heatLookup = (i, dateISO, label) => {
+    const seq = this._heatSeq = (this._heatSeq || 0) + 1;
+    this.setState({ heatDrill: { i, date: dateISO, label, state: 'loading', runs: [] } });
+    const settle = (patch) => {
+      const cur = this.state.heatDrill;
+      if (seq !== this._heatSeq || !cur || cur.i !== i) return; // superseded
+      this.setState({ heatDrill: { ...cur, ...patch } });
+    };
+    fetch('./api/archive/activities?type=running&from=' + dateISO + '&to=' + dateISO)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((j) => {
+        const runs = j.activities || [];
+        if (runs.length === 1) { window.location.href = './run/' + runs[0].activityId; return; }
+        settle({ state: 'chooser', runs });
+      })
+      .catch(() => settle({ state: 'offline' }));
+  };
+  closeHeatDrill = () => {
+    if (!this.state.heatDrill) return;
+    this._heatSeq = (this._heatSeq || 0) + 1;
+    this.setState({ heatDrill: null });
+  };
+  // The chooser / offline strip under the heatmap — a 0/1 list of { el } the
+  // template drives with sc-for, the element built like the charts are.
+  renderHeatDrill() {
+    const hd = this.state.heatDrill;
+    const R = window.React;
+    if (!hd || !R) return [];
+    const h = R.createElement;
+    const mono = "'JetBrains Mono',monospace";
+    let body;
+    if (hd.state === 'loading') {
+      body = h('span', { style: { color: 'var(--sub)', fontWeight: 600 } }, 'looking up ' + hd.label + '…');
+    } else if (hd.state === 'offline') {
+      body = h('span', { style: { color: 'var(--warn)', fontWeight: 700 } },
+        'Archive offline — ' + hd.label + '’s run can’t be looked up right now; the heatmap is unaffected.');
+    } else if (!(hd.runs || []).length) {
+      body = h('span', { style: { color: 'var(--sub)', fontWeight: 600 } },
+        hd.label + ' — no archived running activity for this day.');
+    } else {
+      body = h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--sp-3)' } },
+        h('span', { key: 'l', style: { color: 'var(--sub)', fontWeight: 700 } }, hd.label + ' — ' + hd.runs.length + ' runs:'),
+        ...hd.runs.map((r) => h('a', {
+          key: r.activityId, className: 'heat-run', href: './run/' + r.activityId,
+          style: { color: 'var(--ink)', fontWeight: 700, textDecoration: 'none', border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', padding: 'var(--sp-1) var(--sp-3)', background: 'var(--panel2)' } },
+          (r.name || 'Run') + ' ', h('span', { key: 'km', style: { fontFamily: mono, color: 'var(--sub)', fontWeight: 600 } }, ((r.distanceM || 0) / 1000).toFixed(1) + ' km'))));
+    }
+    const el = h('div', {
+      className: 'heat-drill', role: 'status',
+      onClick: (e) => { if (e.stopPropagation) e.stopPropagation(); },
+      style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sp-3)', marginTop: 'var(--sp-3)', paddingTop: 'var(--sp-3)', borderTop: '1px solid var(--line)', fontSize: 'var(--fs-sm)' },
+    },
+      body,
+      h('button', { key: 'x', 'aria-label': 'Dismiss the day lookup', onClick: () => this.closeHeatDrill(),
+        style: { border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', background: 'transparent', color: 'var(--sub)', width: '24px', height: '24px', cursor: 'pointer', fontFamily: 'inherit', flex: 'none' } }, '✕'));
+    return [{ el }];
+  }
   chartKey = (chart, n, e) => {
     const k = e.key; const h = this.state.hover;
     const cur = (h && h.chart === chart) ? h.i : -1;
@@ -849,7 +919,7 @@ class Component extends DCLogic {
     // arrow-key navigation stays this page's heatKey)
     const km = D.heatmapKm; const start = new Date(D.today); start.setDate(start.getDate()-(km.length-1));
     const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const cells=[]; const heatHp=[]; const months=[]; let col=0, lastMonth=-1; const CELL=13, TOP=14;
+    const cells=[]; const heatHp=[]; const heatDrillArr=[]; const months=[]; let col=0, lastMonth=-1; const CELL=13, TOP=14;
     const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     const hh = this.state.hover;
     const heatIdx = (hh && hh.chart === 'heat') ? hh.i : null;
@@ -857,7 +927,8 @@ class Component extends DCLogic {
       if(i>0 && row===0) col++;
       const v=km[i]; const lvl = v===0?0 : v<6?1 : v<9?2 : v<14?3 : 4;
       const cx = col*CELL, cy = TOP+row*CELL;
-      const aria = WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate()+', '+(v>0?v.toFixed(1)+' km':'rest');
+      const dayLabel = WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate();
+      const aria = dayLabel+', '+(v>0?v.toFixed(1)+' km':'rest');
       cells.push({ x:cx, y:cy, w:11, h:11, rx:2.5, fill:'var(--hm'+lvl+')',
         stroke: heatIdx === i ? 'var(--ink)' : undefined,
         onEnter: () => this.hoverPoint('heat', i),
@@ -865,29 +936,37 @@ class Component extends DCLogic {
         aria });
       heatHp.push({ i, x: cx + 5.5, y: cy + 5.5, dots: [], aria,
         lines: [
-          { t: WD[dow]+' '+M[dt.getMonth()]+' '+dt.getDate(), em: false },
+          { t: dayLabel, em: false },
           { t: v>0 ? v.toFixed(1)+' km' : 'rest', em: true }
         ] });
+      // drill (chart-drill D9): only days with distance resolve — lazily, on
+      // activation; a rest day declares nothing and stays inert
+      heatDrillArr.push(v > 0
+        ? { label: 'view this day →', action: ((iso, lbl, idx) => () => this.heatLookup(idx, iso, lbl))(this.localISO(dt), dayLabel, i) }
+        : null);
       if(dt.getMonth()!==lastMonth && row<=1){ lastMonth=dt.getMonth(); months.push({ x:col*CELL, y:1, label:M[dt.getMonth()] }); }
     }
     const heatW=(col+1)*CELL+4, heatH=TOP+7*CELL;
-    const heat = { w:heatW, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length, chart:null };
+    const heat = { w:heatW, totalKm:Math.round(km.reduce((a,b)=>a+b,0)), runDays:km.filter(v=>v>0).length, chart:null, drill:[] };
     if (cc && cv && window.React) {
       const heatSpec = cc.buildSpec({
         id: 'heat', kind: 'cells', hoverMode: 'cells',
-        ariaLabel: 'Running heatmap, 365 days. Arrow keys by day, up and down by week.',
+        ariaLabel: 'Running heatmap, 365 days. Arrow keys by day, up and down by week; Enter on a pinned run day opens it.',
         height: heatH + 'px', frame: { w: heatW, h: heatH, pad: { l: 0, r: 0, t: 0, b: 0 } },
         x: {}, y: {}, series: [],
         extraLayers: [{ kind: 'labels', labels: months }, { kind: 'cells', cells }],
         hoverPoints: heatHp,
+        drill: heatDrillArr,
         hover: { index: heatIdx, pinned: !!(hh && hh.pinned),
-                 onKey: (e) => this.heatKey(km.length, e), onLeave: () => this.leaveChart('heat') }
+                 onKey: (e) => this.heatKey(km.length, e), onLeave: () => this.leaveChart('heat'),
+                 drilled: !!this.state.heatDrill, onDrillExit: () => this.closeHeatDrill() }
       });
       this._specs.heat = heatSpec;
       heat.chart = cv.renderChart(heatSpec, window.React);
     } else if (window.React) {
       heat.chart = window.React.createElement('div', { style: { height: heatH + 'px' } });
     }
+    heat.drill = this.renderHeatDrill();
 
     // recent runs
     const rdot = { 'Tempo Run':'var(--warn)','Long Run':'var(--accent)','Recovery':'var(--accent2)' };
@@ -954,6 +1033,9 @@ class Component extends DCLogic {
           const riegel = weekly.map(wk => wk.riegelSec != null ? wk.riegelSec : null);
           const garmin = weekly.map(wk => wk.garminSec != null ? wk.garminSec : null);
           const hp = [];
+          const drill = [];   // aligned with hp (chart-drill D8): a week whose
+          // Riegel point carries its anchorId links straight to that run —
+          // static data, no API; null weeks and pre-anchor files declare nothing
           weekly.forEach((wk, i) => {
             if (wk.riegelSec == null && wk.garminSec == null) return;
             const lines = [{ t: wk.week, em: false }];
@@ -969,11 +1051,14 @@ class Component extends DCLogic {
               ariaBits.push('model ' + this.fmtHMS(wk.garminSec));
             }
             hp.push({ i, aria: ariaBits.join(', '), lines });
+            drill.push((wk.riegelSec != null && wk.anchorId != null)
+              ? { label: 'view anchor run →', action: () => { window.location.href = './run/' + wk.anchorId; } }
+              : null);
           });
           const h = this.state.hover;
           const spec = cc.buildSpec({
             id: 'traj',
-            ariaLabel: 'Race trajectory: demonstrated and model-predicted half-marathon time by week against the ' + this.fmtHMS(T.goalSec) + ' goal. Arrow keys to inspect.',
+            ariaLabel: 'Race trajectory: demonstrated and model-predicted half-marathon time by week against the ' + this.fmtHMS(T.goalSec) + ' goal. Arrow keys to inspect, Enter on a pinned week to open its anchoring run.',
             height: '170px', frame: { w: 600, h: 170 },
             x: { kind: 'time', dates },
             y: { policy: cc.POLICIES.trajectory, include: [T.goalSec] },
@@ -984,6 +1069,7 @@ class Component extends DCLogic {
             ribbon: ['riegel', 'garmin'],
             rules: [{ v: T.goalSec, label: 'goal ' + this.fmtHMS(T.goalSec) }],
             hoverPoints: hp,
+            drill,
             hover: {
               index: (h && h.chart === 'traj') ? h.i : null, pinned: !!(h && h.pinned),
               onEnter: (i) => this.hoverPoint('traj', i), onPin: (i, e) => this.pinPoint('traj', i, e),

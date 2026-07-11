@@ -16,6 +16,8 @@ process.env.PORT = process.env.AUDIT_PORT || "8123";
 const PORT = process.env.PORT;
 const PAGE = `http://localhost:${PORT}/Running%20Dashboard.dc.html`;
 const PROGRESS = `http://localhost:${PORT}/progress`;
+const ARCHIVE = `http://localhost:${PORT}/archive`;
+const COMPARE = `http://localhost:${PORT}/compare`;
 const BASELINE = new URL("./style-baseline.json", import.meta.url);
 
 await import("../serve.mjs"); // side-effect: server.listen(PORT)
@@ -61,6 +63,26 @@ const TOPBAR_PARITY = {
   "header.topbar nav": ["display", "gap", "padding", "border-top-left-radius", "font-size"],
   "header.topbar nav a": ["font-size", "font-weight", "padding", "text-decoration-line"],
 };
+
+// /archive and /compare are deep views (archive-browser): they render either
+// their data or an honest offline/prompt state depending on whether an archive
+// db is reachable in the audit environment (point SPLITS_ARCHIVE_DIR at a
+// local copy for the full assertions). Two streamed runs make /compare render
+// its track stack; when the archive is away the audit still asserts the
+// offline chrome at every width.
+async function resolveCompareIds() {
+  try {
+    const r = await fetch(`http://localhost:${PORT}/api/archive/activities?type=running&limit=25`);
+    if (!r.ok) return null;
+    const ids = [];
+    for (const a of (await r.json()).activities) {
+      const s = await fetch(`http://localhost:${PORT}/api/archive/activities/${a.activityId}/streams`);
+      if (s.ok) ids.push(a.activityId);
+      if (ids.length === 2) return ids;
+    }
+  } catch { /* archive away */ }
+  return null;
+}
 
 function trackCount(v) {
   if (!v || v === "none") return 0;
@@ -164,23 +186,44 @@ if (mode === "baseline") {
     const noOverflow = scrollW <= width + 1;
     if (!noOverflow) code = 1;
     console.log(`${noOverflow ? "ok " : "FAIL"} ${width} /progress no horizontal overflow (scrollWidth=${scrollW})`);
+
+    // /archive and /compare (archive-browser 2.3): whatever state the archive
+    // is in — rows, offline, or the compare prompt — the page never overflows
+    const compareIds = await resolveCompareIds();
+    const deepViews = [
+      ["/archive", ARCHIVE, () => document.querySelector(".arch-row") || /Archive offline|No archived activity/.test(document.body.innerText)],
+      ["/compare", compareIds ? `${COMPARE}?ids=${compareIds.join(",")}` : COMPARE,
+        () => document.querySelector("svg[data-chart='trend']") || /Archive offline|Nothing to compare/.test(document.body.innerText)],
+    ];
+    for (const [pgName, url, settled] of deepViews) {
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("header.topbar", { timeout: 15000 });
+      await page.waitForFunction(settled, null, { timeout: 15000 }).catch(() => {});
+      const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+      const ok = sw <= width + 1;
+      if (!ok) code = 1;
+      console.log(`${ok ? "ok " : "FAIL"} ${width} ${pgName} no horizontal overflow (scrollWidth=${sw})`);
+    }
   }
 
-  // topbar computed-style parity between the two pages (desktop)
+  // topbar computed-style parity across every page carrying the shared bar
+  // (markup is duplicated per page — the computed styles must not drift)
   await page.setViewportSize({ width: 1200, height: 1600 });
   await page.goto(PAGE, { waitUntil: "networkidle" });
   await page.waitForSelector("header.topbar");
   const cockpitBar = {};
   for (const [sel, props] of Object.entries(TOPBAR_PARITY)) cockpitBar[sel] = await read(page, sel, props);
-  await page.goto(PROGRESS, { waitUntil: "networkidle" });
-  await page.waitForSelector("header.topbar");
-  for (const [sel, props] of Object.entries(TOPBAR_PARITY)) {
-    const here = await read(page, sel, props);
-    for (const p of props) {
-      const a = cockpitBar[sel]?.[p], b = here?.[p];
-      const ok = a === b;
-      if (!ok) code = 1;
-      console.log(`${ok ? "ok " : "FAIL"} topbar parity ${sel} { ${p}: cockpit=${a} progress=${b} }`);
+  for (const [pgName, url] of [["progress", PROGRESS], ["archive", ARCHIVE], ["compare", COMPARE]]) {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("header.topbar", { timeout: 15000 });
+    for (const [sel, props] of Object.entries(TOPBAR_PARITY)) {
+      const here = await read(page, sel, props);
+      for (const p of props) {
+        const a = cockpitBar[sel]?.[p], b = here?.[p];
+        const ok = a === b;
+        if (!ok) code = 1;
+        console.log(`${ok ? "ok " : "FAIL"} topbar parity ${sel} { ${p}: cockpit=${a} ${pgName}=${b} }`);
+      }
     }
   }
 
@@ -215,6 +258,47 @@ if (mode === "baseline") {
       const gapOk = c.declaredPaths === c.domPaths;
       if (!axisOk || !legendOk || !gapOk) code = 1;
       console.log(`${axisOk && legendOk && gapOk ? "ok " : "FAIL"} chart ${pgName} "${c.label}" yticks=${c.yticks} xticks=${c.xticks} series=${c.series} legend=${c.legend} paths=${c.domPaths}/${c.declaredPaths}`);
+    }
+  }
+  // /compare chart grammar (archive-browser 6.1): the comparison renders a
+  // TRACK STACK — x tick labels live on the LAST track only (multiTrackSpec),
+  // so the standalone-chart rule above doesn't apply verbatim. Every track
+  // still owes y ticks, a legend exactly when it overlays >= 2 runs, and an
+  // honest data-line-paths stamp. Runs only when the audit's archive serves
+  // two streamed runs; otherwise the offline chrome was asserted above.
+  {
+    const ids = await resolveCompareIds();
+    if (!ids) {
+      console.log("     /compare charts skipped (no reachable archive with two streamed runs — point SPLITS_ARCHIVE_DIR at a local copy)");
+    } else {
+      await page.setViewportSize({ width: 1200, height: 1600 });
+      await page.goto(`${COMPARE}?ids=${ids.join(",")}`, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => document.querySelectorAll("svg[data-chart='trend']").length >= 2, null, { timeout: 20000 });
+      const tracks = await page.evaluate(() =>
+        [...document.querySelectorAll("svg[data-chart='trend']")].map((svg) => {
+          const frame = svg.closest(".chart-frame");
+          return {
+            label: (svg.getAttribute("aria-label") || "").slice(0, 44),
+            yticks: frame ? frame.querySelectorAll(".chart-ytick").length : 0,
+            xticks: frame ? frame.querySelectorAll(".chart-xtick").length : 0,
+            legend: frame ? frame.querySelectorAll(".chart-legend-item").length : 0,
+            series: Number(svg.getAttribute("data-series") || 0),
+            declaredPaths: Number(svg.getAttribute("data-line-paths") || 0),
+            domPaths: svg.querySelectorAll("path[data-series-line]").length,
+          };
+        }));
+      if (!tracks.length) { console.log("FAIL /compare: no tracks found"); code = 1; }
+      let sawXTicks = false;
+      for (const c of tracks) {
+        if (c.xticks > 0) sawXTicks = true;
+        const yOk = c.yticks >= 2;
+        const legendOk = c.series >= 2 ? c.legend >= 2 : c.legend === 0;
+        const gapOk = c.declaredPaths === c.domPaths;
+        if (!yOk || !legendOk || !gapOk) code = 1;
+        console.log(`${yOk && legendOk && gapOk ? "ok " : "FAIL"} chart /compare "${c.label}" yticks=${c.yticks} series=${c.series} legend=${c.legend} paths=${c.domPaths}/${c.declaredPaths}`);
+      }
+      if (tracks.length && !sawXTicks) { console.log("FAIL /compare: the track stack carries no x axis labels at all"); code = 1; }
+      else if (tracks.length) console.log("ok  /compare shared x axis labelled on the stack's last track");
     }
   }
   console.log(code ? "LAYOUT: FAIL" : "LAYOUT: ALL PASS");

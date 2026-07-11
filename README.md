@@ -13,6 +13,8 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `Running Dashboard.dc.html` | **The cockpit** (served at `/`). Today / this week / this block: hero, KPIs, plan, heatmap, recent runs. Renders complete from static files alone — no API. |
 | `progress.dc.html` | **The progress page** (served at `/progress`). The long game: weekly volume, the 30-month chart grid, the records wall (all-time / 90 d / by year — records click through to `/run/:id`), and year-over-year volume. |
 | `run.dc.html` | **The run page** (served at `/run/:id` — the one parameterised route). Full-resolution sample streams as synchronised tracks under one crosshair, the GPS trace as a projected polyline, splits vs the run's own median, best efforts, and planned-vs-actual from the compliance join. |
+| `archive.dc.html` | **The archive browser** (served at `/archive`). Every archived activity, newest-first: filter by type / year / name search (filters mirror into the URL, so a filtered view is a link), load-more pagination with an honest count, run rows click through to `/run/:id`, and a selection tray that hands 2–4 runs to `/compare`. |
+| `compare.dc.html` | **The run comparison** (served at `/compare?ids=…` — driven entirely by the URL, so a comparison is shareable). Summary side by side with best-per-row marks, splits aligned by kilometre (a longer run's tail renders alone), and per-measure stream tracks overlaying up to four runs on one shared distance axis, one scale per measure, one crosshair — a finished run reads as *ended*, never as a value. |
 | `topbar.js` | **Shared topbar behavior** — theme registry + `localStorage` persistence, the sync-pill state machine, greeting, and the page nav model. Markup is duplicated per page; behavior lives here once. |
 | `dashboard.css` | The dashboard's visual language — design tokens, semantic component classes, and the responsive `@media` layer. |
 | `support.js` | The `dc-runtime` that renders the `.dc.html` — a **generated** artifact (never hand-edited). Its CDN React loader is short-circuited: each page pre-seeds `window.React` / `window.ReactDOM` from `vendor/`, so it mounts the component with no network. |
@@ -27,7 +29,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
-| `serve.mjs` | Zero-dependency web server: serves the pages behind clean routes (`/`, `/progress`), serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status` + the read-only archive API (`GET /api/archive/…`, via the Node 24 built-in `node:sqlite`), and runs the boot + nightly sync. |
+| `serve.mjs` | Zero-dependency web server: serves the pages behind clean routes (`/`, `/progress`, `/archive`, `/compare`), serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status` + the read-only archive API (`GET /api/archive/…`, via the Node 24 built-in `node:sqlite`), and runs the boot + nightly sync. |
 | `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
 | `.github/workflows/docker-publish.yml` | CI that builds and pushes `ghcr.io/1-felix/splits` on `main` and on version tags. |
 | `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
@@ -243,14 +245,15 @@ the folder** — don't open the file directly (a `file://` URL blocks the import
 the page falls back to built-in demo data):
 
 ```bash
-pnpm dev          # → http://localhost:8000/  (cockpit; /progress for the long game)
+pnpm dev          # → http://localhost:8000/  (cockpit; /progress for the long game; /archive to browse everything)
 # (no install needed — serve.mjs is dependency-free. PORT=3000 pnpm dev to change port.)
 ```
 
 **Node ≥ 24 expected** (declared in `package.json` engines): the archive API uses the
 built-in `node:sqlite`, stable in 24. On an older Node the server still boots and
-every page serves — only the `/api/archive/…` endpoints answer 503 (and record
-click-throughs on `/progress` show their "archive offline" state).
+every page serves — only the `/api/archive/…` endpoints answer 503 (record
+click-throughs on `/progress`, the `/archive` browser, and `/compare` all show
+their honest "archive offline" states).
 
 `support.js` pulls React from a CDN at runtime, so the first load needs network
 access. Switch visual themes with the three swatches top-right (Volt is default).
@@ -295,8 +298,9 @@ never break the telemetry sync — it degrades to a warning.
 **The archive API** (`serve.mjs`) is the browser's read-only window into it:
 
 - `GET /api/archive/activities` — archived activities from the promoted columns
-  only, filterable (`type`, `year`, `from`/`to`), paginated (`limit` ≤ 100,
-  `offset`), newest-first.
+  only, filterable (`type`, `year`, `from`/`to`, and `q` — a wildcard-safe,
+  case-insensitive name substring), paginated (`limit` ≤ 100, `offset`),
+  newest-first.
 - `GET /api/archive/activities/:id` — one activity's summary plus its stored
   distilled detail (exactly the shape recent runs use in `garmin-data.js`), its
   planned-vs-actual row joined from `plan_compliance`, and the best efforts it
@@ -311,8 +315,9 @@ returns was computed by the deterministic Python sync. It opens the database
 read-only per request and fails soft: a missing/locked database (or a Node
 without `node:sqlite`) means a 503 on these endpoints while every page and the
 rest of the API keep working. The cockpit never touches it; `/progress` needs
-it only for record click-throughs and degrades to an honest "archive offline"
-state without it.
+it only for record click-throughs; `/archive` and `/compare` are deep views
+built on it — all of them degrade to an honest "archive offline" state
+without it.
 
 **Dev against a mounted data dir:** running SQLite over an SMB/network mount is
 unsupported. If your `SPLITS_DATA_DIR` is a mount, point `SPLITS_ARCHIVE_DIR` at

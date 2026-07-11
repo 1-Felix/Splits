@@ -77,6 +77,7 @@ export function themePicker(current, pick) {
 const NAV_PAGES = [
   { key: "cockpit", label: "Cockpit", href: "./" },
   { key: "progress", label: "Progress", href: "./progress" },
+  { key: "archive", label: "Archive", href: "./archive" },
 ];
 
 export function navModel(currentPage) {

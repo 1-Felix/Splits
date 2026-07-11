@@ -32,6 +32,8 @@ const PORT = Number(process.env.PORT) || 8000;
 const PAGES = {
   "/": "/Running Dashboard.dc.html",
   "/progress": "/progress.dc.html",
+  "/archive": "/archive.dc.html",
+  "/compare": "/compare.dc.html",   // compared runs come from ?ids=… (archive-browser D1)
 };
 
 // Where personal data lives. The container sets SPLITS_DATA_DIR=/data (the
@@ -259,6 +261,13 @@ function listArchiveActivities(db, params) {
   if (from) { where.push("substr(start_time_local, 1, 10) >= ?"); args.push(from); }
   const to = params.get("to");
   if (to) { where.push("substr(start_time_local, 1, 10) <= ?"); args.push(to); }
+  // name search (archive-browser): parameterized substring match; %/_/\ in the
+  // query are escaped so they match themselves — never SQL, never wildcards
+  const q = params.get("q");
+  if (q) {
+    where.push("name LIKE ? ESCAPE '\\'");
+    args.push("%" + q.replace(/[\\%_]/g, "\\$&") + "%");
+  }
   const cond = where.length ? "WHERE " + where.join(" AND ") : "";
   const limit = Math.min(Math.max(Number(params.get("limit")) || ARCHIVE_PAGE_DEFAULT, 1), ARCHIVE_PAGE_MAX);
   const offset = Math.max(Number(params.get("offset")) || 0, 0);

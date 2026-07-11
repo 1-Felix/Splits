@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
+     ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
+     already present and never reaches for its unpkg CDN fallback. This pin is
+     load-bearing: React 19 ships no UMD build, so React cannot be pre-seeded as
+     a global — a version bump would blank the page until a bundler is adopted. -->
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./support.js"></script>
+<!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
+     before support.js mounts on DOMContentLoaded, so the persisted theme is
+     readable at component init — no default-theme flash -->
+<script type="module" src="./topbar.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<!-- Archivo + JetBrains Mono are vendored under ./vendor/fonts and declared via
+     @font-face in dashboard.css; no fonts.googleapis.com / fonts.gstatic.com
+     origin is contacted. -->
+<link rel="stylesheet" href="./dashboard.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0E0F12}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  ::-webkit-scrollbar{height:9px;width:9px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
+</style>
+</helmet>
+
+<div style="{{ rootStyle }}">
+<div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
+<div style="max-width:1100px;margin:0 auto">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:var(--sp-3)">
+      <div style="width:34px;height:34px;border-radius:var(--r-md);background:var(--accent);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <div style="width:14px;height:3px;background:#0E0F12;transform:skewX(-22deg);box-shadow:0 6px 0 #0E0F12,0 -6px 0 #0E0F12"></div>
+      </div>
+      <div style="line-height:1">
+        <div style="font-weight:900;font-size:var(--fs-xl);letter-spacing:-.04em">SPLITS</div>
+        <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
+      </div>
+      <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
+      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">Run comparison</div>
+    </div>
+    <div class="topbar-actions">
+      <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="3">
+          <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
+        </sc-for>
+      </nav>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+        </sc-for>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== NOT-READY: loading / offline / prompt / too-few ===== -->
+  <sc-for list="{{ notReady }}" as="nr" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4);border-style:dashed;border-color:{{ nr.color }}">
+      <div style="font-size:var(--fs-base);font-weight:700;color:{{ nr.color }}">{{ nr.title }}</div>
+      <div style="font-size:var(--fs-sm);color:var(--sub);font-weight:500;margin-top:var(--sp-1);line-height:1.5">{{ nr.body }}</div>
+      <sc-for list="{{ nr.toArchive }}" as="ta" hint-placeholder-count="0">
+        <a class="wk-back" style="display:inline-block;margin-top:var(--sp-3);text-decoration:none" href="./archive">Open the archive</a>
+      </sc-for>
+    </div>
+  </sc-for>
+
+  <sc-for list="{{ page }}" as="pg" hint-placeholder-count="0">
+
+  <!-- ===== WHO IS BEING COMPARED (every slot, honest per-slot state) ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head">
+      <div>
+        <div class="card-title">{{ pg.title }}</div>
+        <div class="card-sub">Runs compared by distance — same scale, same axis, one crosshair</div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:var(--sp-1);margin-top:var(--sp-3)">
+      <sc-for list="{{ pg.slots }}" as="sl" hint-placeholder-count="2">
+        <div style="display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-sm)">
+          <span style="width:10px;height:10px;border-radius:50%;background:{{ sl.dot }};flex:none"></span>
+          <span style="font-weight:700">{{ sl.name }}</span>
+          <span style="color:var(--sub);font-weight:600">{{ sl.date }}</span>
+          <sc-for list="{{ sl.note }}" as="nt" hint-placeholder-count="0">
+            <span style="color:var(--warn);font-size:var(--fs-xs);font-weight:600">{{ nt.t }}</span>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===== SUMMARY, SIDE BY SIDE ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-title" style="margin-bottom:var(--sp-3)">Summary</div>
+    <div class="cmp-summary" style="{{ pg.sumGrid }}">
+      <span></span>
+      <sc-for list="{{ pg.sumHead }}" as="hd" hint-placeholder-count="2">
+        <span style="display:flex;align-items:center;gap:var(--sp-1);font-size:var(--fs-xs);font-weight:800;min-width:0">
+          <span style="width:8px;height:8px;border-radius:50%;background:{{ hd.dot }};flex:none"></span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ hd.name }}</span>
+        </span>
+      </sc-for>
+      <sc-for list="{{ pg.sumRows }}" as="row" hint-placeholder-count="6">
+        <span style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ row.label }}</span>
+        <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="2">
+          <span class="metric" style="font-size:var(--fs-sm);color:{{ c.color }};font-weight:{{ c.weight }}">{{ c.v }}</span>
+        </sc-for>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===== STREAMS: one track per measure, every run on the same scale ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head" style="margin-bottom:var(--sp-2)">
+      <div>
+        <div class="card-title">Sample by sample</div>
+        <div class="card-sub">{{ pg.streamSub }}</div>
+      </div>
+    </div>
+    <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="0">
+      <div style="display:flex;flex-direction:column;gap:var(--sp-1);font-family:'JetBrains Mono';font-size:var(--fs-xs);font-weight:600;margin-bottom:var(--sp-2);padding:var(--sp-2) var(--sp-3);background:var(--panel2);border-radius:var(--r-md)">
+        <div style="color:var(--sub)">at {{ ro.at }}</div>
+        <sc-for list="{{ ro.runs }}" as="rr" hint-placeholder-count="2">
+          <div style="display:flex;align-items:center;gap:var(--sp-2)">
+            <span style="width:8px;height:8px;border-radius:50%;background:{{ rr.dot }};flex:none"></span>
+            <span style="color:var(--sub)">{{ rr.name }}</span>
+            <span>{{ rr.vals }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+    <sc-for list="{{ pg.noStreams }}" as="ns" hint-placeholder-count="0">
+      <div style="padding:var(--sp-4);border:1px dashed var(--line);border-radius:var(--r-md);color:var(--sub);font-size:var(--fs-sm);font-weight:600">{{ ns.t }}</div>
+    </sc-for>
+    <sc-for list="{{ pg.tracks }}" as="tk" hint-placeholder-count="0">
+      <div style="margin-top:var(--sp-1)">
+        <div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700;letter-spacing:.04em">{{ tk.label }}</div>
+        {{ tk.chart }}
+      </div>
+    </sc-for>
+    <sc-for list="{{ pg.streamNotes }}" as="sn" hint-placeholder-count="0">
+      <div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600;margin-top:var(--sp-2)">{{ sn.t }}</div>
+    </sc-for>
+  </div>
+
+  <!-- ===== SPLITS, ALIGNED BY KILOMETRE ===== -->
+  <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-title" style="margin-bottom:var(--sp-1)">Splits, kilometre by kilometre</div>
+      <div class="card-sub" style="margin-bottom:var(--sp-3)">Bar length is speed on a shared scale — the fastest split of any run is full width. A longer run's extra kilometres render alone.</div>
+      <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
+        <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="8">
+          <div class="cmp-splits-row" style="display:grid;gap:var(--sp-3);align-items:center;{{ sp.rowGrid }}">
+            <span style="color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.km }}</span>
+            <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:var(--sp-2)">
+                <div style="flex:1;height:8px;position:relative;background:var(--panel2);border-radius:2px;overflow:hidden">
+                  <div style="position:absolute;left:0;top:0;bottom:0;width:{{ c.w }}%;background:{{ c.color }};border-radius:2px"></div>
+                </div>
+                <span style="width:42px;text-align:right;font-family:'JetBrains Mono';font-size:var(--fs-xs);font-weight:600">{{ c.pace }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+      <sc-for list="{{ sp.notes }}" as="nt" hint-placeholder-count="0">
+        <div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600;margin-top:var(--sp-2)">{{ nt.t }}</div>
+      </sc-for>
+    </div>
+  </sc-for>
+
+  </sc-for>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:1600}}">
+class Component extends DCLogic {
+  // The compared runs come ENTIRELY from ?ids= (archive-browser D1): numeric
+  // guard per id, duplicates collapsed, at most four kept — a comparison is a
+  // URL you can send someone, no selection state required.
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
+            slots: [], cross: null, now: new Date() };
+
+  tb() { return window.SplitsTopbar; }
+  setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
+
+  ids() {
+    const raw = (new URLSearchParams(window.location.search).get('ids') || '').split(',');
+    const out = [];
+    for (const s of raw) {
+      const t = s.trim();
+      if (!/^\d+$/.test(t)) continue;          // non-numeric ids are dropped, never fetched
+      if (out.indexOf(t) < 0) out.push(t);     // duplicates collapsed
+    }
+    return out.slice(0, 4);                     // the palette carries series1…4 — four runs max
+  }
+
+  componentDidMount() {
+    // import() inside the dc-runtime's compiled script can resolve against a
+    // STALE base URL after a same-site navigation (Chromium quirk with
+    // dynamically-compiled code) — resolving explicitly against document.baseURI
+    // pins every module to this page's own origin.
+    const mod = (p) => import(new URL(p, document.baseURI).href);
+    mod('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
+    mod('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
+    const ids = this.ids();
+    this.setState({ slots: ids.map((id) => ({ id, runStatus: 'loading', run: null, streams: null, streamsStatus: 'loading' })) });
+    ids.forEach((id) => {
+      fetch('./api/archive/activities/' + id)
+        .then((r) => { if (!r.ok) throw new Error(r.status === 503 ? 'offline' : r.status === 404 ? 'unknown' : 'error'); return r.json(); })
+        .then((run) => this.patchSlot(id, run.type === 'running'
+          ? { runStatus: 'ready', run }
+          : { runStatus: 'notrun', run }))
+        .catch((err) => this.patchSlot(id, { runStatus: String((err && err.message) || err) }));
+      fetch('./api/archive/activities/' + id + '/streams')
+        .then((r) => { if (!r.ok) throw new Error(r.status === 503 ? 'offline' : 'none'); return r.json(); })
+        .then((s) => this.patchSlot(id, (s && s.d && s.d.length > 1) ? { streams: s, streamsStatus: 'ready' } : { streamsStatus: 'none' }))
+        .catch((err) => this.patchSlot(id, { streamsStatus: String((err && err.message) || err) }));
+    });
+  }
+  patchSlot(id, patch) {
+    this.setState({ slots: this.state.slots.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
+  }
+
+  // ---- shared crosshair over the resampled distance grid (design D7) --------
+  moveCross = (vbX) => {
+    const cc = this._cc;
+    if (!cc || !this._grid) return;
+    const c = cc.crosshairAt(this._xScale, this._grid, vbX);
+    if (c && c.i !== this.state.cross) this.setState({ cross: c.i });
+  };
+  leaveCross = () => this.setState({ cross: null });
+  crossKey = (e) => {
+    if (!this._grid) return;
+    const n = this._grid.length;
+    const step = Math.max(1, Math.round(n / 100));
+    const cur = this.state.cross == null ? 0 : this.state.cross;
+    if (e.key === 'ArrowRight') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.min(n - 1, cur + step) }); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.max(0, cur - step) }); }
+    else if (e.key === 'Escape') { this.setState({ cross: null }); }
+  };
+
+  // Nearest-sample resampling of one run's stream columns onto the shared
+  // distance grid — pure rendering geometry (no new metric): every value shown
+  // is a stored sample, null where the run has no sample near that distance
+  // (ended, or a recording gap), so segmentNulls gaps the overlay honestly.
+  resample(S, grid, tol) {
+    const pts = [];
+    for (let i = 0; i < S.d.length; i++) if (S.d[i] != null && Number.isFinite(S.d[i])) pts.push(i);
+    let j = 0;
+    const idx = grid.map((g) => {
+      while (j + 1 < pts.length && Math.abs(S.d[pts[j + 1]] - g) <= Math.abs(S.d[pts[j]] - g)) j++;
+      return Math.abs(S.d[pts[j]] - g) <= tol ? pts[j] : null;
+    });
+    const toPace = (v) => (v != null && v >= 0.6) ? Math.round(1000 / v) : null;
+    const pick = (col, map) => col ? idx.map((k) => (k == null || col[k] == null) ? null : (map ? map(col[k]) : col[k])) : null;
+    return { pace: pick(S.v, toPace), hr: pick(S.hr), cad: pick(S.cad), elev: pick(S.elev) };
+  }
+
+  fmtPace(sec){ if (sec == null) return '—'; const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
+  fmtHMS(sec){ if (sec == null) return '—'; sec=Math.round(sec); const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60; return h ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0'); }
+  mDate(iso){ const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const d=new Date(iso); return M[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear(); }
+
+  renderVals() {
+    const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
+    for (const k in tv) rootStyle['--' + k] = tv[k];
+    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
+    const nav = this.tb() ? this.tb().navModel('compare') : [];
+    const cc = this._cc, cv = this._cv, R = window.React;
+
+    let notReady = [];
+    let page = [];
+    let liveText = '';
+    const slots = this.state.slots;
+    const ids = this.ids();
+
+    const runsSettled = slots.length > 0 && slots.every((s) => s.runStatus !== 'loading');
+    const ready = slots.filter((s) => s.runStatus === 'ready');
+
+    if (ids.length < 2) {
+      notReady = [{ title: 'Nothing to compare yet', body: 'A comparison needs two to four archived runs in the URL (?ids=…). Pick them in the archive — select runs with the compare toggle and hit Compare.', color: 'var(--sub)', toArchive: [{}] }];
+    } else if (!runsSettled || !cc || !cv || !R) {
+      notReady = [{ title: 'Loading runs…', body: 'Fetching ' + ids.length + ' runs from the archive.', color: 'var(--sub)', toArchive: [] }];
+    } else if (ready.length < 2 && slots.some((s) => s.runStatus === 'offline')) {
+      notReady = [{ title: 'Archive offline', body: 'These runs live in the activity archive, which isn’t reachable right now. The rest of SPLITS keeps working — try again once the archive volume is back.', color: 'var(--warn)', toArchive: [] }];
+    } else if (ready.length < 2) {
+      notReady = [{ title: 'Not enough runs to compare', body: 'Only ' + ready.length + ' of these ids resolved to an archived run — a comparison needs at least two. Pick runs in the archive.', color: 'var(--warn)', toArchive: [{}] }];
+    } else {
+      // ---- the comparison renders over the runs that actually resolved ----
+      const pg = {};
+      // one color per URL slot, fixed for the whole page (legend, summary,
+      // splits, tracks and readout all agree)
+      const color = new Map(slots.map((s, i) => [s.id, 'var(--series' + (i + 1) + ')']));
+      const label = (s) => (s.run && s.run.name) ? s.run.name : 'Run ' + s.id;
+      const shortDate = (s) => (s.run && s.run.startTimeLocal) ? this.mDate(s.run.startTimeLocal.slice(0, 10)) : '';
+
+      pg.title = 'Comparing ' + ready.length + ' runs';
+      pg.slots = slots.map((s) => ({
+        dot: s.runStatus === 'ready' ? color.get(s.id) : 'var(--line)',
+        name: s.runStatus === 'ready' ? label(s) : 'id ' + s.id,
+        date: s.runStatus === 'ready' ? shortDate(s) : '',
+        note: s.runStatus === 'ready' ? []
+          : s.runStatus === 'unknown' ? [{ t: 'no archived run has this id — skipped' }]
+          : s.runStatus === 'notrun' ? [{ t: 'not a run — only runs compare' }]
+          : [{ t: 'could not be loaded — skipped' }],
+      }));
+
+      // ---- summary grid: promoted fields only, best per row marked ----
+      const km = (s) => s.run.distanceM ? s.run.distanceM / 1000 : null;
+      const paceOf = (s) => { const k = km(s); return k > 0 && s.run.durationS ? Math.round(s.run.durationS / k) : null; };
+      pg.sumGrid = 'grid-template-columns:minmax(76px,110px) repeat(' + ready.length + ',minmax(0,1fr))';
+      pg.sumHead = ready.map((s) => ({ dot: color.get(s.id), name: label(s) + ' · ' + shortDate(s) }));
+      const ROWS = [
+        { label: 'DISTANCE', get: (s) => km(s), fmt: (v) => v.toFixed(1) + ' km', best: 'max' },
+        { label: 'TIME', get: (s) => s.run.durationS, fmt: (v) => this.fmtHMS(v), best: 'max' },
+        { label: 'AVG PACE', get: paceOf, fmt: (v) => this.fmtPace(v) + '/km', best: 'min' },
+        { label: 'AVG HR', get: (s) => s.run.avgHr, fmt: (v) => v + ' bpm', best: 'min' },
+        { label: 'CADENCE', get: (s) => s.run.avgCadence, fmt: (v) => Math.round(v) + ' spm', best: 'max' },
+        { label: 'ELEVATION', get: (s) => s.run.elevationGainM, fmt: (v) => '+' + Math.round(v) + ' m', best: 'max' },
+      ];
+      pg.sumRows = ROWS.map((row) => {
+        const vals = ready.map(row.get);
+        const present = vals.filter((v) => v != null && Number.isFinite(v));
+        const best = present.length >= 2
+          ? (row.best === 'min' ? Math.min(...present) : Math.max(...present))
+          : null;
+        return {
+          label: row.label,
+          cells: vals.map((v) => ({
+            v: (v != null && Number.isFinite(v)) ? row.fmt(v) : '—',
+            color: best != null && v === best ? 'var(--accent)' : 'var(--ink)',
+            weight: best != null && v === best ? '800' : '600',
+          })),
+        };
+      });
+
+      // ---- streams: resample every streamed run onto ONE distance grid so
+      //      the tracks share an x domain and each measure resolves one y
+      //      domain over the union of runs (design D7) ----
+      const streamed = ready.filter((s) => s.streamsStatus === 'ready');
+      pg.tracks = []; pg.readout = []; pg.noStreams = []; pg.streamNotes = [];
+      const streamsSettled = ready.every((s) => s.streamsStatus !== 'loading');
+      if (!streamsSettled) {
+        pg.streamSub = 'loading streams…';
+        pg.noStreams = [{ t: 'Loading the sample streams…' }];
+      } else if (!streamed.length) {
+        pg.streamSub = 'no stored streams';
+        pg.noStreams = [{ t: 'None of these runs has a stored sample stream yet — the next sync writes them from the archived raw payloads.' }];
+      } else {
+        const maxOf = (S) => { let m = 0; for (const v of S.d) if (v != null && v > m) m = v; return m; };
+        const maxD = Math.max(...streamed.map((s) => maxOf(s.streams)));
+        const step = Math.max(5, Math.round(maxD / 600));
+        const tol = Math.max(step * 2, 30);
+        const grid = [];
+        for (let x = 0; x <= maxD; x += step) grid.push(x);
+        this._grid = grid;
+        this._xScale = cc.sharedXScale(grid);
+        const rs = new Map(streamed.map((s) => [s.id, this.resample(s.streams, grid, tol)]));
+        const ends = new Map(streamed.map((s) => [s.id, maxOf(s.streams)]));
+
+        pg.streamSub = streamed.length + ' of ' + ready.length + ' runs carry full-resolution streams · hover or focus for the crosshair';
+        const xFmt = (m) => (m / 1000).toFixed(1).replace(/\.0$/, '') + ' km';
+        const has = (col) => col && col.some((x) => x != null);
+
+        const MEASURES = [
+          { key: 'pace', label: 'PACE', h: 110, height: '96px', unit: null,
+            policy: { minSpan: 60, steps: [15, 30, 60, 120], fmt: cc.fmt.pace, dirLabel: 'faster ↓', clip: [0.02, 0.98] } },
+          { key: 'hr', label: 'HEART RATE', h: 100, height: '88px', unit: 'bpm',
+            policy: { minSpan: 40, tickCount: 4, fmt: cc.fmt.int } },
+          { key: 'cad', label: 'CADENCE', h: 76, height: '64px', unit: 'spm',
+            policy: { minSpan: 30, tickCount: 3, fmt: cc.fmt.int } },
+          { key: 'elev', label: 'ELEVATION', h: 76, height: '64px', unit: 'm',
+            policy: { minSpan: 40, tickCount: 3, fmt: cc.fmt.int } },
+        ];
+        const defs = [];
+        for (const m of MEASURES) {
+          // a run missing this measure is simply absent from the track; a
+          // measure carried by no run omits the whole track (spec 7.x)
+          const series = streamed
+            .filter((s) => has(rs.get(s.id)[m.key]))
+            .map((s) => ({ key: m.key + '-' + s.id, name: label(s), color: color.get(s.id),
+                           values: rs.get(s.id)[m.key], width: 1.4 }));
+          if (!series.length) continue;
+          defs.push({ id: 'cmp-' + m.key, label: m.label, h: m.h, height: m.height, unit: m.unit,
+            ariaLabel: m.label.toLowerCase() + ' of ' + series.length + ' compared runs by distance. Arrow keys to move the crosshair.',
+            policy: m.policy, series });
+        }
+        const ci = this.state.cross;
+        const specs = cc.multiTrackSpec(
+          defs.map((t) => ({ ...t, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
+          { values: grid, fmt: xFmt, cross: ci != null ? { i: ci } : null });
+        pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
+
+        // the readout: every run at ONE distance; a run already finished at
+        // that distance reads as ended, never as a value (spec 8.x)
+        if (ci != null) {
+          const at = (grid[ci] / 1000).toFixed(2) + ' km';
+          const runs = streamed.map((s) => {
+            const r = rs.get(s.id);
+            if (grid[ci] > ends.get(s.id) + tol) return { dot: color.get(s.id), name: label(s), vals: 'ended at ' + (ends.get(s.id) / 1000).toFixed(1) + ' km' };
+            const parts = [];
+            if (r.pace && r.pace[ci] != null) parts.push(this.fmtPace(r.pace[ci]) + '/km');
+            if (r.hr && r.hr[ci] != null) parts.push(r.hr[ci] + ' bpm');
+            if (r.cad && r.cad[ci] != null) parts.push(r.cad[ci] + ' spm');
+            if (r.elev && r.elev[ci] != null) parts.push(Math.round(r.elev[ci]) + ' m');
+            return { dot: color.get(s.id), name: label(s), vals: parts.join(' · ') || '—' };
+          });
+          pg.readout = [{ at, runs }];
+          liveText = 'at ' + at + ': ' + runs.map((r) => r.name + ' ' + r.vals).join('; ');
+        }
+      }
+      // per-run stream notes (summary-only runs stay in the comparison)
+      for (const s of ready) {
+        if (s.streamsStatus === 'none') pg.streamNotes.push({ t: label(s) + ' has no stored sample stream — its summary and splits still compare.' });
+        else if (s.streamsStatus === 'offline' || s.streamsStatus === 'error') pg.streamNotes.push({ t: label(s) + '’s stream could not be loaded — scales cover the runs actually shown.' });
+      }
+
+      // ---- splits aligned by kilometre index (design D6): bar length is
+      //      speed on ONE shared scale; a longer run's tail renders alone ----
+      const withSplits = ready.filter((s) => s.run.detail && s.run.detail.splits && s.run.detail.splits.length);
+      pg.splits = [];
+      if (withSplits.length) {
+        const byKm = new Map(ready.map((s) => [s.id, new Map(((s.run.detail && s.run.detail.splits) || []).map((x) => [x.km, x]))]));
+        const maxKm = Math.max(...withSplits.map((s) => Math.max(...s.run.detail.splits.map((x) => x.km))));
+        const allPaces = withSplits.flatMap((s) => s.run.detail.splits.map((x) => x.pace)).filter((p) => p != null && p > 0);
+        const minPace = Math.min(...allPaces);
+        const rows = [];
+        for (let k = 1; k <= maxKm; k++) {
+          rows.push({
+            km: 'km ' + k,
+            cells: ready.map((s) => {
+              const sp = byKm.get(s.id).get(k);
+              return sp && sp.pace
+                ? { w: +(minPace / sp.pace * 100).toFixed(1), color: color.get(s.id), pace: this.fmtPace(sp.pace) }
+                : { w: 0, color: 'transparent', pace: '—' };
+            }),
+          });
+        }
+        const notes = ready.filter((s) => !byKm.get(s.id).size)
+          .map((s) => ({ t: label(s) + ' has no split data — its lane stays empty.' }));
+        pg.splits = [{ rows, notes, rowGrid: 'grid-template-columns:44px repeat(' + ready.length + ',minmax(0,1fr))' }];
+      }
+
+      page = [pg];
+    }
+
+    return { rootStyle, themes, nav, notReady, page, liveText };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
+     ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
+     already present and never reaches for its unpkg CDN fallback. This pin is
+     load-bearing: React 19 ships no UMD build, so React cannot be pre-seeded as
+     a global — a version bump would blank the page until a bundler is adopted. -->
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./support.js"></script>
+<!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
+     before support.js mounts on DOMContentLoaded, so the persisted theme is
+     readable at component init — no default-theme flash -->
+<script type="module" src="./topbar.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<!-- Archivo + JetBrains Mono are vendored under ./vendor/fonts and declared via
+     @font-face in dashboard.css; no fonts.googleapis.com / fonts.gstatic.com
+     origin is contacted. -->
+<link rel="stylesheet" href="./dashboard.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0E0F12}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  ::-webkit-scrollbar{height:9px;width:9px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
+</style>
+</helmet>
+
+<div style="{{ rootStyle }}">
+<div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
+<div style="max-width:1100px;margin:0 auto">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:var(--sp-3)">
+      <div style="width:34px;height:34px;border-radius:var(--r-md);background:var(--accent);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <div style="width:14px;height:3px;background:#0E0F12;transform:skewX(-22deg);box-shadow:0 6px 0 #0E0F12,0 -6px 0 #0E0F12"></div>
+      </div>
+      <div style="line-height:1">
+        <div style="font-weight:900;font-size:var(--fs-xl);letter-spacing:-.04em">SPLITS</div>
+        <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
+      </div>
+      <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
+      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">Archive</div>
+    </div>
+    <div class="topbar-actions">
+      <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="3">
+          <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
+        </sc-for>
+      </nav>
+      <sc-for list="{{ syncWrap }}" as="sy" hint-placeholder-count="0">
+        <button onClick="{{ sy.onClick }}" title="{{ sy.title }}" aria-label="{{ sy.title }}" style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600;background:transparent;cursor:pointer;font-family:inherit">
+          <span style="{{ sy.dotStyle }}"></span>
+          {{ sy.label }}
+        </button>
+      </sc-for>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+        </sc-for>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== FILTERS (mirrored into the URL — a filtered view is a link) ===== -->
+  <div class="card" style="margin-bottom:var(--sp-4)">
+    <div class="card-head" style="margin-bottom:var(--sp-2)">
+      <div>
+        <div class="card-title">Every archived activity</div>
+        <div class="card-sub">{{ countLine }}</div>
+      </div>
+    </div>
+    <div class="arch-filters">
+      <input class="arch-search" type="search" placeholder="Search by name…" aria-label="Search activities by name" value="{{ qInput }}" oninput="{{ onQ }}">
+      <span style="width:1px;height:18px;background:var(--line)"></span>
+      <sc-for list="{{ typeChips }}" as="c" hint-placeholder-count="3">
+        <button class="scope-chip" aria-pressed="{{ c.on }}" onClick="{{ c.pick }}">{{ c.label }}</button>
+      </sc-for>
+      <span style="width:1px;height:18px;background:var(--line)"></span>
+      <sc-for list="{{ yearChips }}" as="c" hint-placeholder-count="4">
+        <button class="scope-chip" aria-pressed="{{ c.on }}" onClick="{{ c.pick }}">{{ c.label }}</button>
+      </sc-for>
+    </div>
+
+    <!-- not-ready states: loading / archive offline -->
+    <sc-for list="{{ notReady }}" as="nr" hint-placeholder-count="0">
+      <div style="padding:var(--sp-4);border:1px dashed {{ nr.color }};border-radius:var(--r-md);margin-top:var(--sp-2)">
+        <div style="font-size:var(--fs-base);font-weight:700;color:{{ nr.color }}">{{ nr.title }}</div>
+        <div style="font-size:var(--fs-sm);color:var(--sub);font-weight:500;margin-top:var(--sp-1);line-height:1.5">{{ nr.body }}</div>
+        <sc-for list="{{ nr.retry }}" as="rt" hint-placeholder-count="0">
+          <button class="wk-back" style="margin-top:var(--sp-3)" onClick="{{ rt.go }}">Try again</button>
+        </sc-for>
+      </div>
+    </sc-for>
+
+    <!-- explicit empty state: the filters matched nothing, and stay usable -->
+    <sc-for list="{{ empty }}" as="em" hint-placeholder-count="0">
+      <div style="padding:var(--sp-4);border:1px dashed var(--line);border-radius:var(--r-md);color:var(--sub);font-size:var(--fs-sm);font-weight:600;margin-top:var(--sp-2)">
+        No archived activity matches these filters — adjust the search, type, or year above.
+      </div>
+    </sc-for>
+
+    <!-- ===== THE LIST ===== -->
+    <sc-for list="{{ listWrap }}" as="lw" hint-placeholder-count="0">
+      <div>
+        <div class="arch-head" style="margin-top:var(--sp-2)">
+          <span></span><span>DATE</span><span>ACTIVITY</span><span>TYPE</span>
+          <span style="text-align:right">KM</span><span style="text-align:right">TIME</span>
+          <span style="text-align:right">PACE</span><span style="text-align:right">HR</span>
+        </div>
+        <sc-for list="{{ lw.rows }}" as="r" hint-placeholder-count="8">
+          <div class="arch-row">
+            <span>
+              <sc-for list="{{ r.cmp }}" as="c" hint-placeholder-count="0">
+                <button class="cmp-toggle" aria-pressed="{{ c.on }}" aria-label="{{ c.title }}" title="{{ c.title }}" onClick="{{ c.toggle }}">{{ c.mark }}</button>
+              </sc-for>
+            </span>
+            <span style="color:var(--sub);font-weight:600;font-family:'JetBrains Mono',monospace;font-size:var(--fs-xs)">{{ r.date }}</span>
+            <span>
+              <sc-for list="{{ r.link }}" as="ln" hint-placeholder-count="0">
+                <a class="arch-link" href="{{ ln.href }}">{{ ln.name }}</a>
+              </sc-for>
+              <sc-for list="{{ r.plain }}" as="pl" hint-placeholder-count="0">
+                <span style="color:var(--sub);font-weight:600">{{ pl.name }}</span>
+              </sc-for>
+            </span>
+            <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub)">{{ r.typeLabel }}</span>
+            <span data-label="km">{{ r.km }}</span>
+            <span data-label="time">{{ r.time }}</span>
+            <span data-label="pace">{{ r.pace }}</span>
+            <span data-label="hr">{{ r.hr }}</span>
+          </div>
+        </sc-for>
+
+        <!-- load more / a failed page keeps what's already shown -->
+        <sc-for list="{{ lw.more }}" as="m" hint-placeholder-count="0">
+          <div style="display:flex;justify-content:center;margin-top:var(--sp-4)">
+            <button class="wk-back" onClick="{{ m.go }}">{{ m.label }}</button>
+          </div>
+        </sc-for>
+        <sc-for list="{{ lw.moreFail }}" as="mf" hint-placeholder-count="0">
+          <div style="display:flex;align-items:center;gap:var(--sp-3);justify-content:center;margin-top:var(--sp-4);font-size:var(--fs-sm);color:var(--warn);font-weight:600">
+            Archive unavailable — the rows above are still what they were.
+            <button class="wk-back" onClick="{{ mf.go }}">Try again</button>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- ===== COMPARE TRAY (selection → /compare?ids=…) ===== -->
+  <sc-for list="{{ tray }}" as="ty" hint-placeholder-count="0">
+    <div class="cmp-tray">
+      <span style="font-size:var(--fs-sm);font-weight:700">{{ ty.count }} selected for comparison</span>
+      <sc-for list="{{ ty.hint }}" as="h" hint-placeholder-count="0">
+        <span style="font-size:var(--fs-xs);color:var(--warn);font-weight:600">{{ h.t }}</span>
+      </sc-for>
+      <span style="flex:1"></span>
+      <button class="wk-back" onClick="{{ ty.clear }}">Clear</button>
+      <button class="cmp-go" style="{{ ty.goStyle }}" title="{{ ty.goTitle }}" onClick="{{ ty.go }}">Compare</button>
+    </div>
+  </sc-for>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:1200}}">
+class Component extends DCLogic {
+  // theme + nav + sync machine come from topbar.js (shared, design D8);
+  // filters are read from the URL at init and mirrored back on every change,
+  // so a filtered view survives reload and back navigation (archive-browser D3)
+  state = (() => {
+    const p = new URLSearchParams(window.location.search);
+    const q = p.get('q') || '';
+    return {
+      theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
+      type: p.get('type') || '', year: p.get('year') || '', q, qInput: q,
+      rows: [], total: null, nextOffset: null,
+      status: 'loading', moreStatus: null,
+      sel: [], selHint: '',
+      data: null, now: new Date(),
+      syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false,
+    };
+  })();
+
+  tb() { return window.SplitsTopbar; }
+  setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
+  syncNow = () => { this.tb() && this.tb().syncNow(this); };
+
+  componentDidMount() {
+    // explicit base-URL resolution — see the note in compare.dc.html
+    import(new URL('./running-data.js', document.baseURI).href)
+      .then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});
+    if (this.tb()) this.tb().initSyncStatus(this);
+    this._seq = 0;
+    this.fetchList(true);
+  }
+
+  filters() { return { type: this.state.type, year: this.state.year, q: this.state.q }; }
+
+  writeUrl(f) {
+    const p = new URLSearchParams();
+    if (f.type) p.set('type', f.type);
+    if (f.year) p.set('year', f.year);
+    if (f.q) p.set('q', f.q);
+    const qs = p.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+
+  // one fetch path for first load, filter changes (reset) and load-more.
+  // A failure NEVER clears rows already shown: with nothing shown it's the
+  // offline state, with rows shown it's an inline report + retry (spec 3.6).
+  fetchList(reset, f = this.filters()) {
+    const seq = ++this._seq;
+    const p = new URLSearchParams();
+    if (f.type) p.set('type', f.type);
+    if (f.year) p.set('year', f.year);
+    if (f.q) p.set('q', f.q);
+    if (!reset && this.state.nextOffset != null) p.set('offset', String(this.state.nextOffset));
+    if (!reset) this.setState({ moreStatus: 'loading' });
+    else if (!this.state.rows.length) this.setState({ status: 'loading' });
+    this._retryReset = reset;
+    fetch('./api/archive/activities' + (p.toString() ? '?' + p.toString() : ''))
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((j) => {
+        if (seq !== this._seq) return; // a newer request superseded this one
+        this.setState({
+          rows: reset ? j.activities : this.state.rows.concat(j.activities),
+          total: j.total, nextOffset: j.nextOffset,
+          status: 'ready', moreStatus: null,
+        });
+      })
+      .catch(() => {
+        if (seq !== this._seq) return;
+        if (this.state.rows.length) this.setState({ moreStatus: 'failed' });
+        else this.setState({ status: 'offline', moreStatus: null });
+      });
+  }
+  retry = () => this.fetchList(this._retryReset !== false);
+  loadMore = () => this.fetchList(false);
+
+  applyFilters(patch) {
+    const f = { ...this.filters(), ...patch };
+    this.setState({ ...patch, nextOffset: null });
+    this.writeUrl(f);
+    this.fetchList(true, f);
+  }
+  onQ = (e) => {
+    const v = e.target.value;
+    this.setState({ qInput: v });
+    clearTimeout(this._deb);
+    this._deb = setTimeout(() => this.applyFilters({ q: v.trim() }), 300);
+  };
+
+  // ---- comparison selection (run-comparison 1.x): capped at four, refusals
+  //      visible, order preserved into the compare URL ----
+  toggleSel = (id) => {
+    const sel = this.state.sel.slice();
+    const at = sel.indexOf(id);
+    if (at >= 0) { sel.splice(at, 1); this.setState({ sel, selHint: '' }); return; }
+    if (sel.length >= 4) { this.setState({ selHint: 'Four runs is the comparison limit — deselect one first.' }); return; }
+    sel.push(id);
+    this.setState({ sel, selHint: '' });
+  };
+  clearSel = () => this.setState({ sel: [], selHint: '' });
+  compareNow = () => {
+    if (this.state.sel.length < 2) return;
+    window.location.href = './compare?ids=' + this.state.sel.join(',');
+  };
+
+  fmtPace(sec){ if (sec == null) return '—'; const m=Math.floor(sec/60), s=Math.round(sec%60); return m+':'+String(s).padStart(2,'0'); }
+  fmtHMS(sec){ if (sec == null) return '—'; sec=Math.round(sec); const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60; return h ? h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0') : m+':'+String(s).padStart(2,'0'); }
+
+  renderVals() {
+    const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
+    for (const k in tv) rootStyle['--' + k] = tv[k];
+    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
+    const nav = this.tb() ? this.tb().navModel('archive') : [];
+
+    // sync pill — only when the static data file is present to anchor freshness
+    const D = this.state.data;
+    let syncWrap = [];
+    if (D && this.tb()) {
+      const pill = this.tb().syncPillModel({
+        syncState: this.state.syncState, syncError: this.state.syncError,
+        lastSync: this.state.lastSync, lastResult: this.state.lastResult,
+        syncedOn: D.today, today: this.state.now.toISOString().slice(0, 10),
+      });
+      syncWrap = [{ onClick: this.syncNow, label: pill.label, title: pill.title, dotStyle: pill.dotStyle }];
+    }
+
+    // filter chips — type, year, and the search box above; changing any resets paging
+    const typeChips = [
+      { label: 'All', v: '' }, { label: 'Runs', v: 'running' }, { label: 'Strength', v: 'strength_training' },
+    ].map((c) => ({ label: c.label, on: String(this.state.type === c.v), pick: () => this.applyFilters({ type: c.v }) }));
+    const thisYear = this.state.now.getFullYear();
+    const years = [];
+    for (let y = thisYear; y >= 2024; y--) years.push(String(y)); // the account's history starts 2024-05
+    const yearChips = [{ label: 'All years', v: '' }, ...years.map((y) => ({ label: y, v: y }))]
+      .map((c) => ({ label: c.label, on: String(this.state.year === c.v), pick: () => this.applyFilters({ year: c.v }) }));
+
+    // states
+    let notReady = [], empty = [], listWrap = [];
+    let liveText = '';
+    if (this.state.status === 'loading') {
+      notReady = [{ title: 'Loading the archive…', body: 'Fetching activities from the archive.', color: 'var(--sub)', retry: [] }];
+    } else if (this.state.status === 'offline') {
+      notReady = [{ title: 'Archive offline', body: 'The activity archive isn’t reachable right now. The rest of SPLITS keeps working — try again once the archive volume is back.', color: 'var(--warn)', retry: [{ go: this.retry }] }];
+    } else if (!this.state.rows.length) {
+      empty = [{}];
+    } else {
+      const sel = this.state.sel;
+      const rows = this.state.rows.map((a) => {
+        const run = a.type === 'running';
+        const km = a.distanceM ? a.distanceM / 1000 : null;
+        const on = sel.indexOf(a.activityId) >= 0;
+        return {
+          date: (a.startTimeLocal || '').slice(0, 10),
+          typeLabel: run ? 'RUN' : String(a.type || '—').replace(/_/g, ' ').replace(' training', '').toUpperCase(),
+          km: km != null ? km.toFixed(1) : '—',
+          time: this.fmtHMS(a.durationS),
+          pace: run && km > 0 && a.durationS ? this.fmtPace(Math.round(a.durationS / km)) : '—',
+          hr: a.avgHr != null ? String(a.avgHr) : '—',
+          // only run rows carry a link and a compare toggle; other activities
+          // render as plain rows — no focusable no-op controls (spec 4.x)
+          link: run ? [{ href: './run/' + a.activityId, name: a.name || 'Run' }] : [],
+          plain: run ? [] : [{ name: a.name || String(a.type || '').replace(/_/g, ' ') }],
+          cmp: run ? [{
+            on: String(on), mark: on ? '✓' : '',
+            title: on ? 'Remove from comparison' : 'Select for comparison',
+            toggle: () => this.toggleSel(a.activityId),
+          }] : [],
+        };
+      });
+      const more = this.state.moreStatus === 'failed' ? []
+        : this.state.nextOffset != null || this.state.moreStatus === 'loading'
+          ? [{ label: this.state.moreStatus === 'loading' ? 'Loading…' : 'Load more', go: this.loadMore }]
+          : [];
+      const moreFail = this.state.moreStatus === 'failed' ? [{ go: this.retry }] : [];
+      listWrap = [{ rows, more, moreFail }];
+      liveText = rows.length + ' of ' + this.state.total + ' activities shown';
+    }
+
+    const countLine = this.state.status === 'ready' && this.state.total != null
+      ? 'Showing ' + this.state.rows.length + ' of ' + this.state.total + ' archived activities — newest first'
+      : 'Browse and filter everything the archive holds';
+
+    const tray = this.state.sel.length ? [{
+      count: this.state.sel.length,
+      hint: this.state.selHint ? [{ t: this.state.selHint }] : [],
+      clear: this.clearSel,
+      go: this.compareNow,
+      goStyle: this.state.sel.length >= 2 ? '' : 'opacity:.45;cursor:default',
+      goTitle: this.state.sel.length >= 2 ? 'Compare the selected runs side by side' : 'Select at least two runs to compare',
+    }] : [];
+
+    return { rootStyle, themes, nav, syncWrap, typeChips, yearChips, qInput: this.state.qInput, onQ: this.onQ, countLine, notReady, empty, listWrap, tray, liveText };
+  }
+}
+</script>
+</body>
+</html>

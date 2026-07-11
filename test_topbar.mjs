@@ -53,17 +53,28 @@ assert.doesNotThrow(() => persistTheme("volt", { setItem: () => { throw new Erro
 // ── nav model ─────────────────────────────────────────────────────────────────
 {
   const onCockpit = navModel("cockpit");
-  assert.deepStrictEqual(onCockpit.map((n) => n.label), ["Cockpit", "Progress"]);
-  assert.deepStrictEqual(onCockpit.map((n) => n.current), [true, false], "cockpit marked current");
+  assert.deepStrictEqual(onCockpit.map((n) => n.label), ["Cockpit", "Progress", "Archive"]);
+  assert.deepStrictEqual(onCockpit.map((n) => n.current), [true, false, false], "cockpit marked current");
   assert.strictEqual(onCockpit[0].aria, "page");
   assert.strictEqual(onCockpit[1].aria, "false");
+  assert.strictEqual(onCockpit[2].aria, "false");
   assert.ok(onCockpit[0].style.includes("var(--accentFade)"), "current page visually marked");
   assert.ok(!onCockpit[1].style.includes("var(--accentFade)"));
+  assert.ok(!onCockpit[2].style.includes("var(--accentFade)"));
 
   const onProgress = navModel("progress");
-  assert.deepStrictEqual(onProgress.map((n) => n.current), [false, true], "progress marked current");
-  assert.deepStrictEqual(onProgress.map((n) => n.href), ["./", "./progress"],
-    "relative hrefs work from /, /progress, and the original file URL");
+  assert.deepStrictEqual(onProgress.map((n) => n.current), [false, true, false], "progress marked current");
+  assert.deepStrictEqual(onProgress.map((n) => n.href), ["./", "./progress", "./archive"],
+    "relative hrefs work from /, /progress, /archive, and the original file URL");
+
+  const onArchive = navModel("archive");
+  assert.deepStrictEqual(onArchive.map((n) => n.current), [false, false, true], "archive marked current");
+  assert.strictEqual(onArchive[2].aria, "page");
+  assert.ok(onArchive[2].style.includes("var(--accentFade)"), "archive entry visually marked when current");
+
+  // pages OUTSIDE the nav (run detail, compare) mark nothing current
+  const onRun = navModel("run");
+  assert.deepStrictEqual(onRun.map((n) => n.current), [false, false, false], "non-nav page marks nothing current");
 }
 
 // ── greeting ──────────────────────────────────────────────────────────────────

@@ -161,6 +161,25 @@ try {
   const ranged = await (await list(B, "?from=2025-06-01&to=2025-09-30")).json();
   assert.deepStrictEqual(ranged.activities.map((a) => a.activityId), [40, 30], "date range filter, bounds inclusive");
 
+  // name search (archive-browser): case-insensitive substring over name
+  const base = await (await list(B, "?q=base")).json();
+  assert.deepStrictEqual(base.activities.map((a) => a.activityId), [50, 40], "q matches a name substring");
+  assert.strictEqual(base.total, 2, "total counts the filtered set");
+  const upper = await (await list(B, "?q=BASE")).json();
+  assert.deepStrictEqual(upper.activities.map((a) => a.activityId), [50, 40], "q is case-insensitive");
+  // wildcard characters match only themselves (parameterized + escaped)
+  assert.strictEqual((await (await list(B, "?q=%")).json()).total, 0, "literal % matches nothing here — not everything");
+  assert.strictEqual((await (await list(B, "?q=e_po")).json()).total, 0, "literal _ is not a single-char wildcard");
+  // q composes with the other filters under the same AND semantics
+  const combined = await (await list(B, "?type=running&year=2025&q=base")).json();
+  assert.deepStrictEqual(combined.activities.map((a) => a.activityId), [50, 40], "q AND type AND year");
+  const qPage = await (await list(B, "?q=base&limit=1")).json();
+  assert.strictEqual(qPage.total, 2, "filtered total drives the cursor");
+  assert.strictEqual(qPage.nextOffset, 1, "q respects pagination");
+  assert.deepStrictEqual(
+    (await (await list(B, "?q=base&limit=1&offset=1")).json()).activities.map((a) => a.activityId),
+    [40], "q + offset pages through the filtered set");
+
   // pagination: bounded pages, offset cursor
   const page1 = await (await list(B, "?type=running&limit=2")).json();
   assert.strictEqual(page1.activities.length, 2);

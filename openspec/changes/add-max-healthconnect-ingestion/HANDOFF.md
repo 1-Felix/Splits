@@ -14,23 +14,24 @@ onto a **second, ingest-fed SPLITS instance**. Runs reach the box via an Android
 green, and expansion-complete** (groups 2–4, 8–10 + compose 5.1): ingest endpoint
 (runs + RHR), JSON stores, Python builder with the full D9–D13 derivation set,
 dashboard degradation guards, energy tile + RHR trend card, adversarial-review
-fixes. **The Android bridge app is now production-complete too (6.1–6.3 +
-the 7.3 payload mapping, verified end-to-end on the S24 2026-07-16).** What
-remains is **physical/collaborative**: the 1.4 Samsung gate, Max's plan (5.2),
-network path (5.3), the Developer Declaration (6.4), and sideloading to Max's
-Pixel (6.5).
+fixes. **The Android bridge app is production-complete (6.1–6.3 + 7.3,
+E2E-verified on the S24; applicationId `com.splits.bridge`), Max's plan (5.2)
+and the public network path (5.3) are live, and 6.4 is resolved
+(sideload-only — nothing to file).** All that remains is **Max's Pixel**:
+the 1.4 gate residue (watch-run with HR) and onboarding (6.5), plus Felix's
+pocket-id group/user admin steps.
 
 ## Status (what's done vs left)
 
 | Group | What | State |
 |---|---|---|
-| 1 | Health Connect extraction spike | 1.1✓ 1.2✓ 1.3✓ **1.4 OPEN (gate)** 1.5✓ |
+| 1 | Health Connect extraction spike | 1.1✓ 1.2✓ 1.3✓ 1.5✓ · **1.4 gate CLEARED on the S24** (write-perm default was the blocker); residue: watch-run HR on Max's Pixel |
 | 2 | `POST /api/ingest` + JSON run store | ✅ built + tested |
 | 3 | Python telemetry builder | ✅ built + tested |
 | 4 | Dashboard degradation guards | ✅ **done 2026-07-16** — readiness DID crash the page (repro'd); guarded + Playwright-tested |
-| 5 | Deployment | 5.1✓ 5.4✓ (**NUC live 2026-07-16**, see below) · 5.2 plan / 5.3 network **open** |
-| 6 | Finish the Android app | 6.1✓ 6.2✓ 6.3✓ (**built + on-device-verified 2026-07-16**) · 6.4 Declaration / 6.5 Max sideload **open** |
-| 7 | Reader scope-expansion | 7.1✓ 7.2✓ · 7.3 payload mapping ✓ (IngestClient); Declaration paperwork open (rides 6.4) |
+| 5 | Deployment | ✅ 5.1✓ 5.2✓ (plan v2 Mon/Wed/Sat live) 5.3✓ (public route) 5.4✓ — all NUC-live 2026-07-16 |
+| 6 | Finish the Android app | 6.1✓ 6.2✓ 6.3✓ (on-device-verified) 6.4✓ (resolved: sideload-only) · **6.5 Max onboarding open** |
+| 7 | Reader scope-expansion | ✅ 7.1✓ 7.2✓ 7.3✓ (mapping in IngestClient; Declaration resolved with 6.4) |
 | 8 | Ingest payload + validation expansion | ✅ **done 2026-07-16** (incl. RHR payload form) |
 | 9 | Builder expansion (calibration/Karvonen/moving pace/splits/cadence/energy/RHR) | ✅ **done 2026-07-16** incl. both frontend surfaces |
 | 10 | Adversarial-review fixes (5 real bugs + misc) | ✅ **done 2026-07-16**, all TDD'd |
@@ -59,9 +60,10 @@ in the repo template (`docker compose --profile max up -d`, port 8001).
   NUC**: `splits` (Felix, host port 5732, verified untouched) and `splits-max`
   (host port 5733 on the LAN **and public since 2026-07-16 evening**:
   `https://splits-max.mochii.dev` via Cloudflare Tunnel → traefik — dashboard
-  behind `pocketid-auth`, `/api/ingest` on its own higher-priority SSO-free
-  router; gotcha: the service must be on the `proxy` network or traefik hangs).
-  Max needs a pocket-id account to view his dashboard (Felix admin task).
+  behind the family-scoped `pocketid-auth-family@file` (403 until the pocket-id
+  `family` group exists — Felix admin steps in the resume order), `/api/ingest`
+  on its own higher-priority SSO-free router; gotcha: the service must be on
+  the `proxy` network or traefik hangs).
   Max's plan (5.2) live on the volume; `ATHLETE_AGE=25` set.
 - NUC compose: `~/dev/docker-compose-files/splits/docker-compose.yml` (backup
   `docker-compose.yml.bak-2026-07-16`); volume `./volumes/splits-max-data`.

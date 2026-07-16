@@ -179,8 +179,19 @@ try {
   await page.goto(B + "/", { waitUntil: "domcontentloaded" });
   await cockpitReady();
   await page.focus(TRAJ);
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowRight");           // 2026-W21: null Riegel
+  // steer to 2026-W21 (null Riegel). Rapid blind presses race the re-render —
+  // a press can under- or over-step depending on when state commits — so step
+  // one key at a time toward W21 and correct overshoot.
+  for (let tries = 0; tries < 12; tries++) {
+    const txt = await page.evaluate(() => {
+      const el = document.querySelector('[data-card="traj"]');
+      return el ? el.innerText : "";
+    });
+    if (txt.includes("W21")) break;
+    await page.focus(TRAJ);
+    await page.keyboard.press(/W2[23]/.test(txt) ? "ArrowLeft" : "ArrowRight");
+    await page.waitForTimeout(200);
+  }
   await page.waitForFunction(() =>
     document.querySelector('[data-card="traj"]') &&
     document.querySelector('[data-card="traj"]').innerText.includes("W21"),

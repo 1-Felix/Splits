@@ -249,9 +249,9 @@
     </sc-for>
   </section>
 
-  <!-- ===== ROAD TO SONTHOFEN (forward block) ===== -->
+  <!-- ===== ROAD TO <race location> (forward block) ===== -->
   <div class="section-head">
-    <h2>ROAD TO SONTHOFEN</h2>
+    <h2>{{ roadTitle }}</h2>
     <div class="rule"></div>
     <span class="meta">{{ blockMeta }}</span>
   </div>
@@ -724,14 +724,16 @@ class Component extends DCLogic {
     const now = this.state.now || new Date();
     const displayToday = this.localISO(now);
     const days = this.daysBetween(displayToday, D.race.date);
-    const totalPlanDays = this.daysBetween('2026-04-01', D.race.date);
-    const elapsed = this.daysBetween('2026-04-01', displayToday);
+    // plan start = the block's first Monday (fallback: a fixed pre-block date)
+    const planStart = (D.block && D.block[0] && D.block[0].mon) || '2026-04-01';
+    const totalPlanDays = this.daysBetween(planStart, D.race.date);
+    const elapsed = this.daysBetween(planStart, displayToday);
     const race = {
-      name:D.race.name, location:D.race.location, dateFmt:this.mDate(D.race.date)+', 2026',
+      name:D.race.name, location:D.race.location, dateFmt:this.mDate(D.race.date)+', '+D.race.date.slice(0,4),
       goalTime:D.race.goalTime, days, weeksLeft:Math.round(days/7),
       progPct: Math.max(4, Math.min(100, Math.round(elapsed/totalPlanDays*100))),
-      phase: days>35?'Peak build':days>14?'Sharpening':'Taper',
-      pb:D.race.pb, goalPace:this.fmtPace(D.race.goalPaceSecPerKm)
+      phase: days>70?'Base build':days>35?'Peak build':days>14?'Sharpening':'Taper',
+      pb:D.race.pb || '—', goalPace:this.fmtPace(D.race.goalPaceSecPerKm)
     };
 
     // readiness ring — one hit target + a placed card; placement comes from
@@ -795,7 +797,8 @@ class Component extends DCLogic {
     const kindMap = {
       run:{icon:'▲',iconBg:'var(--accentFade)',iconFg:'var(--accent)',dot:'var(--accent)'},
       strength:{icon:'■',iconBg:'rgba(77,163,255,.14)',iconFg:'var(--accent2)',dot:'var(--accent2)'},
-      cross:{icon:'◆',iconBg:'rgba(52,211,153,.14)',iconFg:'var(--good)',dot:'var(--good)'}
+      cross:{icon:'◆',iconBg:'rgba(52,211,153,.14)',iconFg:'var(--good)',dot:'var(--good)'},
+      rest:{icon:'—',iconBg:'rgba(154,163,178,.10)',iconFg:'var(--sub)',dot:'var(--sub)'}
     };
     const loadColors = { Easy:'var(--sub)', Moderate:'var(--accent2)', Hard:'var(--warn)' };
 
@@ -860,12 +863,15 @@ class Component extends DCLogic {
         onSelect: () => this.selectWeek(i),
         onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.selectWeek(i); } },
         ariaPressed: String(active), ariaLabel: 'Show ' + b.wk + ' (' + b.label + ') in This Week' }; });
-    const blockMeta = 'Build → peak → taper · long run 16 → 20 km · race Aug 9';
+    // derived, not authored — the block header stays true for any plan/instance
+    const roadTitle = 'ROAD TO ' + ((D.race.location || 'RACE DAY').split('·')[0].trim().toUpperCase());
+    const peakKm = Math.max(...(D.block || []).map(b => b.km || 0), 0);
+    const blockMeta = (D.block || []).length + ' weeks · peak ' + peakKm + ' km/wk · race ' + this.mDate(D.race.date);
 
     // THIS WEEK — the active week's day plan (status derived from each day's date vs the
     // live date). Weeks with no `days` yet fall through to a summary placeholder below.
     const activeDays = (activeWeek && activeWeek.days) || null;
-    const week = (activeDays || []).map(d => { const k = kindMap[d.kind];
+    const week = (activeDays || []).map(d => { const k = kindMap[d.kind] || kindMap.run;
       const st = d.date ? (d.date < displayToday ? 'done' : d.date > displayToday ? 'upcoming' : 'today') : d.status;
       const today = st==='today';
       const dayId = activeWeekIndex + ':' + d.day;
@@ -1160,7 +1166,7 @@ class Component extends DCLogic {
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
       race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:D.predictions, kpis,
-      week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
+      week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, roadTitle, coach:D.coach, coachLog:D.coach.log,
       zones, sleep:sleepObj, hrv:hrvObj, hasSleep, rhr:rhrObj, hasRhr, heat, runs,
       traj, trajCard,
       liveText

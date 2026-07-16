@@ -172,9 +172,11 @@ Dev server (`PORT=18497`, scratchpad `SPLITS_DATA_DIR`, `SPLITS_INGEST_TOKEN`)
 1. **1.4 the gate**: record a Samsung Health run on the Galaxy Watch → tap
    "Diagnostic dump (gate check)" in the bridge app → look for a
    `com.sec.android.app.shealth` session source / GATE: YES.
-2. **5.2** Max's `plan-data.js` (needs Felix: race choice/date, then author a
-   beginner→half `block` — see running-data.js:20; validate with
-   test_plan_validate; write into `volumes/splits-max-data/` on the NUC).
+2. ~~5.2 Max's plan~~ — DONE 2026-07-16: 40-week beginner→half live on the NUC
+   volume (race anchor Sun 2027-04-25, Allgäu half TBD; regenerate with
+   `max-plan-generator.py` in this folder when he registers — edit RACE/START,
+   run, validate, docker-exec onto the volume; default seed backed up as
+   `plan-data.js.bak-default`).
 3. **6.4 Declaration** paperwork (Google Health Connect Developer Declaration).
 4. **5.3 network path** (Tailscale vs a proxy route WITHOUT pocketid-auth on
    `/api/ingest`), then **6.5** sideload to Max's Pixel: set URL +

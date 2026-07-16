@@ -14,9 +14,11 @@ onto a **second, ingest-fed SPLITS instance**. Runs reach the box via an Android
 green, and expansion-complete** (groups 2–4, 8–10 + compose 5.1): ingest endpoint
 (runs + RHR), JSON stores, Python builder with the full D9–D13 derivation set,
 dashboard degradation guards, energy tile + RHR trend card, adversarial-review
-fixes. What remains is **physical/collaborative**: the 1.4 Samsung gate, Max's
-plan (5.2), network path (5.3), NUC smoke (5.4), and finishing the Android app
-(6.x, incl. the ingest-payload mapping noted in 7.3).
+fixes. **The Android bridge app is now production-complete too (6.1–6.3 +
+the 7.3 payload mapping, verified end-to-end on the S24 2026-07-16).** What
+remains is **physical/collaborative**: the 1.4 Samsung gate, Max's plan (5.2),
+network path (5.3), the Developer Declaration (6.4), and sideloading to Max's
+Pixel (6.5).
 
 ## Status (what's done vs left)
 
@@ -27,8 +29,8 @@ plan (5.2), network path (5.3), NUC smoke (5.4), and finishing the Android app
 | 3 | Python telemetry builder | ✅ built + tested |
 | 4 | Dashboard degradation guards | ✅ **done 2026-07-16** — readiness DID crash the page (repro'd); guarded + Playwright-tested |
 | 5 | Deployment | 5.1✓ 5.4✓ (**NUC live 2026-07-16**, see below) · 5.2 plan / 5.3 network **open** |
-| 6 | Finish the Android app | ❌ open (mostly physical; 6.1 must map spike JSON → ingest payload, see 7.3 note) |
-| 7 | Reader scope-expansion | 7.1✓ 7.2✓ · 7.3 code lives in the spike already; Declaration paperwork open |
+| 6 | Finish the Android app | 6.1✓ 6.2✓ 6.3✓ (**built + on-device-verified 2026-07-16**) · 6.4 Declaration / 6.5 Max sideload **open** |
+| 7 | Reader scope-expansion | 7.1✓ 7.2✓ · 7.3 payload mapping ✓ (IngestClient); Declaration paperwork open (rides 6.4) |
 | 8 | Ingest payload + validation expansion | ✅ **done 2026-07-16** (incl. RHR payload form) |
 | 9 | Builder expansion (calibration/Karvonen/moving pace/splits/cadence/energy/RHR) | ✅ **done 2026-07-16** incl. both frontend surfaces |
 | 10 | Adversarial-review fixes (5 real bugs + misc) | ✅ **done 2026-07-16**, all TDD'd |
@@ -108,9 +110,19 @@ in the repo template (`docker compose --profile max up -d`, port 8001).
   Garmin-shaped Felix regression; also verifies D8 archive-route degradation).
 - `test_cockpit_page.mjs` — deflaked the 'anchorless week inert' step (rapid
   ArrowRights race the re-render; now steps toward W21 with overshoot correction).
-- `android-bridge/` — Kotlin spike (= production app base): reads sessions +
-  HR/distance/speed + all 4 additions with `dataOrigin` filtering; manifest
-  already declares **all 11** READ permissions.
+- `android-bridge/` — **now the production bridge app** (spike evolved in place,
+  2026-07-16): `BridgeConfig` (prefs: URL/token/backfill date + pushed-UID and
+  RHR-watermark bookkeeping), `RunReader` (all HC reads, `dataOrigin`-filtered),
+  `IngestClient` (payload mapping + bearer POST, suspend/IO — a main-thread POST
+  threw NetworkOnMainThreadException on-device before), `SyncEngine` (full-window
+  re-scan + unseen-UID push + 7-day-overlap RHR + 10-min session settle guard),
+  `SyncWorker` (6 h periodic WorkManager, Result.retry() on transient),
+  `MainActivity` (config UI + grant flow + Sync now + the diagnostic GATE dump
+  kept for 1.4 + reset-delivery-state). Manifest adds INTERNET +
+  `usesCleartextTraffic` (private LAN/tailnet transport until 5.3; https works
+  unchanged). Deps + `androidx.work:work-runtime-ktx:2.11.2`. App label now
+  "SPLITS Bridge"; applicationId unchanged (`com.splits.healthspike`) so the
+  existing permission grants survive upgrades.
 - OpenSpec: tasks 4.x/5.1/8.x/9.x/10.x ticked with annotations;
   `specs/telemetry-ingest/spec.md` extended with the expansion requirements.
 
@@ -129,20 +141,34 @@ to HC (~July 1 2026; fix 7.00.5.009 sideload-only). To close: record a run **in
 Samsung Health** (HC sync on) → re-run the spike → look for a
 `com.sec.android.app.shealth` source. If NO → manual entry fallback.
 
+## On-device E2E verification (2026-07-16, Galaxy S24 + local dev server)
+
+Dev server (`PORT=18497`, scratchpad `SPLITS_DATA_DIR`, `SPLITS_INGEST_TOKEN`)
++ `adb reverse tcp:18497 tcp:18497` so the app reached `http://127.0.0.1:18497`:
+
+- Backfill from 2026-05-01: **26 runs + 76 RHR days pushed**, server banked 26,
+  builder produced a full contract — maxHR **187** calibrated from observed (D9),
+  Karvonen restingHR **51** (D12), recentRuns with pace/cad/`detail.splits`
+  (D10/D11), ctl/atl, heatmap 365, Riegel predictions, `history.restingHr` 76 d;
+  vo2/readiness/sleep keys absent.
+- Idempotency: the background pass that ran right after scheduling pushed **0**.
+- Retry (6.3): reverse removed → "Server unreachable … will retry", no UID
+  marked; restored → 26 re-pushed, server still 26 (upsert, no dupes).
+- WorkManager: `#SyncWorker#` visible in `dumpsys jobscheduler`.
+
 ## Recommended resume order
 
-1. **1.4 the gate** (do before investing in the app): record a Samsung Health
-   run on the Galaxy Watch → re-run the spike → look for a
-   `com.sec.android.app.shealth` session source.
+1. **1.4 the gate**: record a Samsung Health run on the Galaxy Watch → tap
+   "Diagnostic dump (gate check)" in the bridge app → look for a
+   `com.sec.android.app.shealth` session source / GATE: YES.
 2. **5.2** Max's `plan-data.js` (needs Felix: race choice/date, then author a
    beginner→half `block` — see running-data.js:20; validate with
    test_plan_validate; write into `volumes/splits-max-data/` on the NUC).
-3. **6.1–6.3** finish the app: map the spike's diagnostic JSON onto the ingest
-   payload (field names in “Ingest contract” above), WorkManager sync, config
-   screen (server URL + `SPLITS_INGEST_TOKEN_MAX`), backfill + retry. Start
-   **6.4 Declaration** early.
+3. **6.4 Declaration** paperwork (Google Health Connect Developer Declaration).
 4. **5.3 network path** (Tailscale vs a proxy route WITHOUT pocketid-auth on
-   `/api/ingest`), then **6.5** sideload + set-and-forget verification.
+   `/api/ingest`), then **6.5** sideload to Max's Pixel: set URL +
+   `SPLITS_INGEST_TOKEN_MAX` + backfill date in the app, grant, Sync now —
+   then verify set-and-forget over several days.
 
 ## Environment & operational gotchas (Windows dev)
 
@@ -179,17 +205,21 @@ node test_plan_push.mjs
 node test_slim_render.mjs
 node test_cockpit_page.mjs && node test_progress_page.mjs
 
-# build + run the spike (device = Galaxy S24 SM-S921B, all 11 perms granted)
+# build + run the bridge app (device = Galaxy S24 SM-S921B, all 11 perms granted)
 JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" android-bridge/gradlew -p android-bridge :app:assembleDebug --console=plain
 adb install -r android-bridge/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.splits.healthspike/.MainActivity
-adb shell input tap 539 115   # taps "READ RUNNING WORKOUTS"
+# UI (top→bottom): URL / token / backfill-date fields, then buttons:
+#   GRANT PERMISSIONS · SYNC NOW · DIAGNOSTIC DUMP (GATE CHECK) · RESET DELIVERY STATE
+# logs: adb logcat -s SPLITS_BRIDGE
+# local E2E: adb reverse tcp:<port> tcp:<port> → app URL http://127.0.0.1:<port>
+# diagnostic dump still writes the pullable file with the GATE verdict:
 MSYS_NO_PATHCONV=1 adb pull /storage/emulated/0/Android/data/com.splits.healthspike/files/splits_spike_runs.json "C:/<abs-windows-path>.json"
-# spike output is { runs: [...], restingHeartRate: [...] }
 ```
 
-## Nothing is committed yet
+## Commit state
 
-The working tree holds everything (new files + serve.mjs/dashboard/progress/
-chart-core/docker-compose edits + OpenSpec artifacts). Commit when ready — Felix
-hasn't asked to yet. No Co-Authored-By line (per global CLAUDE.md).
+Server side + spike are committed and NUC-deployed (`8021c43`…`f525d13`,
+see the NUC section). **The 2026-07-16 bridge-app work (6.1–6.3) is uncommitted**
+— `android-bridge/` app sources + manifest + gradle + these OpenSpec updates.
+Commit when Felix asks. No Co-Authored-By line (per global CLAUDE.md).

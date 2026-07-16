@@ -1,30 +1,17 @@
 package com.splits.healthspike
 
 import android.os.Bundle
+import android.text.InputType
 import android.util.Log
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
-import androidx.health.connect.client.records.DistanceRecord
-import androidx.health.connect.client.records.ElevationGainedRecord
-import androidx.health.connect.client.records.ExerciseSessionRecord
-import androidx.health.connect.client.records.HeartRateRecord
-import androidx.health.connect.client.records.Record
-import androidx.health.connect.client.records.RestingHeartRateRecord
-import androidx.health.connect.client.records.SpeedRecord
-import androidx.health.connect.client.records.StepsRecord
-import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
-import androidx.health.connect.client.records.metadata.DataOrigin
-import androidx.health.connect.client.request.ReadRecordsRequest
-import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,82 +21,58 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Duration
 import java.time.Instant
-import java.time.ZoneId
-import kotlin.reflect.KClass
 
 /**
- * SPLITS Health Connect verification spike (Phase 0).
+ * SPLITS Health Connect bridge — setup + status UI.
  *
- * Reads recent running ExerciseSessionRecords from Health Connect, joins the
- * heart-rate / distance / speed samples that fall inside each session window,
- * and dumps the result as pretty JSON to Logcat (tag SPLITS_SPIKE) and to a
- * file in the app's external files dir for `adb pull`.
+ * One-time setup: enter server URL + ingest token + backfill start date, grant
+ * the Health Connect permissions, hit "Sync now" once. That schedules the
+ * recurring background sync (SyncWorker); afterwards the app never needs to be
+ * opened again (set-and-forget).
  *
- * Throwaway. Single Activity, programmatic UI, no architecture.
+ * "Diagnostic dump" keeps the original spike behavior — reads the last 60 days
+ * and reports the Samsung Health GATE verdict (task 1.4) + writes the JSON file
+ * for adb pull.
  */
 class MainActivity : AppCompatActivity() {
 
     private companion object {
-        const val TAG = "SPLITS_SPIKE"
+        const val TAG = "SPLITS_BRIDGE"
         const val OUTPUT_FILE = "splits_spike_runs.json"
-        const val LOOKBACK_DAYS = 60L
-        const val MAX_RUNS = 20
-        const val HR_DOWNSAMPLE_SEC = 5L
-        // Samsung Health package — the decision gate for this spike.
-        const val SHEALTH_PKG = "com.sec.android.app.shealth"
+        const val DIAGNOSTIC_LOOKBACK_DAYS = 60L
     }
 
-    // All permissions this spike wants. Record-type reads + the two special grants.
-    private val permissions: Set<String> = setOf(
-        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-        HealthPermission.getReadPermission(HeartRateRecord::class),
-        HealthPermission.getReadPermission(DistanceRecord::class),
-        HealthPermission.getReadPermission(SpeedRecord::class),
-        // scope-expansion probes (Health Connect data-types research)
-        HealthPermission.getReadPermission(ElevationGainedRecord::class),
-        HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class),
-        HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class),
-        HealthPermission.getReadPermission(StepsRecord::class),
-        HealthPermission.getReadPermission(RestingHeartRateRecord::class),
-        HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY,
-        HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND,
-    )
-
+    private lateinit var config: BridgeConfig
+    private lateinit var urlInput: EditText
+    private lateinit var tokenInput: EditText
+    private lateinit var backfillInput: EditText
     private lateinit var statusView: TextView
 
     // Registered before the Activity is STARTED, per the ActivityResult contract rules.
     private val permissionLauncher =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-            val missing = permissions - granted
+            val missing = BridgePermissions.ALL - granted
             if (missing.isEmpty()) {
-                append("All ${permissions.size} permissions granted.")
+                append("All ${BridgePermissions.ALL.size} permissions granted.")
             } else {
-                append("Granted ${granted.size}/${permissions.size}. Missing:")
+                append("Granted ${granted.size}/${BridgePermissions.ALL.size}. Missing:")
                 missing.forEach { append("   - $it") }
-                append("Reading anyway with whatever was granted…")
             }
-            readAndDump()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        config = BridgeConfig(this)
         setContentView(buildUi())
-        append("SPLITS Health Connect spike")
-        append("Output file tag: $TAG")
 
-        when (val sdk = HealthConnectClient.getSdkStatus(this)) {
-            HealthConnectClient.SDK_AVAILABLE ->
-                append("Health Connect SDK: AVAILABLE")
-            HealthConnectClient.SDK_UNAVAILABLE -> {
-                append("Health Connect SDK: UNAVAILABLE on this device. Cannot continue.")
-                Log.e(TAG, "SDK unavailable")
-            }
+        when (HealthConnectClient.getSdkStatus(this)) {
+            HealthConnectClient.SDK_AVAILABLE -> append("Health Connect SDK: AVAILABLE")
             HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
-                append("Health Connect SDK: needs a provider update. Update Health Connect first.")
-            else ->
-                append("Health Connect SDK status: unknown ($sdk)")
+                append("Health Connect needs a provider update — update it first.")
+            else -> append("Health Connect SDK: UNAVAILABLE on this device.")
         }
-        append("Tap the button to grant permissions (if needed) and read runs.")
+        if (config.lastSyncSummary.isNotEmpty()) append("Last sync — ${config.lastSyncSummary}")
+        if (!config.isConfigured()) append("Setup: fill in URL, token, backfill date, grant permissions, then Sync now.")
     }
 
     private fun buildUi(): ViewGroup {
@@ -117,284 +80,176 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 48, 32, 32)
         }
-        val button = Button(this).apply {
-            text = "Read running workouts"
-            setOnClickListener { onReadClicked() }
+        fun input(hint: String, value: String, password: Boolean = false) = EditText(this).apply {
+            this.hint = hint
+            setText(value)
+            textSize = 14f
+            inputType = InputType.TYPE_CLASS_TEXT or
+                (if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI)
+            root.addView(this, wrap())
         }
+        urlInput = input("Server URL (https://…)", config.serverBase)
+        tokenInput = input("Ingest token", config.token, password = true)
+        backfillInput = input("Backfill start (YYYY-MM-DD)", config.backfillStart)
+
+        fun button(label: String, onClick: () -> Unit) = Button(this).apply {
+            text = label
+            setOnClickListener { onClick() }
+            root.addView(this, wrap())
+        }
+        button("Grant Health Connect permissions") { onGrantClicked() }
+        button("Sync now") { onSyncClicked() }
+        button("Diagnostic dump (gate check)") { onDiagnosticClicked() }
+        button("Reset delivery state") {
+            config.resetSyncState()
+            append("Delivery state cleared — next sync re-pushes the whole backfill window (server dedups by UID).")
+        }
+
         statusView = TextView(this).apply {
             textSize = 12f
             setTextIsSelectable(true)
             setPadding(0, 24, 0, 0)
         }
-        val scroll = ScrollView(this).apply {
-            addView(
-                statusView,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            )
-        }
-        root.addView(
-            button,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        )
-        root.gravity = Gravity.TOP
+        val scroll = ScrollView(this).apply { addView(statusView, wrap()) }
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         return root
     }
 
-    private fun onReadClicked() {
+    private fun wrap() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+    )
+
+    /** Persists the three config fields; reports whether the config is usable. */
+    private fun saveConfig(): Boolean {
+        config.serverBase = urlInput.text.toString()
+        config.token = tokenInput.text.toString()
+        config.backfillStart = backfillInput.text.toString()
+        return if (config.isConfigured()) true else {
+            append("Config incomplete: need an http(s) URL, a token, and a YYYY-MM-DD backfill date.")
+            false
+        }
+    }
+
+    private fun onGrantClicked() {
         lifecycleScope.launch {
             val client = clientOrNull() ?: return@launch
             val granted = client.permissionController.getGrantedPermissions()
-            append("Currently granted: ${granted.size}/${permissions.size}")
-            if (granted.containsAll(permissions)) {
-                readAndDump()
+            if (granted.containsAll(BridgePermissions.ALL)) {
+                append("All ${BridgePermissions.ALL.size} permissions already granted.")
             } else {
                 append("Requesting permissions from Health Connect…")
-                permissionLauncher.launch(permissions)
+                permissionLauncher.launch(BridgePermissions.ALL)
             }
         }
     }
 
-    private fun clientOrNull(): HealthConnectClient? {
-        return if (HealthConnectClient.getSdkStatus(this) == HealthConnectClient.SDK_AVAILABLE) {
-            HealthConnectClient.getOrCreate(this)
-        } else {
-            append("Health Connect not available; aborting read.")
-            null
+    private fun onSyncClicked() {
+        if (!saveConfig()) return
+        append("Syncing…")
+        lifecycleScope.launch {
+            val outcome = try {
+                SyncEngine(applicationContext).sync { line -> runOnUiThread { append("   $line") } }
+            } catch (e: Exception) {
+                Log.e(TAG, "sync failed", e)
+                append("ERROR: ${e.javaClass.simpleName}: ${e.message}")
+                return@launch
+            }
+            append(outcome.summary)
+            if (outcome.ok || outcome.retry) {
+                SyncWorker.schedule(applicationContext)
+                append("Background sync scheduled (every 6 h, on network).")
+            }
         }
     }
 
-    private fun readAndDump() {
+    // ── diagnostic dump: the original spike read, kept for the 1.4 Samsung gate ──
+
+    private fun onDiagnosticClicked() {
         lifecycleScope.launch {
+            val client = clientOrNull() ?: return@launch
+            val granted = client.permissionController.getGrantedPermissions()
+            if (!granted.containsAll(BridgePermissions.ALL)) {
+                append("Grant permissions first (${granted.size}/${BridgePermissions.ALL.size}).")
+                return@launch
+            }
+            append("Reading the last $DIAGNOSTIC_LOOKBACK_DAYS days…")
             try {
-                val (json, summary) = withContext(Dispatchers.IO) { readRuns() }
-                append(summary)
+                val (json, summary) = withContext(Dispatchers.IO) { diagnosticRead(client) }
+                summary.lines().forEach { append(it) }
                 dumpJson(json)
             } catch (e: Exception) {
-                Log.e(TAG, "Read failed", e)
+                Log.e(TAG, "diagnostic read failed", e)
                 append("ERROR: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
 
-    /** Core read. Returns ({runs, restingHeartRate}, humanSummary). Runs on IO. */
-    private suspend fun readRuns(): Pair<JSONObject, String> {
-        val client = HealthConnectClient.getOrCreate(this)
+    private suspend fun diagnosticRead(client: HealthConnectClient): Pair<JSONObject, String> {
         val now = Instant.now()
-        val since = now.minus(Duration.ofDays(LOOKBACK_DAYS))
-        val window = TimeRangeFilter.between(since, now)
+        val since = now.minus(Duration.ofDays(DIAGNOSTIC_LOOKBACK_DAYS))
+        val reader = RunReader(client)
 
-        Log.i(TAG, "Reading ExerciseSessionRecords for the last $LOOKBACK_DAYS days")
-        val sessions = client.readRecords(
-            ReadRecordsRequest(
-                recordType = ExerciseSessionRecord::class,
-                timeRangeFilter = window,
-                ascendingOrder = false, // newest first
-                pageSize = 50,
-            )
-        ).records
-
-        val runs = sessions
-            .filter { it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_RUNNING ||
-                    it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL }
-            .take(MAX_RUNS)
-
-        Log.i(TAG, "Sessions in window: ${sessions.size}; running sessions kept: ${runs.size}")
+        val sessions = reader.readSessions(since, now)
+        val runs = sessions.map { reader.readRun(it) }
+        val rhr = reader.readRestingHr(since, now)
 
         val out = JSONArray()
         val sourceCounts = linkedMapOf<String, Int>()
-        var withMax = 0; var withElev = 0; var withActiveCal = 0
-        var withTotalCal = 0; var withSteps = 0; var withSpeed = 0
-
         for (run in runs) {
-            val range = TimeRangeFilter.between(run.startTime, run.endTime)
-            // Read metrics ONLY from the session's own writer — several apps passively
-            // write into the same window (steps especially), so an unfiltered delta read
-            // double-counts. Filter by the session's dataOrigin.
-            val sourcePkg = run.metadata.dataOrigin.packageName
-            val origin = setOf(DataOrigin(sourcePkg))
-
-            val hrSamples = readAll(client, HeartRateRecord::class, range, origin)
-                .flatMap { it.samples }
-                .sortedBy { it.time }
-            val distanceRecords = readAll(client, DistanceRecord::class, range, origin)
-            val speedSamples = readAll(client, SpeedRecord::class, range, origin)
-                .flatMap { it.samples }
-                .sortedBy { it.time }
-            // DELTA records — summed over the session window; count kept so we can
-            // tell "not written" (count 0) apart from "written as 0" (flat run etc.).
-            val elevRecs = readAll(client, ElevationGainedRecord::class, range, origin)
-            val activeRecs = readAll(client, ActiveCaloriesBurnedRecord::class, range, origin)
-            val totalRecs = readAll(client, TotalCaloriesBurnedRecord::class, range, origin)
-            val stepRecs = readAll(client, StepsRecord::class, range, origin)
-
-            val durationSec = Duration.between(run.startTime, run.endTime).seconds
-            val totalMeters = distanceRecords.sumOf { it.distance.inMeters }
-            val avgBpm = if (hrSamples.isEmpty()) null
-                else hrSamples.map { it.beatsPerMinute }.average()
-            val maxBpm = hrSamples.maxOfOrNull { it.beatsPerMinute } // observed max → real zone calibration
-            val avgSpeedMps = if (speedSamples.isEmpty()) null
-                else speedSamples.map { it.speed.inMetersPerSecond }.average()
-
-            sourceCounts[sourcePkg] = (sourceCounts[sourcePkg] ?: 0) + 1
-
-            // Downsample HR + speed to ~1 sample / HR_DOWNSAMPLE_SEC s, t relative to session start.
-            val hrSeries = JSONArray()
-            var lastHr = Long.MIN_VALUE
-            for (s in hrSamples) {
-                val tSec = s.time.epochSecond - run.startTime.epochSecond
-                if (lastHr == Long.MIN_VALUE || tSec - lastHr >= HR_DOWNSAMPLE_SEC) {
-                    hrSeries.put(JSONObject().put("tSec", tSec).put("bpm", s.beatsPerMinute)); lastHr = tSec
-                }
-            }
-            val speedSeries = JSONArray()
-            var lastSpd = Long.MIN_VALUE
-            for (s in speedSamples) {
-                val tSec = s.time.epochSecond - run.startTime.epochSecond
-                if (lastSpd == Long.MIN_VALUE || tSec - lastSpd >= HR_DOWNSAMPLE_SEC) {
-                    speedSeries.put(JSONObject().put("tSec", tSec).put("mps", round2(s.speed.inMetersPerSecond))); lastSpd = tSec
-                }
-            }
-
-            if (maxBpm != null) withMax++
-            if (elevRecs.isNotEmpty()) withElev++
-            if (activeRecs.isNotEmpty()) withActiveCal++
-            if (totalRecs.isNotEmpty()) withTotalCal++
-            if (stepRecs.isNotEmpty()) withSteps++
-            if (speedSeries.length() > 0) withSpeed++
-
-            val obj = JSONObject().apply {
-                put("metadataId", run.metadata.id)
-                put("clientRecordId", run.metadata.clientRecordId ?: JSONObject.NULL)
-                put("sourcePackage", sourcePkg)
-                put("isSamsungHealth", sourcePkg == SHEALTH_PKG)
-                put("sportType", exerciseTypeName(run.exerciseType))
-                put("exerciseTypeInt", run.exerciseType)
-                put("title", run.title ?: JSONObject.NULL)
-                put("startTimeLocal", localStart(run))
-                put("startTimeUtc", run.startTime.toString())
-                put("durationSec", durationSec)
-                put("totalDistanceMeters", round1(totalMeters))
-                put("avgHeartRateBpm", avgBpm?.let { round1(it) } ?: JSONObject.NULL)
-                put("maxHeartRateBpm", maxBpm ?: JSONObject.NULL)
-                put("hrSampleCountRaw", hrSamples.size)
-                put("avgSpeedMps", avgSpeedMps?.let { round2(it) } ?: JSONObject.NULL)
-                put("speedSampleCountRaw", speedSamples.size)
-                put("elevationGainMeters", round1(elevRecs.sumOf { it.elevation.inMeters }))
-                put("elevationRecordCount", elevRecs.size)
-                put("activeCaloriesKcal", round1(activeRecs.sumOf { it.energy.inKilocalories }))
-                put("activeCalRecordCount", activeRecs.size)
-                put("totalCaloriesKcal", round1(totalRecs.sumOf { it.energy.inKilocalories }))
-                put("totalCalRecordCount", totalRecs.size)
-                put("stepsTotal", stepRecs.sumOf { it.count })
-                put("stepsRecordCount", stepRecs.size)
-                put("heartRate", hrSeries)
-                put("speed", speedSeries)
-            }
-            out.put(obj)
-
-            Log.i(TAG, "run ${run.metadata.id} src=$sourcePkg dur=${durationSec}s dist=${round1(totalMeters)}m " +
-                "hr=${hrSamples.size}(max=$maxBpm) spd=${speedSamples.size} elev=${elevRecs.size} " +
-                "aCal=${activeRecs.size} tCal=${totalRecs.size} steps=${stepRecs.size}")
+            sourceCounts[run.sourcePackage] = (sourceCounts[run.sourcePackage] ?: 0) + 1
+            out.put(JSONObject().apply {
+                put("sessionUid", run.sessionUid)
+                put("sourcePackage", run.sourcePackage)
+                put("isSamsungHealth", run.isSamsungHealth())
+                put("sportType", run.sportType)
+                put("startTimeLocal", run.startTimeLocal())
+                put("durationS", run.durationS)
+                put("distanceM", run.distanceM)
+                put("avgHr", run.avgHr ?: JSONObject.NULL)
+                put("maxHr", run.maxHr ?: JSONObject.NULL)
+                put("avgSpeed", run.avgSpeedMps ?: JSONObject.NULL)
+                put("elevationGainM", run.elevationGainM ?: JSONObject.NULL)
+                put("activeKcal", run.activeKcal ?: JSONObject.NULL)
+                put("totalKcal", run.totalKcal ?: JSONObject.NULL)
+                put("steps", run.steps ?: JSONObject.NULL)
+                put("hrSampleCount", run.hrSeries.size)
+                put("speedSampleCount", run.speedSeries.size)
+                put("delivered", run.sessionUid in config.pushedUids)
+            })
         }
+        val root = JSONObject()
+            .put("runs", out)
+            .put("restingHeartRate", JSONArray().apply {
+                rhr.forEach { put(JSONObject().put("date", it.date).put("bpm", it.bpm)) }
+            })
 
-        // Resting HR is a DAILY wellness record, not per-session — read across the whole window.
-        val rhrRecs = readAll(client, RestingHeartRateRecord::class, window).sortedBy { it.time }
-        val rhr = JSONArray()
-        for (r in rhrRecs) {
-            rhr.put(JSONObject().put("timeUtc", r.time.toString()).put("bpm", r.beatsPerMinute))
-        }
-
-        val root = JSONObject().put("runs", out).put("restingHeartRate", rhr)
-
+        val shealthCount = sourceCounts[RunReader.SHEALTH_PKG] ?: 0
         val summary = buildString {
-            appendLine("Done. Running sessions: ${runs.size} (of ${sessions.size} sessions in window).")
-            appendLine("Sources seen:")
+            appendLine("Running sessions: ${runs.size}. Sources:")
             if (sourceCounts.isEmpty()) appendLine("   (none)")
             sourceCounts.forEach { (pkg, n) ->
-                val flag = if (pkg == SHEALTH_PKG) "  <-- SAMSUNG HEALTH (decision gate!)" else ""
-                appendLine("   $pkg : $n$flag")
+                appendLine("   $pkg : $n" + if (pkg == RunReader.SHEALTH_PKG) "  <-- SAMSUNG HEALTH" else "")
             }
-            val shealthCount = sourceCounts[SHEALTH_PKG] ?: 0
             appendLine(
                 if (shealthCount > 0)
                     "GATE: YES — $shealthCount Samsung Health run(s) visible via Health Connect."
                 else
                     "GATE: NO Samsung Health runs found in this window."
             )
-            appendLine("Coverage (runs with data / ${out.length()}):")
-            appendLine("   maxHR $withMax · elev $withElev · activeCal $withActiveCal · totalCal $withTotalCal · steps $withSteps · speedSeries $withSpeed")
-            appendLine("Resting HR records in window: ${rhr.length()}" +
-                (if (rhr.length() > 0) " (latest ${rhrRecs.last().beatsPerMinute} bpm)" else ""))
+            appendLine("Resting HR days: ${rhr.size}" +
+                (if (rhr.isNotEmpty()) " (latest ${rhr.last().bpm} bpm on ${rhr.last().date})" else ""))
         }.trimEnd()
 
         return root to summary
     }
 
-    /** Reads every page of [recordType] in [range] (default pageSize is 1000, so HR needs paging). */
-    private suspend fun <T : Record> readAll(
-        client: HealthConnectClient,
-        recordType: KClass<T>,
-        range: TimeRangeFilter,
-        dataOrigins: Set<DataOrigin> = emptySet(),
-    ): List<T> {
-        val all = mutableListOf<T>()
-        var pageToken: String? = null
-        do {
-            val response = client.readRecords(
-                ReadRecordsRequest(
-                    recordType = recordType,
-                    timeRangeFilter = range,
-                    dataOriginFilter = dataOrigins,
-                    pageSize = 1000,
-                    pageToken = pageToken,
-                )
-            )
-            all += response.records
-            pageToken = response.pageToken
-        } while (pageToken != null)
-        return all
-    }
-
-    private fun localStart(run: ExerciseSessionRecord): String {
-        val offset = run.startZoneOffset
-        return if (offset != null) {
-            run.startTime.atOffset(offset).toString()
-        } else {
-            // No stored offset: fall back to the device's current zone.
-            run.startTime.atZone(ZoneId.systemDefault()).toOffsetDateTime().toString()
-        }
-    }
-
-    private fun exerciseTypeName(type: Int): String = when (type) {
-        ExerciseSessionRecord.EXERCISE_TYPE_RUNNING -> "RUNNING"
-        ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL -> "RUNNING_TREADMILL"
-        else -> "OTHER_$type"
-    }
-
     private fun dumpJson(root: JSONObject) {
         val pretty = root.toString(2)
-        val runsCount = root.getJSONArray("runs").length()
-
-        // 1) Logcat — chunked, because Logcat truncates long single lines (~4 KB).
-        Log.i(TAG, "===== BEGIN JSON ($runsCount runs) =====")
+        Log.i(TAG, "===== BEGIN JSON =====")
         pretty.chunked(3500).forEachIndexed { i, chunk -> Log.i(TAG, "[$i] $chunk") }
         Log.i(TAG, "===== END JSON =====")
 
-        // 2) File for `adb pull`.
         val dir: File? = getExternalFilesDir(null)
         if (dir == null) {
             append("External files dir unavailable; JSON only in Logcat.")
@@ -402,16 +257,18 @@ class MainActivity : AppCompatActivity() {
         }
         val file = File(dir, OUTPUT_FILE)
         file.writeText(pretty)
-        Log.i(TAG, "Wrote ${file.length()} bytes to ${file.absolutePath}")
-        append("Wrote JSON ($runsCount runs + RHR) to:")
-        append("   ${file.absolutePath}")
+        append("Wrote JSON to ${file.absolutePath}")
         append("Pull with:  adb pull ${file.absolutePath}")
     }
 
-    // --- tiny helpers ---
-
-    private fun round1(v: Double) = Math.round(v * 10.0) / 10.0
-    private fun round2(v: Double) = Math.round(v * 100.0) / 100.0
+    private fun clientOrNull(): HealthConnectClient? {
+        return if (HealthConnectClient.getSdkStatus(this) == HealthConnectClient.SDK_AVAILABLE) {
+            HealthConnectClient.getOrCreate(this)
+        } else {
+            append("Health Connect not available.")
+            null
+        }
+    }
 
     private fun append(line: String) {
         Log.i(TAG, line)

@@ -14,11 +14,14 @@
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
 
-    <!-- Special-access permissions (for later backfill / background reads).   -->
+    <!-- Special-access permissions (backfill / background sync).              -->
     <!-- READ_HEALTH_DATA_HISTORY  -> data older than 30 days.                 -->
     <!-- READ_HEALTH_DATA_IN_BACKGROUND -> reads while app not in foreground.  -->
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY" />
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
+
+    <!-- Push runs to the SPLITS ingest endpoint. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- ============================================================= -->
     <!-- Package visibility: needed to detect / talk to the Health     -->
@@ -31,11 +34,15 @@
         </intent>
     </queries>
 
+    <!-- usesCleartextTraffic: the ingest transport is a private LAN/tailnet   -->
+    <!-- (http://100.x / http://192.168.x) until 5.3 lands a TLS path; https   -->
+    <!-- URLs work unchanged.                                                  -->
     <application
         android:allowBackup="false"
         android:icon="@android:drawable/ic_menu_compass"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SplitsSpike">
 
         <activity

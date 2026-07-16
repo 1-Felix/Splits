@@ -26,7 +26,7 @@ plan (5.2), network path (5.3), NUC smoke (5.4), and finishing the Android app
 | 2 | `POST /api/ingest` + JSON run store | ✅ built + tested |
 | 3 | Python telemetry builder | ✅ built + tested |
 | 4 | Dashboard degradation guards | ✅ **done 2026-07-16** — readiness DID crash the page (repro'd); guarded + Playwright-tested |
-| 5 | Deployment | 5.1✓ (compose profile) · 5.2 plan / 5.3 network / 5.4 smoke **open** |
+| 5 | Deployment | 5.1✓ 5.4✓ (**NUC live 2026-07-16**, see below) · 5.2 plan / 5.3 network **open** |
 | 6 | Finish the Android app | ❌ open (mostly physical; 6.1 must map spike JSON → ingest payload, see 7.3 note) |
 | 7 | Reader scope-expansion | 7.1✓ 7.2✓ · 7.3 code lives in the spike already; Declaration paperwork open |
 | 8 | Ingest payload + validation expansion | ✅ **done 2026-07-16** (incl. RHR payload form) |
@@ -48,9 +48,24 @@ Galaxy Watch → Samsung Health → Health Connect ←[bridge app reads]→ POST
                                                                     Max's dashboard
 ```
 
-One image, config-only difference. Max's compose service exists behind a profile:
-`docker compose --profile max up -d` (port 8001, volume `splits-max-data`,
-`SPLITS_INGEST_TOKEN_MAX` env; no Garmin creds, `SYNC_*` off).
+One image, config-only difference. Max's compose service exists behind a profile
+in the repo template (`docker compose --profile max up -d`, port 8001).
+
+## NUC deployment (LIVE since 2026-07-16)
+
+- Committed (`8021c43`…`100b3d7`), pushed, CI image built, and **both instances
+  deployed on the NUC**: `splits` (Felix, host port 5732, verified untouched)
+  and `splits-max` (host port **5733**, LAN-only — no traefik labels yet since
+  the phone→NUC path is the open 5.3 decision and `pocketid-auth` would block
+  the bridge app's token POSTs).
+- NUC compose: `~/dev/docker-compose-files/splits/docker-compose.yml` (backup
+  `docker-compose.yml.bak-2026-07-16`); volume `./volumes/splits-max-data`.
+- The ingest token lives in that folder's `.env` as `SPLITS_INGEST_TOKEN_MAX`
+  (generated 2026-07-16) — the bridge app will need this value + the URL.
+- 5.4 smoke PASSED on the NUC: curl run + RHR payloads → 200 → rebuilt
+  telemetry had correct pace/volume/zones (Karvonen), energy, calibrated maxHR;
+  smoke data then removed, instance back to a clean 0-run state with the
+  default seeded plan.
 
 ## Ingest contract (implemented)
 
@@ -116,13 +131,18 @@ Samsung Health** (HC sync on) → re-run the spike → look for a
 
 ## Recommended resume order
 
-1. **5.2** Max's `plan-data.js` (needs Felix: race choice/date, then author a
-   beginner→half `block` — see running-data.js:20; validate with test_plan_validate).
-2. **6.1–6.3** finish the app: map the spike's diagnostic JSON onto the ingest
+1. **1.4 the gate** (do before investing in the app): record a Samsung Health
+   run on the Galaxy Watch → re-run the spike → look for a
+   `com.sec.android.app.shealth` session source.
+2. **5.2** Max's `plan-data.js` (needs Felix: race choice/date, then author a
+   beginner→half `block` — see running-data.js:20; validate with
+   test_plan_validate; write into `volumes/splits-max-data/` on the NUC).
+3. **6.1–6.3** finish the app: map the spike's diagnostic JSON onto the ingest
    payload (field names in “Ingest contract” above), WorkManager sync, config
-   screen (server URL + token), backfill + retry. Start **6.4 Declaration** early.
-3. **Physical:** 1.4 gate, 5.3 network path (Tailscale vs reverse proxy), 5.4
-   NUC smoke (`--profile max`), 6.5 sideload.
+   screen (server URL + `SPLITS_INGEST_TOKEN_MAX`), backfill + retry. Start
+   **6.4 Declaration** early.
+4. **5.3 network path** (Tailscale vs a proxy route WITHOUT pocketid-auth on
+   `/api/ingest`), then **6.5** sideload + set-and-forget verification.
 
 ## Environment & operational gotchas (Windows dev)
 

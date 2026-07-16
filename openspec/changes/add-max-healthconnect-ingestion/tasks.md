@@ -32,7 +32,7 @@
 - [x] 5.1 Add a second compose service + volume for Max: no Garmin credentials, `SYNC_ON_BOOT=off` / `SYNC_AT=off`, `SPLITS_INGEST_TOKEN` set — *`splits-max` service behind an opt-in compose profile (`docker compose --profile max up -d`), port 8001, own volume; `compose config` validates; NUC rollout itself is 5.4*
 - [ ] 5.2 Author Max's `plan-data.js` (beginner→half marathon, Felix + AI); validate against the plan schema
 - [ ] 5.3 Establish the phone→NUC network path (Tailscale or TLS reverse proxy) so the app reaches `/api/ingest` securely
-- [ ] 5.4 End-to-end smoke: spike app (or a curl-simulated payload) → `/api/ingest` → the run shows on Max's dashboard with correct pace/volume/load/zones, and Felix's instance is unaffected
+- [x] 5.4 End-to-end smoke: spike app (or a curl-simulated payload) → `/api/ingest` → the run shows on Max's dashboard with correct pace/volume/load/zones, and Felix's instance is unaffected — *DONE 2026-07-16 on the NUC: curl run+RHR → 200 → rebuilt telemetry showed pace 360, 5.0 km, zones binned (Karvonen, rhr 52), energy 420 kcal, maxHR calibrated 175; Felix's instance verified untouched; smoke data removed afterwards (instance back to 0 runs)*
 
 ## 6. Finish the Android app (Phase 2)
 

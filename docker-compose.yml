@@ -37,6 +37,10 @@ services:
   # Garmin). Same image, its own volume — all divergence is config (design D2).
   # Opt-in via profile so a plain `docker compose up -d` never starts it:
   #   docker compose --profile max up -d
+  # If you front this with an SSO reverse proxy (traefik + oidc etc.), exempt
+  # POST /api/ingest from the SSO middleware via a second, higher-priority
+  # route — the bridge app authenticates with its own bearer token and an SSO
+  # redirect would block its pushes. Keep the dashboard routes SSO-gated.
   splits-max:
     image: ghcr.io/1-felix/splits:latest
     container_name: splits-max

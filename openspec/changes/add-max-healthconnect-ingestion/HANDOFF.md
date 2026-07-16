@@ -55,11 +55,14 @@ in the repo template (`docker compose --profile max up -d`, port 8001).
 
 ## NUC deployment (LIVE since 2026-07-16)
 
-- Committed (`8021c43`…`100b3d7`), pushed, CI image built, and **both instances
-  deployed on the NUC**: `splits` (Felix, host port 5732, verified untouched)
-  and `splits-max` (host port **5733**, LAN-only — no traefik labels yet since
-  the phone→NUC path is the open 5.3 decision and `pocketid-auth` would block
-  the bridge app's token POSTs).
+- Committed, pushed, CI image built, and **both instances deployed on the
+  NUC**: `splits` (Felix, host port 5732, verified untouched) and `splits-max`
+  (host port 5733 on the LAN **and public since 2026-07-16 evening**:
+  `https://splits-max.mochii.dev` via Cloudflare Tunnel → traefik — dashboard
+  behind `pocketid-auth`, `/api/ingest` on its own higher-priority SSO-free
+  router; gotcha: the service must be on the `proxy` network or traefik hangs).
+  Max needs a pocket-id account to view his dashboard (Felix admin task).
+  Max's plan (5.2) live on the volume; `ATHLETE_AGE=25` set.
 - NUC compose: `~/dev/docker-compose-files/splits/docker-compose.yml` (backup
   `docker-compose.yml.bak-2026-07-16`); volume `./volumes/splits-max-data`.
 - The ingest token lives in that folder's `.env` as `SPLITS_INGEST_TOKEN_MAX`
@@ -177,11 +180,14 @@ Dev server (`PORT=18497`, scratchpad `SPLITS_DATA_DIR`, `SPLITS_INGEST_TOKEN`)
    `max-plan-generator.py` in this folder when he registers — edit RACE/START,
    run, validate, docker-exec onto the volume; default seed backed up as
    `plan-data.js.bak-default`).
-3. **6.4 Declaration** paperwork (Google Health Connect Developer Declaration).
-4. **5.3 network path** (Tailscale vs a proxy route WITHOUT pocketid-auth on
-   `/api/ingest`), then **6.5** sideload to Max's Pixel: set URL +
-   `SPLITS_INGEST_TOKEN_MAX` + backfill date in the app, grant, Sync now —
-   then verify set-and-forget over several days.
+3. ~~5.3 network path~~ — DONE 2026-07-16: public traefik route
+   `https://splits-max.mochii.dev` (ingest SSO-exempt, dashboard SSO-gated).
+4. **6.4 Declaration** paperwork (Google Health Connect Developer Declaration).
+5. **6.5** sideload to Max's Pixel: bridge app URL `https://splits-max.mochii.dev`
+   + `SPLITS_INGEST_TOKEN_MAX` (NUC `.env`) + backfill date, grant HC perms
+   (incl. the Samsung Health WRITE toggles — see the gate section), Sync now —
+   then verify set-and-forget over several days. Give Max a pocket-id account
+   so he can open his dashboard.
 
 ## Environment & operational gotchas (Windows dev)
 

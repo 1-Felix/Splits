@@ -180,14 +180,25 @@ Dev server (`PORT=18497`, scratchpad `SPLITS_DATA_DIR`, `SPLITS_INGEST_TOKEN`)
    `max-plan-generator.py` in this folder when he registers — edit RACE/START,
    run, validate, docker-exec onto the volume; default seed backed up as
    `plan-data.js.bak-default`).
-3. ~~5.3 network path~~ — DONE 2026-07-16: public traefik route
-   `https://splits-max.mochii.dev` (ingest SSO-exempt, dashboard SSO-gated).
-4. **6.4 Declaration** paperwork (Google Health Connect Developer Declaration).
-5. **6.5** sideload to Max's Pixel: bridge app URL `https://splits-max.mochii.dev`
-   + `SPLITS_INGEST_TOKEN_MAX` (NUC `.env`) + backfill date, grant HC perms
-   (incl. the Samsung Health WRITE toggles — see the gate section), Sync now —
-   then verify set-and-forget over several days. Give Max a pocket-id account
-   so he can open his dashboard.
+3. ~~5.3 network path~~ — DONE: public traefik route `https://splits-max.mochii.dev`
+   (ingest SSO-exempt; dashboard on the NEW `pocketid-auth-family@file`
+   middleware — 403s until the pocket-id groups exist, see below).
+4. ~~6.4 Declaration~~ — RESOLVED: sideload-only needs no filing (form retired
+   into Play Console; enforcement targets Play apps). Watch-item: Play
+   closed-testing under the AirPipe account if that changes.
+5. **Felix's pocket-id admin steps (before Max's dashboard works):** at
+   pocket-id.felix-keller.com create groups `admin` (Felix) and `family`
+   (Felix + Max), create user `max` + one-time access link → Max registers a
+   passkey on his Pixel. AFTERWARDS, optionally lock the main `pocketid-auth`
+   middleware to `admin` — the prepared Authorization block is left commented
+   in traefik's fileConfig.yml (until then any pocket-id account passes SSO on
+   ~24 services incl. code-server).
+6. **6.5** onboard Max's Pixel: Samsung Health ≥ 7.00.5.009 (Play-update if
+   7.00.0.107) → Health Connect → App permissions → Samsung Health → enable
+   WRITE toggles (the gate's root cause!) → watch-run → app's Diagnostic dump
+   wants GATE: YES **with hrSampleCount > 0** → configure the bridge app: URL
+   `https://splits-max.mochii.dev` + `SPLITS_INGEST_TOKEN_MAX` (NUC `.env`) +
+   backfill date → Sync now → verify set-and-forget over several days.
 
 ## Environment & operational gotchas (Windows dev)
 
@@ -225,15 +236,17 @@ node test_slim_render.mjs
 node test_cockpit_page.mjs && node test_progress_page.mjs
 
 # build + run the bridge app (device = Galaxy S24 SM-S921B, all 11 perms granted)
+# applicationId renamed 2026-07-16 (Play-clean): com.splits.bridge; the CODE
+# namespace stays com.splits.healthspike, so the component is the mixed name:
 JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" android-bridge/gradlew -p android-bridge :app:assembleDebug --console=plain
 adb install -r android-bridge/app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.splits.healthspike/.MainActivity
+adb shell am start -n com.splits.bridge/com.splits.healthspike.MainActivity
 # UI (top→bottom): URL / token / backfill-date fields, then buttons:
 #   GRANT PERMISSIONS · SYNC NOW · DIAGNOSTIC DUMP (GATE CHECK) · RESET DELIVERY STATE
 # logs: adb logcat -s SPLITS_BRIDGE
 # local E2E: adb reverse tcp:<port> tcp:<port> → app URL http://127.0.0.1:<port>
 # diagnostic dump still writes the pullable file with the GATE verdict:
-MSYS_NO_PATHCONV=1 adb pull /storage/emulated/0/Android/data/com.splits.healthspike/files/splits_spike_runs.json "C:/<abs-windows-path>.json"
+MSYS_NO_PATHCONV=1 adb pull /storage/emulated/0/Android/data/com.splits.bridge/files/splits_spike_runs.json "C:/<abs-windows-path>.json"
 ```
 
 ## Commit state

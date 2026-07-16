@@ -7,7 +7,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.splits.healthspike"
+        // applicationId is the app's permanent identity (Play-compatible name,
+        // decided 2026-07-16 before first family install); the code namespace
+        // deliberately stays com.splits.healthspike — renaming it would only
+        // churn source paths.
+        applicationId = "com.splits.bridge"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

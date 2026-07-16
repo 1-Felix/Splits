@@ -142,19 +142,24 @@
     </div>
     </sc-if>
 
-    <!-- coach -->
-    <div class="card card--roomy" style="display:flex;flex-direction:column">
+    <!-- coach — note is live coach-written text of unbounded length; card--pin
+         keeps it from setting the hero row's height (it scrolls instead) -->
+    <div id="card-coach" class="card card--roomy card--pin">
+      <div class="pin-body">
       <div style="display:flex;align-items:center;gap:var(--sp-2)">
         <div style="width:22px;height:22px;border-radius:var(--r-sm);background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:var(--fs-sm);color:#0E0F12">AI</div>
         <div class="eyebrow" style="letter-spacing:.16em">COACH</div>
         <span style="margin-left:auto;font-size:var(--fs-2xs);color:var(--sub);font-weight:600">via Claude Code</span>
       </div>
-      <div style="font-size:var(--fs-md);font-weight:800;letter-spacing:-.01em;margin:var(--sp-3) 0 var(--sp-2);line-height:1.25">{{ coach.headline }}</div>
-      <div style="font-size:var(--fs-base);line-height:1.5;color:var(--sub);font-weight:500">{{ coach.note }}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)">
-        <sc-for list="{{ coach.focus }}" as="f" hint-placeholder-count="3">
-          <span style="font-size:var(--fs-xs);font-weight:600;padding:5px 9px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--ink);border:1px solid var(--line)">{{ f }}</span>
-        </sc-for>
+      <div class="pin-scroll">
+        <div style="font-size:var(--fs-md);font-weight:800;letter-spacing:-.01em;margin:var(--sp-3) 0 var(--sp-2);line-height:1.25">{{ coach.headline }}</div>
+        <div style="font-size:var(--fs-base);line-height:1.5;color:var(--sub);font-weight:500">{{ coach.note }}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)">
+          <sc-for list="{{ coach.focus }}" as="f" hint-placeholder-count="3">
+            <span style="font-size:var(--fs-xs);font-weight:600;padding:5px 9px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--ink);border:1px solid var(--line)">{{ f }}</span>
+          </sc-for>
+        </div>
+      </div>
       </div>
     </div>
   </section>
@@ -401,12 +406,15 @@
       </sc-for>
     </div>
 
-    <div class="card">
+    <!-- coach.log grows with every coaching session; card--pin caps this card
+         at the runs table's height and scrolls the timeline inside -->
+    <div id="card-planlog" class="card card--pin">
+      <div class="pin-body">
       <div style="display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-4)">
         <div style="width:20px;height:20px;border-radius:var(--r-sm);background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:var(--fs-xs);color:#0E0F12">AI</div>
         <div style="font-size:var(--fs-base);font-weight:800">Plan adjustments</div>
       </div>
-      <div class="timeline">
+      <div class="timeline pin-scroll">
         <sc-for list="{{ coachLog }}" as="l" hint-placeholder-count="3">
           <div class="timeline-item">
             <div style="display:flex;flex-direction:column;align-items:center;flex:none">
@@ -422,6 +430,7 @@
       </div>
       <div style="margin-top:var(--sp-1);padding:var(--sp-3);border:1px dashed var(--line);border-radius:var(--r-md);font-size:var(--fs-xs);color:var(--sub);line-height:1.45;font-weight:500">
         Your agent reads &amp; writes <span style="font-family:'JetBrains Mono';color:var(--ink)">running-data.js</span> — edit the plan there and this dashboard updates.
+      </div>
       </div>
     </div>
   </section>

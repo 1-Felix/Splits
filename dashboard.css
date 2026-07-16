@@ -68,6 +68,20 @@
 .card--roomy { padding: var(--sp-5); }
 .card--hero  { background: linear-gradient(150deg, var(--panel2), var(--panel)); padding: var(--sp-5); }
 
+/* pinned cards — cards whose body is live, unbounded coach text (coach.note,
+   coach.log). On desktop they must not set their grid row's height: the row
+   partner does (countdown card / runs table), and the .pin-scroll region
+   scrolls inside instead. Below 900px the rows stack to one column (no row
+   partner to stretch), so the cards simply grow with their content. */
+.pin-body { display: flex; flex-direction: column; min-height: 0; }
+@media (min-width: 901px) {
+  .card--pin { position: relative; overflow: hidden; }
+  .card--pin > .pin-body { position: absolute; inset: 0; padding: inherit; }
+  .card--pin .pin-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  #card-coach   { min-height: 240px; }  /* floors, in case the row partner is short */
+  #card-planlog { min-height: 380px; }
+}
+
 /* floating data-point card (hover/tap). position/left/top/transform stay inline (dynamic). */
 .pop { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2); font-size: var(--fs-xs); line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-pop); pointer-events: none; }
 

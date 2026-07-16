@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Plain AppCompat theme; avoids pulling in a Material dependency for a throwaway spike. -->
+    <style name="Theme.SplitsSpike" parent="Theme.AppCompat.DayNight.NoActionBar" />
+</resources>

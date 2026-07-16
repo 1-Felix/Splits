@@ -91,7 +91,8 @@
   <!-- ===== CHART GRID (relocated from the cockpit) ===== -->
   <section id="sec-charts" class="chart-grid">
 
-    <!-- VO2 -->
+    <!-- VO2 — hidden entirely when the telemetry has no vo2max (design D7) -->
+    <sc-if value="{{ hasVo2 }}">
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · {{ vo2.sub }}</div></div>
@@ -100,6 +101,7 @@
       <div class="scope-row"><sc-for list="{{ vo2.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
       {{ vo2.chart }}
     </div>
+    </sc-if>
 
     <!-- PACE -->
     <div class="card">
@@ -578,7 +580,10 @@ class Component extends DCLogic {
 
     const now = this.state.now || new Date();
     const displayToday = this.localISO(now);
-    const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
+    // An ingest-fed instance omits history.vo2max entirely (design D7) — the
+    // VO₂ card hides and nothing below may touch the array.
+    const hasVo2 = Array.isArray(H.vo2max) && H.vo2max.length > 0;
+    const vo2Now = hasVo2 ? H.vo2max[H.vo2max.length-1] : null, vo2Prev = hasVo2 ? H.vo2max[H.vo2max.length-4] : null;
     const kmNow = H.weeklyKm[H.weeklyKm.length-1];
     const form = +(H.ctl[H.ctl.length-1]-H.atl[H.atl.length-1]).toFixed(0);
     const goalP = D.race.goalPaceSecPerKm;
@@ -637,10 +642,12 @@ class Component extends DCLogic {
     };
 
     // ---- VO₂ max: minimum-span domain + 12-month median band (engine) -------
+    let vo2 = {};
+    if (hasVo2) {
     const vo2Cut = this.scopeCut('vo2', H.vo2max.length, this.MONTH_SCOPES);
     const vo2Vals = H.vo2max.slice(-vo2Cut.keep);
     const vo2Dates = monthDates(H.vo2maxStartMonth, H.vo2max.length).slice(-vo2Cut.keep);
-    const vo2 = {
+    vo2 = {
       last: vo2Now.toFixed(1), delta: '+' + (vo2Now - vo2Prev).toFixed(1) + ' / 3mo',
       sub: spanOf(vo2Dates, 'mo') + ' · 12-mo median band',
       scopes: vo2Cut.scopes,
@@ -659,6 +666,7 @@ class Component extends DCLogic {
           ] }))
       }).chart
     };
+    }
 
     // ---- avg pace: goal rule always in frame, no area fill (engine) ---------
     const paceCut = this.scopeCut('pace', H.paceSecPerKm.length, this.MONTH_SCOPES);
@@ -933,7 +941,7 @@ class Component extends DCLogic {
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
       historyWindow: '30-month history · synced ' + pill.dateLabel,
-      race, vol, vo2, pace, fit, form: formObj, cad,
+      race, vol, hasVo2, vo2, pace, fit, form: formObj, cad,
       hasInsights, eff, cadRef, recs, wall,
       hasYoy, yoy,
       effPanel, cadPanel, yoyPanel,

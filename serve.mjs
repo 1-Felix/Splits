@@ -22,6 +22,7 @@ import { gzipSync } from "node:zlib";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPlan, validatePlanText } from "./plan-io.mjs";
+import { validateRunPayload, bankRun, validateRhrPayload, bankRhr } from "./ingest-store.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const PORT = Number(process.env.PORT) || 8000;
@@ -64,6 +65,17 @@ const STALE_HOURS = Number(process.env.SYNC_STALE_HOURS || 18);
 const PLAN_TOKEN = process.env.SPLITS_PLAN_TOKEN || "";
 const PLAN_MAX_BYTES = 512 * 1024;
 let planSeq = 0;
+
+// Run ingest (POST /api/ingest). OFF unless a token is set — same opt-in shape as
+// plan push, so an instance that doesn't ingest never exposes the route (it 404s).
+// HR sample series make a run payload larger than a plan, hence a roomier cap.
+const INGEST_TOKEN = process.env.SPLITS_INGEST_TOKEN || "";
+const INGEST_MAX_BYTES = 1024 * 1024;
+// The ingest builder script + a watchdog ceiling: a hung builder is killed after
+// this many seconds so the single-flight latch can't wedge every future rebuild.
+// SPLITS_BUILDER is overridable for tests (points the spawn at a stand-in script).
+const BUILDER = process.env.SPLITS_BUILDER || "ingest_builder.py";
+const BUILD_TIMEOUT_S = Number(process.env.SPLITS_BUILD_TIMEOUT_S || 120);
 
 // Archive API (GET /api/archive/…). The database normally sits in the data dir;
 // SPLITS_ARCHIVE_DIR points dev-against-a-mounted-data-dir at a LOCAL archive
@@ -184,6 +196,15 @@ let planPushChain = Promise.resolve();
 function planPushExclusive(fn) {
   const run = planPushChain.then(fn, fn);
   planPushChain = run.then(() => {}, () => {});
+  return run;
+}
+
+// Serialize run ingests so the store's read-modify-write can't interleave (each
+// bank reads the whole file, upserts one run, atomically renames it back).
+let ingestChain = Promise.resolve();
+function ingestExclusive(fn) {
+  const run = ingestChain.then(fn, fn);
+  ingestChain = run.then(() => {}, () => {});
   return run;
 }
 
@@ -542,6 +563,44 @@ function runSync() {
   });
 }
 
+// Rebuild garmin-data.js from the banked ingest store (ingest_builder.py), single-
+// flight. Fire-and-forget + soft-fail: banking is the durable truth, the build is a
+// derived view — a build failure never fails the ingest, and a later ingest or the
+// next boot rebuilds. A rebuild requested mid-build coalesces into one follow-up run.
+let building = false;
+let buildPending = false;
+function triggerBuild() {
+  if (building) { buildPending = true; return; }
+  building = true;
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    building = false;
+    if (buildPending) { buildPending = false; triggerBuild(); }
+  };
+  let child;
+  try {
+    child = spawn(PYTHON, [BUILDER], { cwd: ROOT, env: process.env, windowsHide: true });
+  } catch (e) {
+    console.error("build spawn failed:", e && e.message);
+    settle();
+    return;
+  }
+  // Watchdog: kill a hung builder and settle regardless, so `building` can never
+  // stay latched forever (the store is the durable truth; a later build catches up).
+  const watchdog = setTimeout(() => {
+    console.error(`build timed out after ${BUILD_TIMEOUT_S}s — killing builder`);
+    try { child.kill(); } catch { /* already gone */ }
+    settle();
+  }, BUILD_TIMEOUT_S * 1000);
+  watchdog.unref && watchdog.unref();
+  child.on("error", (e) => { console.error("build error:", e && e.message); clearTimeout(watchdog); settle(); });
+  child.stderr && child.stderr.on("data", (d) => process.stderr.write(d));
+  child.stdout && child.stdout.on("data", (d) => process.stdout.write(d));
+  child.on("close", (code) => { if (code) console.error(`build exited ${code}`); clearTimeout(watchdog); settle(); });
+}
+
 // Trigger a sync, honoring single-flight. Returns the result (or already-running).
 async function triggerSync() {
   if (syncing) return { ok: false, status: "already-running" };
@@ -643,6 +702,46 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ── run ingest: bank a pushed Health Connect run (telemetry-ingest). Gated on
+    //    SPLITS_INGEST_TOKEN — unset ⇒ the route falls through to the static handler
+    //    and 404s, exactly like plan push when its token is unset.
+    if (pathname === "/api/ingest" && INGEST_TOKEN) {
+      if (req.method !== "POST") { json(req, res, 405, { ok: false, error: "use POST" }); return; }
+      const authz = req.headers["authorization"] || "";
+      const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
+      if (!safeEqual(token, INGEST_TOKEN)) { json(req, res, 401, { ok: false, error: "unauthorized" }); return; }
+      const declared = Number(req.headers["content-length"]);
+      if (Number.isFinite(declared) && declared > INGEST_MAX_BYTES) {
+        json(req, res, 413, { ok: false, error: "body too large" });
+        return;
+      }
+      let body;
+      try {
+        body = await readBody(req, INGEST_MAX_BYTES);
+      } catch (e) {
+        json(req, res, e.code === "TOO_LARGE" ? 413 : 400, { ok: false, error: e.message });
+        return;
+      }
+      let obj;
+      try { obj = JSON.parse(body); } catch { json(req, res, 400, { ok: false, error: "body must be JSON" }); return; }
+      // Two payload forms ride this endpoint: a run (has sessionUid) and a
+      // daily resting-HR series (has restingHeartRate) — banked apart (D12).
+      if (obj && typeof obj === "object" && !Array.isArray(obj) && obj.sessionUid === undefined && Array.isArray(obj.restingHeartRate)) {
+        const vr = validateRhrPayload(obj);
+        if (!vr.ok) { json(req, res, 422, { ok: false, error: vr.error }); return; }
+        const days = await ingestExclusive(() => bankRhr(DATA_DIR, vr.days));
+        triggerBuild(); // RHR feeds Karvonen zones + the trend line
+        json(req, res, 200, { ok: true, days });
+        return;
+      }
+      const v = validateRunPayload(obj);
+      if (!v.ok) { json(req, res, 422, { ok: false, error: v.error }); return; }
+      const runs = await ingestExclusive(() => bankRun(DATA_DIR, v.run));
+      triggerBuild(); // rebuild telemetry from the banked runs (async, soft-fail)
+      json(req, res, 200, { ok: true, sessionUid: v.run.sessionUid, runs });
+      return;
+    }
+
     // clean page routes serve their component file directly; /run/:id is the
     // one parameterised route (run-detail D6) — the page reads its id from
     // location.pathname, never from the served filename
@@ -686,4 +785,7 @@ server.listen(PORT, () => {
   console.log(`  data dir: ${DATA_DIR}`);
   bootSync();
   scheduleDailySync();
+  // Ingest-fed instance (no Garmin sync): rebuild telemetry from the banked runs
+  // on boot so a restart reflects everything ingested so far.
+  if (INGEST_TOKEN) { console.log("  ingest-fed: building telemetry from banked runs…"); triggerBuild(); }
 });

@@ -48,6 +48,7 @@ export const POLICIES = {
   fitnessFatigue: { zero: true, tickCount: 4, fmt: fmt.int },
   sleepHours: { zero: true, max: 10, tickCount: 5, fmt: fmt.int, ref: { type: "span", lo: 7, hi: 9 } },
   hrv: { minSpan: 20, tickCount: 4, fmt: fmt.int, ref: { type: "medianBand", window: 7 } },
+  restingHr: { minSpan: 10, tickCount: 4, fmt: fmt.int, ref: { type: "medianBand", window: 14 }, dirLabel: "fitter ↓" },
   efficiency: { minSpan: 60, steps: [15, 30, 60, 120], fmt: fmt.pace, dirLabel: "faster ↓",
     ref: { type: "medianBand", window: 7 }, weights: { floor: 20, max: 300 } },
   cadenceAtRefPace: { minSpan: 10, tickCount: 4, fmt: fmt.int,

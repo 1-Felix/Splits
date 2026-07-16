@@ -33,5 +33,30 @@ services:
     volumes:
       - splits-data:/data     # garmin-data.js, plan-data.js, token + raw cache
 
+  # ── second athlete: an ingest-fed instance (Health Connect bridge app, no ────
+  # Garmin). Same image, its own volume — all divergence is config (design D2).
+  # Opt-in via profile so a plain `docker compose up -d` never starts it:
+  #   docker compose --profile max up -d
+  splits-max:
+    image: ghcr.io/1-felix/splits:latest
+    container_name: splits-max
+    restart: unless-stopped
+    init: true
+    profiles: ["max"]
+    ports:
+      - "8001:8000"
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      # no Garmin credentials — this instance is fed by POST /api/ingest only
+      SYNC_ON_BOOT: "off"
+      SYNC_AT: "off"
+      SPLITS_INGEST_TOKEN: ${SPLITS_INGEST_TOKEN_MAX:-}   # required: enables /api/ingest + boot build
+      ATHLETE_NAME: ${MAX_NAME:-Max}
+      ATHLETE_AGE: ${MAX_AGE:-}
+      ATHLETE_MAX_HR: ${MAX_MAX_HR:-}
+    volumes:
+      - splits-max-data:/data   # ingested-runs.json, ingested-rhr.json, plan-data.js, built garmin-data.js
+
 volumes:
   splits-data:
+  splits-max-data:

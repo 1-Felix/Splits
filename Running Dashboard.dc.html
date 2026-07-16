@@ -110,7 +110,8 @@
       </div>
     </div>
 
-    <!-- readiness -->
+    <!-- readiness — absent entirely on an ingest-fed instance (design D7) -->
+    <sc-if value="{{ hasReady }}">
     <div id="card-ready" class="card card--roomy" style="display:flex;flex-direction:column">
       <div class="eyebrow" style="letter-spacing:.18em">TODAY · READINESS</div>
       <div style="display:flex;align-items:center;gap:var(--sp-2);margin:var(--sp-3) 0 var(--sp-1)">
@@ -139,6 +140,7 @@
         <span style="font-weight:700">{{ readiness.trainingLoad }} · <span style="color:var(--good)">{{ readiness.loadStatus }}</span></span>
       </div>
     </div>
+    </sc-if>
 
     <!-- coach -->
     <div class="card card--roomy" style="display:flex;flex-direction:column">
@@ -301,7 +303,9 @@
     </div>
 
     <!-- SLEEP + HRV — two measures, two frames, two honest scales (chart-engine
-         D5: the old dual-axis "Sleep & HRV" canvas manufactured a correlation) -->
+         D5: the old dual-axis "Sleep & HRV" canvas manufactured a correlation).
+         Both hide when the telemetry has no sleep history at all (design D7). -->
+    <sc-if value="{{ hasSleep }}">
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">Sleep</div><div class="card-sub">{{ sleep.sub }}</div></div>
@@ -317,6 +321,19 @@
       </div>
       {{ hrv.chart }}
     </div>
+    </sc-if>
+
+    <!-- RESTING HR trend (design D12) — the ingest-fed instance's fitness
+         signal; hidden when the telemetry carries no restingHr history -->
+    <sc-if value="{{ hasRhr }}">
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Resting HR</div><div class="card-sub">{{ rhr.sub }}</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ rhr.last }}<span style="font-size:var(--fs-sm);color:var(--sub)"> bpm</span></div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">latest</div></div>
+      </div>
+      {{ rhr.chart }}
+    </div>
+    </sc-if>
 
   </section>
 
@@ -718,25 +735,28 @@ class Component extends DCLogic {
     };
 
     // readiness ring — one hit target + a placed card; placement comes from
-    // chart-core's re-exported cardPlace (chart-hover geometry, unchanged)
+    // chart-core's re-exported cardPlace (chart-hover geometry, unchanged).
+    // An ingest-fed instance has no readiness at all (design D7) — the card
+    // hides via hasReady and everything ring-shaped stays inert.
+    const rd = D.readiness || null;
+    const hasReady = !!rd;
     const c = 2*Math.PI*50;
-    const ring = { c:+c.toFixed(1), off:+(c*(1-D.readiness.score/100)).toFixed(1) };
-    const rd = D.readiness;
-    const ringRows = [
+    const ring = { c:+c.toFixed(1), off: rd ? +(c*(1-rd.score/100)).toFixed(1) : 0 };
+    const ringRows = rd ? [
       { t: 'Readiness ' + rd.score + ' · ' + rd.status, em: true },
       { t: 'HRV ' + rd.hrv + ' · RHR ' + rd.restingHR, em: false },
       { t: 'Sleep ' + rd.sleepHours + ' h · Load ' + rd.trainingLoad, em: false }
-    ];
+    ] : [];
     const ringObj = {
-      bands: [{ onEnter: () => this.hoverPoint('ring', 0), onClick: (e) => this.pinPoint('ring', 0, e),
-                aria: 'Readiness ' + rd.score + ', ' + rd.status }],
+      bands: rd ? [{ onEnter: () => this.hoverPoint('ring', 0), onClick: (e) => this.pinPoint('ring', 0, e),
+                aria: 'Readiness ' + rd.score + ', ' + rd.status }] : [],
       card: [],
       onLeave: () => this.leaveChart('ring'),
       onKey: (e) => this.chartKey('ring', 1, e),
       navLabel: 'Readiness ring. Enter to read the breakdown.'
     };
     { const hv = this.state.hover;
-      if (cc && hv && hv.chart === 'ring') {
+      if (rd && cc && hv && hv.chart === 'ring') {
         const pl = cc.cardPlace(60, 60, 120, 120);
         const tx = pl.anchorX === 'left' ? '0' : pl.anchorX === 'right' ? '-100%' : '-50%';
         const ty = pl.place === 'above' ? 'calc(-100% - 9px)' : '9px';
@@ -745,21 +765,31 @@ class Component extends DCLogic {
       }
     }
 
-    // KPI tiles
-    const vo2Now = H.vo2max[H.vo2max.length-1], vo2Prev = H.vo2max[H.vo2max.length-4];
+    // KPI tiles — the VO₂ tile exists only when the telemetry carries vo2max at
+    // all (an ingest-fed instance omits the key, design D7), and the prediction
+    // tile tolerates a null halfNow (a fresh instance with no eligible run yet).
+    const hasVo2 = Array.isArray(H.vo2max) && H.vo2max.length > 0;
+    const vo2Now = hasVo2 ? H.vo2max[H.vo2max.length-1] : null, vo2Prev = hasVo2 ? H.vo2max[H.vo2max.length-4] : null;
     const kmNow = H.weeklyKm[H.weeklyKm.length-1], kmPrev = H.weeklyKm[H.weeklyKm.length-5];
     const form = +(H.ctl[H.ctl.length-1]-H.atl[H.atl.length-1]).toFixed(0);
     // predictions.trend now carries the engine's verdict ("closing ≈8s/wk") —
     // colour it by direction; legacy/empty values fall back to neutral.
-    const predTrend = D.predictions.trend || '';
+    const pred = D.predictions || {};
+    const predTrend = pred.trend || '';
     const predTrendColor = predTrend.indexOf('closing') === 0 ? 'var(--good)'
       : predTrend.indexOf('opening') === 0 ? 'var(--warn)' : 'var(--sub)';
-    const kpis = [
-      { label:'VO₂ MAX', value:vo2Now.toFixed(1), unit:'', sub:'Top 5% for age', delta:'+'+(vo2Now-vo2Prev).toFixed(1), deltaColor:'var(--good)' },
+    const kpis = (hasVo2 ? [
+      { label:'VO₂ MAX', value:vo2Now.toFixed(1), unit:'', sub:'Top 5% for age', delta:'+'+(vo2Now-vo2Prev).toFixed(1), deltaColor:'var(--good)' }
+    ] : []).concat([
       { label:'WEEKLY VOLUME', value:Math.round(kmNow), unit:'km', sub:'4-wk avg '+Math.round((H.weeklyKm.slice(-4).reduce((a,b)=>a+b,0)/4)), delta:(kmNow>=kmPrev?'+':'')+Math.round(kmNow-kmPrev)+'km', deltaColor:'var(--sub)' },
       { label:'FORM', value:(form>0?'+':'')+form, unit:'tsb', sub:form>0?'Fresh & ready':'Carrying fatigue', delta:'rising', deltaColor:'var(--good)' },
-      { label:'HALF PREDICTION', value:D.predictions.halfNow.slice(0,4), unit:'', sub:'goal '+D.race.goalTime.slice(0,4), delta:predTrend, deltaColor:predTrendColor }
-    ];
+      { label:'HALF PREDICTION', value:pred.halfNow ? pred.halfNow.slice(0,4) : '—', unit:'', sub:'goal '+D.race.goalTime.slice(0,4), delta:predTrend, deltaColor:predTrendColor }
+    ]);
+    // energy tile (design D13) — only when the telemetry carries calories at all
+    if (D.energy && typeof D.energy.weekKcal === 'number') {
+      kpis.push({ label:'ENERGY', value:Math.round(D.energy.weekKcal), unit:'kcal',
+        sub:'burned this week', delta:'', deltaColor:'var(--sub)' });
+    }
 
     // week plan
     const kindMap = {
@@ -868,17 +898,19 @@ class Component extends DCLogic {
     const weekLabel = activeWeek ? (activeWeek.wk + ' · ' + activeWeek.label) : '';
     const backToCurrent = viewingOther ? [{ onClick: this.clearWeek, onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.clearWeek(); } } }] : [];
 
-    // zones
+    // zones — an all-zero week (fresh ingest-fed instance) divides by nothing
     const ztot = D.hrZones.reduce((a,b)=>a+b.min,0); const zmax = Math.max.apply(null, D.hrZones.map(z=>z.min));
-    const zones = { totalMin:ztot, easyPct:Math.round((D.hrZones[0].min+D.hrZones[1].min)/ztot*100),
-      rows: D.hrZones.map(z=>({ z:z.z, label:z.label, min:z.min, pct:Math.round(z.min/zmax*100), color:'var(--z'+z.z+')' })) };
+    const zones = { totalMin:ztot, easyPct: ztot ? Math.round((D.hrZones[0].min+D.hrZones[1].min)/ztot*100) : 0,
+      rows: D.hrZones.map(z=>({ z:z.z, label:z.label, min:z.min, pct: zmax ? Math.round(z.min/zmax*100) : 0, color:'var(--z'+z.z+')' })) };
 
     // sleep + HRV — two frames, two honest scales (chart-engine D5): hours as
     // zero-anchored bars against the 7–9 h target band; HRV as its own line
-    // over a personal rolling-median baseline band
-    const sl = H.sleep; const sN = sl.length;
+    // over a personal rolling-median baseline band. An ingest-fed instance
+    // carries no history.sleep at all (design D7) — both cards hide.
+    const sl = Array.isArray(H.sleep) ? H.sleep : []; const sN = sl.length;
+    const hasSleep = sN > 0;
     const nightDates = Array.from({ length: sN }, (_, i) => new Date(new Date(D.today + 'T00:00:00Z').getTime() - (sN - 1 - i) * 86400000));
-    const sleepObj = {
+    const sleepObj = !hasSleep ? {} : {
       avgH: (sl.reduce((a, b) => a + b.hours, 0) / sN).toFixed(1),
       sub: sN + ' nights · target band 7–9 h',
       chart: this.engineChart('sleep', {
@@ -896,7 +928,7 @@ class Component extends DCLogic {
       }).chart
     };
     const hrvLast = sl.length ? sl[sl.length - 1].hrv : null;
-    const hrvObj = {
+    const hrvObj = !hasSleep ? {} : {
       last: hrvLast != null ? hrvLast : '—',
       sub: sN + ' nights · personal baseline band',
       chart: this.engineChart('hrv', {
@@ -910,6 +942,28 @@ class Component extends DCLogic {
           lines: [
             { t: this.relLabel(i, sN, 'night'), em: false },
             { t: 'HRV ' + dn.hrv + ' ms', em: true }
+          ] }))
+      }).chart
+    };
+
+    // resting-HR trend (design D12) — an ingest-fed instance's fitness signal;
+    // hidden entirely when the telemetry carries no restingHr history
+    const rh = Array.isArray(H.restingHr) ? H.restingHr : [];
+    const hasRhr = rh.length > 0;
+    const rhrObj = !hasRhr ? {} : {
+      last: rh[rh.length - 1].bpm,
+      sub: rh.length + ' days · personal median band · lower is fitter',
+      chart: this.engineChart('rhr', {
+        ariaLabel: 'Resting heart rate, ' + rh.length + ' days, against your personal baseline band. Arrow keys to inspect.',
+        height: '130px', frame: { w: 600, h: 150 },
+        x: { kind: 'time', dates: rh.map(d => new Date(d.date + 'T00:00:00Z')) },
+        y: { policy: cc ? cc.POLICIES.restingHr : {}, label: 'bpm' },
+        series: [{ key: 'rhr', name: 'Resting HR', color: 'var(--series1)', values: rh.map(d => d.bpm) }],
+        hoverPoints: rh.map((d, i) => ({ i,
+          aria: d.date + ', resting heart rate ' + d.bpm + ' beats per minute',
+          lines: [
+            { t: this.mDate(d.date), em: false },
+            { t: d.bpm + ' bpm', em: true }
           ] }))
       }).chart
     };
@@ -1105,9 +1159,9 @@ class Component extends DCLogic {
       rootStyle, themes, nav, initial:D.profile.name[0],
       greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
       onDismiss: () => this.dismissHover(),
-      race, ring, ringHover: ringObj, readiness:D.readiness, pred:D.predictions, kpis,
+      race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:D.predictions, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, coach:D.coach, coachLog:D.coach.log,
-      zones, sleep:sleepObj, hrv:hrvObj, heat, runs,
+      zones, sleep:sleepObj, hrv:hrvObj, hasSleep, rhr:rhrObj, hasRhr, heat, runs,
       traj, trajCard,
       liveText
     };

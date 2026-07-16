@@ -190,7 +190,11 @@ class MainActivity : AppCompatActivity() {
         val since = now.minus(Duration.ofDays(DIAGNOSTIC_LOOKBACK_DAYS))
         val reader = RunReader(client)
 
-        val sessions = reader.readSessions(since, now)
+        val allSessions = reader.readAllSessions(since, now)
+        val sessions = allSessions.filter {
+            it.exerciseType == androidx.health.connect.client.records.ExerciseSessionRecord.EXERCISE_TYPE_RUNNING ||
+                it.exerciseType == androidx.health.connect.client.records.ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL
+        }
         val runs = sessions.map { reader.readRun(it) }
         val rhr = reader.readRestingHr(since, now)
 
@@ -226,6 +230,11 @@ class MainActivity : AppCompatActivity() {
 
         val shealthCount = sourceCounts[RunReader.SHEALTH_PKG] ?: 0
         val summary = buildString {
+            appendLine("ALL sessions in window: ${allSessions.size} (any type):")
+            allSessions.takeLast(12).forEach {
+                appendLine("   type=${it.exerciseType} src=${it.metadata.dataOrigin.packageName} " +
+                    "start=${it.startTime} title=${it.title ?: "-"}")
+            }
             appendLine("Running sessions: ${runs.size}. Sources:")
             if (sourceCounts.isEmpty()) appendLine("   (none)")
             sourceCounts.forEach { (pkg, n) ->

@@ -134,12 +134,23 @@ in the repo template (`docker compose --profile max up -d`, port 8001).
   derives cadence only when steps exist (Garmin-sourced data has them).
 - Payload shape verified on 14 real runs; `metadataId`→`sessionUid`.
 
-## The open gate — task 1.4 (highest remaining risk)
+## The gate — task 1.4 (MOSTLY CLEARED 2026-07-16 on the S24)
 
-Unchanged: Samsung Health `7.00.0.107` reportedly broke exercise-session writes
-to HC (~July 1 2026; fix 7.00.5.009 sideload-only). To close: record a run **in
-Samsung Health** (HC sync on) → re-run the spike → look for a
-`com.sec.android.app.shealth` source. If NO → manual entry fallback.
+**GATE: YES.** Samsung Health `7.00.5.009` (now on regular rollout — Felix's S24
+has it) writes running `ExerciseSession`s + distance + speed series + calories
+to HC, and **backfilled 4 historic workouts** once allowed to write.
+
+**Root cause of the earlier `GATE: NO`: Health Connect denies Samsung Health
+WRITE permissions by default** (`WRITE_EXERCISE: granted=false` while READ was
+granted). Fix: Health Connect → App permissions → Samsung Health → enable the
+Write toggles. This is a mandatory Max-onboarding step or his feed is silently
+empty.
+
+**Left for Max's Pixel:** check the Samsung Health version (Play-Store-update if
+`7.00.0.107`), grant the HC write toggles, record a **watch** run and confirm HR
+samples arrive (phone-recorded and Samsung phone-auto-detected sessions carry
+**no HR**; the watch path is what Max will use). The app's "Diagnostic dump"
+button now also lists ALL sessions (any type/source) to debug sync issues fast.
 
 ## On-device E2E verification (2026-07-16, Galaxy S24 + local dev server)
 

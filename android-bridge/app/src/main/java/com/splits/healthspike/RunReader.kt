@@ -68,14 +68,18 @@ class RunReader(private val client: HealthConnectClient) {
         const val SERIES_DOWNSAMPLE_SEC = 5L
     }
 
+    /** Every exercise session in [since, until) regardless of type, oldest first (diagnostics). */
+    suspend fun readAllSessions(since: Instant, until: Instant): List<ExerciseSessionRecord> =
+        readAll(ExerciseSessionRecord::class, TimeRangeFilter.between(since, until))
+            .sortedBy { it.endTime }
+
     /** Running sessions in [since, until), oldest first. */
     suspend fun readSessions(since: Instant, until: Instant): List<ExerciseSessionRecord> =
-        readAll(ExerciseSessionRecord::class, TimeRangeFilter.between(since, until))
+        readAllSessions(since, until)
             .filter {
                 it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_RUNNING ||
                     it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL
             }
-            .sortedBy { it.endTime }
 
     /** Reads and joins every metric for one session (origin-filtered). */
     suspend fun readRun(run: ExerciseSessionRecord): BridgeRun {

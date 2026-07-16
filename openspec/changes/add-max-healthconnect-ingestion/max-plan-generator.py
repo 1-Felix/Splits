@@ -237,7 +237,17 @@ block = []
 for i, (phase, focus, tue, thu, sun) in enumerate(W):
     mon = START + timedelta(weeks=i)
     dates = [mon + timedelta(days=d) for d in range(7)]
-    sessions = {"Tue": tue, "Thu": thu, "Sun": sun}
+    # Max's running days: Mon / Wed / Sat (long run Saturday). Race week is the
+    # one exception — the race itself is Sunday, so Saturday becomes a short
+    # pre-race leg-loosener and the "long" slot moves to race day.
+    is_race_week = (i == N_WEEKS - 1)
+    if is_race_week:
+        prerace = steady("Pre-Race Strides", 2, "10 min very easy + 3×15 s strides — wake the legs, nothing more", [
+            {"label": "Easy", "val": "10 min very easy"},
+            {"label": "Strides", "val": "3×15 s"}], load="Easy", zone="Z1")
+        sessions = {"Mon": tue, "Wed": thu, "Sat": prerace, "Sun": sun}
+    else:
+        sessions = {"Mon": tue, "Wed": thu, "Sat": sun}
     days = []
     for dow, d in zip(DOW, dates):
         if dow in sessions:
@@ -245,7 +255,7 @@ for i, (phase, focus, tue, thu, sun) in enumerate(W):
             days.append(s)
         else:
             days.append(rest(dow, d))
-    is_race = (i == N_WEEKS - 1)
+    is_race = is_race_week
     km = round(sum(d["km"] for d in days) - (21.1 if is_race else 0), 1)
     km = int(km) if km == int(km) else km
     long_km = 21.1 if is_race else max(d["km"] for d in days)
@@ -271,17 +281,17 @@ plan = {
     },
     "block": block,
     "coach": {
-        "headline": "40 weeks to a first half marathon — the only job right now: three run/walks a week, every week.",
-        "note": "Max starts from weekly run/walks (~3.5 km with Felix). The arc: 8 weeks run/walk to 30 min continuous, 8 weeks to a 5K benchmark, 10 weeks of aerobic base to a 10K test, 8 weeks of build with tempo, 4 half-specific weeks peaking at an 18 km long run, 2-week taper into a spring half in the Allgäu (race to be picked — the date re-anchors when he registers). Three days a week — Tue/Thu/Sun — everything conversational until Phase 4. Sub-2:30 is the stretch goal; finishing healthy is the actual goal. Rules: walk breaks are a tool, not a failure; any pain that changes the stride ends the run; a missed week just slides — 40 weeks has slack built in.",
+        "headline": "Not one 40-week plan — three short campaigns: a 5K by autumn, a 10K by winter, the half in spring.",
+        "note": "Max starts from weekly run/walks (~3.5 km with Felix). The arc: 8 weeks run/walk to 30 min continuous, 8 weeks to a 5K benchmark, 10 weeks of aerobic base to a 10K test, 8 weeks of build with tempo, 4 half-specific weeks peaking at an 18 km long run, 2-week taper into a spring half in the Allgäu (race TBD — the block re-anchors when he registers). Three days a week — Mon/Wed/Sat, long run Saturday (race day itself is the one Sunday). Motivation is engineered, not hoped for: enter the Wk 16 5K and the Wk 26 10K as REAL events (parkrun counts) so there's always a finish line within ~10 weeks. The 10K test (late January) is the formal re-calculation checkpoint: with six months of real data, ahead-of-curve → consider re-anchoring to a March half; behind → April stays. Sub-2:30 is the stretch goal; finishing healthy is the actual goal. Rules: walk breaks are a tool, not a failure; any pain that changes the stride ends the run; a missed week just slides — the plan has slack built in.",
         "focus": [
             "Three sessions a week, every week — consistency IS the plan",
-            "Everything conversational — if he can't talk, it's too fast",
-            "Walk breaks are a tool, not a failure",
-            "Milestones: 30 min continuous (Wk 8) · 5K test (Wk 16) · 10K test (Wk 26) · race (Apr 25)",
+            "Campaign 1: 30 min continuous (Wk 8), then a real 5K (Wk 16)",
+            "Everything conversational — if he can't talk, it's too fast; walk breaks are a tool",
+            "10K test (Wk 26, late Jan) = re-calculation checkpoint: re-anchor shorter if he's ahead of curve",
         ],
         "log": [
             {"date": "2026-07-16",
-             "text": "Plan authored (Felix + AI): 40 weeks, beginner→half, anchored on a spring-2027 Allgäu half (exact race TBD — re-anchor the block when he registers). Start point: weekly run/walks ~3.5 km. Structure: run/walk foundation → 30 min continuous (Wk 8) → 5K benchmark (Wk 16) → 10K benchmark (Wk 26) → tempo build → half-specific peak (18 km long, Wk 37) → 2-week taper. 3 days/wk Tue/Thu/Sun, peak ~35 km/wk. Zones will calibrate from watch data once the Health Connect bridge feeds real runs; until then everything is effort-based on purpose."},
+             "text": "Plan authored (Felix + AI): beginner→half anchored on a spring-2027 Allgäu half (exact race TBD — re-anchor when he registers). Start point: weekly run/walks ~3.5 km. Days set to Mon/Wed/Sat per Felix (long run Saturday; race day is the one Sunday). The 40-week length was debated — physiologically ~26-28 weeks would do, but the race calendar's earliest real window is March (~34 wks), so the April anchor holds and the length is managed as three campaigns instead: 5K event at Wk 16, 10K event at Wk 26, half in spring. The Wk 26 10K is the explicit re-calculation gate — re-anchor to a March half if the data says he's ahead. Structure: run/walk foundation → 30 min continuous (Wk 8) → 5K → aerobic base → 10K → tempo build → 18 km peak (Wk 37) → 2-week taper; peak ~35 km/wk. Zones calibrate from watch data once the Health Connect bridge feeds real runs; until then everything is effort-based on purpose."},
         ],
     },
 }

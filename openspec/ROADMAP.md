@@ -105,8 +105,14 @@ Split into three sub-stages; 3a is the architectural investment the rest ride on
 - **3b — archive browser + run comparison** *(post-race)*: browse/filter all
   archived activities over the list endpoint; compare runs side by side —
   natural first use: compare Sonthofen to the tune-up races.
-- **3c — block retrospectives** *(post-race)*: what each training block
-  actually did, from `plan_snapshots` × `plan_compliance` × the archive.
+- **3c — block retrospectives** *(shipped early 2026-07-18 as `add-block-lens`)*:
+  reframed from a post-race report into the **block lens** — one deterministic
+  engine over `plan_snapshots` × `plan_compliance` × `run_metrics` ×
+  `race_predictions` (schema v9 `block_lens` table) that renders the in-flight
+  block as a live report card on `/progress` ("The Block": per-week execution,
+  day drill, adaptation metrics, forward tilt, block-vs-block comparison) and
+  becomes each block's retrospective automatically when its race date passes.
+  Same numbers reach `/coach` as the briefing's "Block report" section.
 
 ### 4. `coach-loop` — the companion closes the loop
 Plan-vs-actual compliance scoring in the sync (matched sessions, pace/zone

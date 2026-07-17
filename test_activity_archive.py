@@ -1087,11 +1087,26 @@ def test_schema_v8_adds_map_tables_additively():
     map_cols = {r[1] for r in conn.execute("PRAGMA table_info(activity_maps)")}
     assert {"activity_id", "z", "x0", "y0", "x1", "y1",
             "crop_x", "crop_y", "crop_size", "updated_at"} == map_cols
-    assert arch.get_meta(conn, "schema_version") == "8"
-    # re-opening an already-v8 archive is a no-op, not an error
+    assert arch.get_meta(conn, "schema_version") == "9"
+    # re-opening an already-current archive is a no-op, not an error
     conn.close()
     conn = arch.open_archive(d)
-    assert arch.get_meta(conn, "schema_version") == "8"
+    assert arch.get_meta(conn, "schema_version") == "9"
+    conn.close()
+
+
+def test_schema_v9_adds_block_lens_additively():
+    """v9 creates block_lens and stamps the version; every pre-existing
+    table survives untouched (add-block-lens design D2)."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "block_lens" in tables
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(block_lens)")}
+    assert {"race_date", "race_name", "lens_version", "is_complete",
+            "block_json", "updated_at"} == cols
+    assert arch.get_meta(conn, "schema_version") == "9"
     conn.close()
 
 

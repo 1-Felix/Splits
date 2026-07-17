@@ -39,6 +39,7 @@ GOAL_INTENT_BAND_S = 5      # target within this of goal pace → goal-pace inte
 KM_SUM_TOLERANCE = 0.5      # week header km vs day sum
 LOG_TAIL = 5
 THIN_SAMPLE_MIN = 30        # in-band minutes below which a trend month is thin
+BEHIND_PLAN_RATIO = 0.9     # actual km below this × planned-to-date → hook fires
 
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _PACE_RE = re.compile(r"(\d{1,2}):(\d{2})")
@@ -138,6 +139,81 @@ def integrity_warnings(plan: dict, today: dt.date) -> list[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# the Block report (add-block-lens D7) — rendered from the SAME lens document
+# the dashboard consumes (passed in via `data`, never recomputed here). Numbers
+# only; judgment stays with the /coach ritual.
+# ──────────────────────────────────────────────────────────────────────────────
+def _fmt_signed_hms(sec) -> str:
+    if not sec:
+        return "±0:00"
+    return ("−" if sec < 0 else "+") + _fmt_hms(abs(sec))
+
+
+def block_report_lines(doc: dict) -> list[str]:
+    """The Block report bullet list from one current-block lens document.
+    Null metrics are stated explicitly with their machine reason — never
+    omitted, never invented."""
+    ex = doc.get("execution") or {}
+    ad = doc.get("adaptation") or {}
+    ef, cad, gap = (ad.get("ef") or {}), (ad.get("cadence") or {}), (ad.get("goalGap") or {})
+    records = ad.get("records") or []
+    fw = doc.get("forward") or {}
+    L = []
+
+    head = f"- **{doc.get('raceName', 'Block')}** ({doc.get('raceDate', '—')}): "
+    head += (f"week {doc['weekNow']} of {doc.get('weeksTotal', '?')}"
+             if doc.get("weekNow") else f"{doc.get('weeksTotal', '?')} weeks")
+    pct = ex.get("percentExecuted")
+    head += f" — {pct}% executed" if pct is not None else " — no days scored yet"
+    head += f" · {ex.get('kmActual', 0):g} of {ex.get('kmPlannedToDate', 0):g} km planned to date"
+    q = ex.get("qualityHitRate") or {}
+    if q.get("of"):
+        head += f" · quality {q['hit']}/{q['of']}"
+    L.append(head)
+
+    if ef.get("deltaSPerKm") is not None:
+        d = ef["deltaSPerKm"]
+        L.append(f"- pace @ ref HR: {_fmt_pace(ef['startPaceSPerKm'])} → "
+                 f"{_fmt_pace(ef['endPaceSPerKm'])} /km "
+                 f"({'−' if d < 0 else '+' if d > 0 else '±'}{abs(d):g} s/km)")
+    else:
+        L.append(f"- pace @ ref HR: insufficient data ({ef.get('reason', 'no evidence')})")
+    if cad.get("deltaSpm") is not None:
+        d = cad["deltaSpm"]
+        L.append(f"- cadence @ ref pace: {cad['startSpm']:g} → {cad['endSpm']:g} spm "
+                 f"({'−' if d < 0 else '+' if d > 0 else '±'}{abs(d):g} spm)")
+    else:
+        L.append(f"- cadence @ ref pace: insufficient data ({cad.get('reason', 'no evidence')})")
+    if gap.get("deltaS") is not None:
+        verdict = ("closing" if gap["deltaS"] < 0
+                   else "opening" if gap["deltaS"] > 0 else "flat")
+        L.append(f"- goal gap ({doc.get('goalTime', '—')}): "
+                 f"{_fmt_signed_hms(gap.get('gapStartS'))} → "
+                 f"{_fmt_signed_hms(gap.get('gapNowS'))} vs goal — {verdict}")
+    else:
+        L.append(f"- goal gap: insufficient data ({gap.get('reason', 'no evidence')})")
+    if records:
+        feats = " · ".join(f"{r['distance']} {_fmt_hms(r['sec'])} "
+                           f"(was {_fmt_hms(r['prevSec'])})" for r in records)
+        L.append(f"- records fell inside the block: {feats}")
+    else:
+        L.append("- no records fell inside the block")
+
+    # judgment hooks, stated as facts (only when they fire)
+    planned = ex.get("kmPlannedToDate") or 0
+    actual = ex.get("kmActual") or 0
+    if planned > 0 and actual < BEHIND_PLAN_RATIO * planned:
+        L.append(f"- ⚠ volume behind plan to date: {actual:g} of {planned:g} km "
+                 f"({round(100 * actual / planned)}%)")
+    if ef.get("deltaSPerKm") is not None and ef["deltaSPerKm"] >= 0:
+        L.append(f"- ⚠ pace @ ref HR is not improving across this block "
+                 f"({'+' if ef['deltaSPerKm'] > 0 else '±'}{abs(ef['deltaSPerKm']):g} s/km)")
+    if fw.get("undetailedWeeks"):
+        L.append(f"- ⚠ undetailed future weeks: {', '.join(fw['undetailedWeeks'])}")
+    return L
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # rendering
 # ──────────────────────────────────────────────────────────────────────────────
 def _planned_cell(r: dict) -> str:
@@ -234,6 +310,16 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
         L.append("")
         L.append("No compliance rows yet — first sync after deploy, or the plan has no")
         L.append("scoreable weeks.")
+
+    # ── block report (add-block-lens D7): the SAME lens document the
+    # dashboard shows, passed in via data — never recomputed here. No lens,
+    # or no current block, → no section; the briefing stays otherwise whole.
+    lens_current = (data.get("blockLens") or {}).get("current")
+    if lens_current:
+        L.append("")
+        L.append("## Block report")
+        L.append("")
+        L.extend(block_report_lines(lens_current))
 
     # ── records & best efforts ────────────────────────────────────────────
     L.append("")

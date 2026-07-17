@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 from garminconnect import Garmin
 
 import activity_archive
+import block_lens
 import coach_briefing
 import insight_metrics
 import plan_compliance
@@ -957,6 +958,20 @@ def fetch_compliance() -> dict | None:
     return safe(assemble, None, "compliance assembly")
 
 
+def fetch_block_lens() -> dict | None:
+    """The assembled blockLens object from the stored lens rows, or None (key
+    omitted entirely — fresh installs and ingest-fed instances have no plan
+    snapshots and therefore no lens). A fail domain independent of insights
+    AND compliance, like each of them (add-block-lens design D4)."""
+    def assemble():
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            return block_lens.assemble_block_lens(conn, TODAY)
+        finally:
+            conn.close()
+    return safe(assemble, None, "block lens assembly")
+
+
 def build_data(client, acts: list[dict], pred_doc: dict | None = None,
                sleep_raw_out: list | None = None) -> dict:
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
@@ -981,6 +996,11 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     if compliance:
         log(f"✓ compliance assembled ({len(compliance['days'])} days, "
             f"{len(compliance['weeks'])} weeks)")
+    lens = fetch_block_lens()
+    if lens:
+        log(f"✓ block lens assembled ("
+            + ("current + " if lens.get("current") else "")
+            + f"{len(lens['past'])} past)")
 
     data = {
         "profile": fetch_profile(client, vo2_current),
@@ -1007,6 +1027,8 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         data["insights"] = insights
     if compliance:
         data["compliance"] = compliance
+    if lens:
+        data["blockLens"] = lens
     return data
 
 
@@ -1119,6 +1141,23 @@ def compliance_step() -> None:
         if stats["weeks_healed"]:
             parts.append(f"{stats['weeks_healed']} stale weeks healed")
         log("✓ compliance: " + ", ".join(parts))
+    finally:
+        conn.close()
+
+
+def block_lens_step() -> None:
+    """Derive/refresh the per-block lens rows (add-block-lens design D2/D3).
+    Runs AFTER compliance and metrics (it rolls both up) and BEFORE
+    build_data (the blockLens object must land in garmin-data.js); only ever
+    inside safe() — a lens problem is a warning, never a failed sync."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        stats = block_lens.derive_block_lens(conn, TODAY)
+        if stats["blocks"]:
+            log(f"✓ block lens: {stats['blocks']} blocks, "
+                f"{stats['recomputed']} recomputed")
+        else:
+            log("✓ block lens: no plan snapshots — nothing to derive")
     finally:
         conn.close()
 
@@ -1423,6 +1462,11 @@ def verify_archive() -> int:
             f"{ccov['rows']} rows over {ccov['weeks_scored']} weeks"
             + (f" (latest {ccov['latest_scored']})" if ccov["latest_scored"] else "")
             + (f", {ccov['stale']} stale-version rows" if ccov["stale"] else ""))
+
+        bcov = activity_archive.block_lens_coverage(conn, block_lens.BLOCK_LENS_VERSION)
+        log(f"  block lens : {bcov['blocks']} blocks ({bcov['complete']} complete)"
+            + (f", latest race {bcov['latest_race']}" if bcov["latest_race"] else "")
+            + (f", {bcov['stale']} stale-version rows" if bcov["stale"] else ""))
         try:
             ins = insight_metrics.assemble_insights(conn, TODAY)
             with_data = sum(1 for m in ins["efficiency"]["monthly"]
@@ -1494,6 +1538,12 @@ def verify_archive() -> int:
         if exp_weeks and ccov["weeks_scored"] < int(exp_weeks):
             failures.append(f"compliance coverage regressed: {ccov['weeks_scored']} scored "
                             f"weeks < expected {exp_weeks}")
+        # Block-lens coverage regressions (add-block-lens). An empty table is a
+        # pre-lens archive, not a regression — but stale-version rows after a
+        # sync are (the version bump's self-heal should have recomputed them).
+        if bcov["stale"]:
+            failures.append(f"block lens coverage regressed: {bcov['stale']} rows at a "
+                            f"stale version (sync should have recomputed them)")
         for f in failures:
             warn(f"VERIFY FAILED — {f}")
         if not failures:
@@ -1538,15 +1588,17 @@ def main() -> None:
         return
 
     # Order per insight-metrics design D8 + coach-loop design D6: archive,
-    # metrics and compliance run BEFORE build_data so insights include today's
-    # run and the compliance block lands in the contract; the briefing renders
-    # strictly AFTER the write. Every step is safe()-wrapped, so garmin-data.js
-    # is written with every existing key even if all of them fail.
+    # metrics, compliance and the block lens run BEFORE build_data so insights
+    # include today's run and the compliance + blockLens blocks land in the
+    # contract; the briefing renders strictly AFTER the write. Every step is
+    # safe()-wrapped, so garmin-data.js is written with every existing key
+    # even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")
+    safe(block_lens_step, None, "block lens step")
     sleep_raw: list = []
     data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)
     validate(data)

@@ -372,6 +372,36 @@ function listRunMetrics(db, params) {
   };
 }
 
+// Block-lens rows (add-block-lens D5): promoted columns + the headline
+// summary slice the Python engine EMBEDDED in the stored document — lifted,
+// never derived. A pre-v9 archive has no block_lens table: that means "no
+// lens yet", never an outage.
+function listArchiveBlocks(db) {
+  let rows;
+  try {
+    rows = db.prepare(
+      `SELECT race_date, race_name, lens_version, is_complete, updated_at, block_json
+       FROM block_lens ORDER BY race_date DESC`).all();
+  } catch (e) {
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+    rows = [];
+  }
+  return {
+    blocks: rows.map((r) => {
+      let summary = null;
+      try { summary = JSON.parse(r.block_json).summary || null; } catch { /* summary stays null */ }
+      return {
+        raceDate: r.race_date,
+        raceName: r.race_name,
+        lensVersion: r.lens_version,
+        isComplete: Boolean(r.is_complete),
+        updatedAt: r.updated_at,
+        summary,
+      };
+    }),
+  };
+}
+
 function getArchiveActivity(db, id) {
   const r = db.prepare(
     `SELECT ${ARCHIVE_SUMMARY_COLS}, max_hr, detail_distilled_json
@@ -455,6 +485,31 @@ async function handleArchive(req, res, pathname, url) {
     if (pathname === "/api/archive/run-metrics") {
       const out = listRunMetrics(db, url.searchParams);
       json(req, res, out.status, out.body);
+      return;
+    }
+    // /api/archive/blocks[/:raceDate] — the block-lens window (add-block-lens
+    // D5). The single-block document is the stored block_json TEXT served
+    // VERBATIM, like streams — never parsed and reserialised.
+    if (pathname === "/api/archive/blocks") {
+      json(req, res, 200, listArchiveBlocks(db));
+      return;
+    }
+    if (pathname.startsWith("/api/archive/blocks/")) {
+      const bm = /^\/api\/archive\/blocks\/(\d{4}-\d{2}-\d{2})$/.exec(pathname);
+      let row;
+      try {
+        row = bm ? db.prepare("SELECT block_json FROM block_lens WHERE race_date = ?")
+          .get(bm[1]) : undefined;
+      } catch (e) {
+        // a pre-v9 archive has no block_lens table — "no such block", not an outage
+        if (!/no such table/i.test(String(e && e.message))) throw e;
+        row = undefined;
+      }
+      if (!row) { json(req, res, 404, { ok: false, error: "unknown block" }); return; }
+      sendBuffer(req, res, 200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      }, Buffer.from(row.block_json, "utf8"), "application/json; charset=utf-8");
       return;
     }
     // /api/archive/tiles/:z/:x/:y.png — stored OSM tile blobs, verbatim
@@ -686,7 +741,8 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")
-        || pathname === "/api/archive/run-metrics" || pathname.startsWith("/api/archive/tiles/")) {
+        || pathname === "/api/archive/run-metrics" || pathname.startsWith("/api/archive/tiles/")
+        || pathname === "/api/archive/blocks" || pathname.startsWith("/api/archive/blocks/")) {
       await handleArchive(req, res, pathname, url);
       return;
     }

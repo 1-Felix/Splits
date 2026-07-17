@@ -63,6 +63,34 @@ def _plan(wk3_header_km=27, wk4_days=None):
     }
 
 
+# A current-block lens document with DISTINCTIVE values, so the Block-report
+# assertions prove numbers are lifted from the document — never recomputed.
+BLOCK_LENS_CURRENT = {
+    "raceName": "Allgäu Panorama Halbmarathon", "raceDate": "2026-08-09",
+    "goalTime": "1:59:59",
+    "window": {"start": "2026-06-29", "end": "2026-08-09"},
+    "isComplete": False, "weeksTotal": 6, "weekNow": 2,
+    "weeks": [],
+    "execution": {"percentExecuted": 73, "scoredDays": 11,
+                  "qualityHitRate": {"hit": 2, "of": 3},
+                  "kmPlanned": 187, "kmPlannedToDate": 41, "kmActual": 33.4,
+                  "counts": {"done": 7, "partial": 2, "missed": 2,
+                             "swapped": 1, "unplanned": 0}},
+    "adaptation": {
+        "ef": {"deltaSPerKm": None, "reason": "insufficient-baseline",
+               "startRuns": 2, "endRuns": 4},
+        "cadence": {"startSpm": 165.5, "endSpm": 168, "deltaSpm": 2.5,
+                    "startRuns": 4, "endRuns": 4},
+        "records": [{"distance": "5k", "sec": 1626, "prevSec": 1644,
+                     "date": "2026-07-03", "activityId": 3}],
+        "goalGap": {"goalS": 7199, "startHalfS": 7300, "nowHalfS": 7250,
+                    "gapStartS": 101, "gapNowS": 51, "deltaS": -50},
+    },
+    "forward": {"weeksRemaining": 5, "kmRemaining": 146,
+                "silhouette": [], "undetailedWeeks": ["Wk 5"]},
+    "summary": {},
+}
+
 DATA = {
     "readiness": {"score": 50, "status": "Moderate", "hrv": 52, "restingHR": 53,
                   "sleepHours": 6, "loadStatus": "Maintaining"},
@@ -84,6 +112,7 @@ DATA = {
             {"month": "2026-07", "paceSecPerKm": 420, "inBandMin": 20}]},
         "cadence": {"monthly": [{"month": "2026-07", "spm": 157, "inBandMin": 56}]},
     },
+    "blockLens": {"lensVersion": 1, "current": BLOCK_LENS_CURRENT, "past": []},
 }
 
 
@@ -161,9 +190,9 @@ def test_integrity_warnings():
 
 # ── rendering (tasks 5.1/5.5) ────────────────────────────────────────────────
 SECTIONS = ["# Coach Briefing", "## Race countdown", "## Plan vs actual",
-            "## Records & best efforts", "## Trajectory", "## Progress trends",
-            "## Readiness today", "## Plan staleness", "## Plan integrity",
-            "## Coach log", "## Profile"]
+            "## Block report", "## Records & best efforts", "## Trajectory",
+            "## Progress trends", "## Readiness today", "## Plan staleness",
+            "## Plan integrity", "## Coach log", "## Profile"]
 
 
 def test_render_sections_fixed_order_and_content():
@@ -187,6 +216,58 @@ def test_render_sections_fixed_order_and_content():
     assert "Block detailed to race day." in text, "coach log tail"
     assert text == cb.render_briefing(_seeded_conn(_tmp())[0], plan, DATA, TODAY), \
         "deterministic: same inputs → byte-identical briefing"
+
+
+def test_block_report_numbers_match_the_lens_document():
+    """Every Block-report number is lifted from blockLens.current — the same
+    document the dashboard shows — never recomputed from the archive."""
+    d = _tmp()
+    conn, plan = _seeded_conn(d)
+    text = cb.render_briefing(conn, plan, DATA, TODAY)
+    conn.close()
+    assert "week 2 of 6" in text, "weekNow/weeksTotal from the document"
+    assert "73% executed" in text, "percent executed verbatim"
+    assert "33.4 of 41 km planned to date" in text
+    assert "quality 2/3" in text
+    assert "cadence @ ref pace: 165.5 → 168 spm (+2.5 spm)" in text
+    assert "goal gap (1:59:59): +1:41 → +0:51 vs goal — closing" in text
+    assert "5k 27:06 (was 27:24)" in text, "records fell inside the block"
+    # judgment hooks, stated as facts
+    assert "⚠ volume behind plan to date: 33.4 of 41 km (81%)" in text
+    assert "⚠ undetailed future weeks: Wk 5" in text
+
+
+def test_block_report_null_metric_is_stated_not_omitted():
+    d = _tmp()
+    conn, plan = _seeded_conn(d)
+    text = cb.render_briefing(conn, plan, DATA, TODAY)
+    assert "pace @ ref HR: insufficient data (insufficient-baseline)" in text, \
+        "a null EF delta is said out loud, never dropped or invented"
+    # a non-null EF delta that is not improving fires the stalling hook
+    stalled = json.loads(json.dumps(DATA))
+    stalled["blockLens"]["current"]["adaptation"]["ef"] = {
+        "startPaceSPerKm": 452, "endPaceSPerKm": 455, "deltaSPerKm": 3.0,
+        "startRuns": 4, "endRuns": 4}
+    text = cb.render_briefing(conn, plan, stalled, TODAY)
+    conn.close()
+    assert "pace @ ref HR: 7:32 → 7:35 /km (+3 s/km)" in text
+    assert "⚠ pace @ ref HR is not improving across this block (+3 s/km)" in text
+
+
+def test_block_report_omitted_without_a_lens():
+    d = _tmp()
+    conn, plan = _seeded_conn(d)
+    no_lens = {k: v for k, v in DATA.items() if k != "blockLens"}
+    text = cb.render_briefing(conn, plan, no_lens, TODAY)
+    assert "## Block report" not in text, "no lens → no section"
+    for s in SECTIONS:
+        if s != "## Block report":
+            assert s in text, f"section {s} must render regardless"
+    # a lens with only past blocks (no current) also omits the section
+    past_only = json.loads(json.dumps(DATA))
+    past_only["blockLens"] = {"lensVersion": 1, "past": [{"raceDate": "2026-05-10"}]}
+    assert "## Block report" not in cb.render_briefing(conn, plan, past_only, TODAY)
+    conn.close()
 
 
 def test_render_survives_missing_insights():

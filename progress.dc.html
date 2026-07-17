@@ -80,6 +80,19 @@
     </div>
   </sc-for>
 
+  <!-- ===== THE BLOCK (add-block-lens D6) — live report card + retrospectives;
+       absent entirely when the data file carries no blockLens ===== -->
+  <sc-for list="{{ blockSec }}" as="bs" hint-placeholder-count="0">
+    <div>
+      <div class="section-head">
+        <h2>THE BLOCK</h2>
+        <div class="rule"></div>
+        <span class="meta">{{ bs.meta }}</span>
+      </div>
+      <div style="margin-bottom:var(--sp-4)">{{ bs.el }}</div>
+    </div>
+  </sc-for>
+
   <!-- ===== VOLUME (relocated from the cockpit — THE LONG GAME) ===== -->
   <div class="section-head">
     <h2>THE LONG GAME</h2>
@@ -275,7 +288,7 @@
 class Component extends DCLogic {
   // theme, registry, sync machine, greeting and nav all live in topbar.js
   // (shared across pages, design D8); this component only holds the state.
-  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, panel: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {} };
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, panel: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {}, blockWeek: null, blockPast: {}, blockPastOpen: null, blockCompare: [] };
 
   tb() { return window.SplitsTopbar; }
 
@@ -389,6 +402,36 @@ class Component extends DCLogic {
     });
   };
 
+  // ---- The Block (add-block-lens D6) ----------------------------------------
+  // The current block is fully static; ONLY expanding a past block (or
+  // retrying its failed fetch) talks to the archive API. One week drill and
+  // one expanded past block page-wide; the two-block comparison mirrors its
+  // selection into the URL so a comparison is a link.
+  toggleBlockWeek = (key) => this.setState({ blockWeek: this.state.blockWeek === key ? null : key });
+  openPastBlock = (raceDate) => {
+    if (this.state.blockPastOpen === raceDate) { this.setState({ blockPastOpen: null }); return; }
+    this.setState({ blockPastOpen: raceDate, blockWeek: null });
+    const cur = this.state.blockPast[raceDate];
+    if (!cur || cur.state === 'offline') this.fetchPastBlock(raceDate);
+  };
+  fetchPastBlock = (raceDate) => {
+    this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'loading', doc: null } } });
+    fetch('./api/archive/blocks/' + raceDate)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((doc) => this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'ready', doc } } }))
+      .catch(() => this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'offline', doc: null } } }));
+  };
+  toggleCompareBlock = (raceDate) => {
+    const sel = this.state.blockCompare.includes(raceDate)
+      ? this.state.blockCompare.filter((d) => d !== raceDate)
+      : [...this.state.blockCompare, raceDate].slice(-2);
+    this.setState({ blockCompare: sel });
+    const url = new URL(window.location.href);
+    if (sel.length === 2) url.searchParams.set('blocks', sel.join(','));
+    else url.searchParams.delete('blocks');
+    history.replaceState(null, '', url);
+  };
+
   // ---- the panel element (chart-drill D5): contributed / didn't-count -------
   // Built in JS like the charts themselves and interpolated into the template;
   // Escape closes (one rung of the ladder), clicks inside never bubble to the
@@ -474,6 +517,289 @@ class Component extends DCLogic {
         h('a', { key: 'a', className: 'drill-archive', href: './archive?type=running&year=' + p.year, style: { color: 'var(--accent)', fontSize: 'var(--fs-sm)', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' } }, 'open ' + p.year + ' in archive →')) : null);
   }
 
+  // ---- The Block section (add-block-lens D6): built in JS like the drill
+  // panel and interpolated into the template. One card renderer serves the
+  // live block AND every past-tense retrospective — identical layout, minus
+  // forward tilt and the live-clock highlight when live=false.
+  BLOCK_GLYPH = {
+    done:      { t: '✓', fg: 'var(--good)',    word: 'done' },
+    swapped:   { t: '⇄', fg: 'var(--good)',    word: 'swapped' },
+    partial:   { t: '◐', fg: 'var(--warn)',    word: 'partial' },
+    missed:    { t: '✕', fg: 'var(--warn)',    word: 'missed' },
+    unplanned: { t: '+', fg: 'var(--accent2)', word: 'unplanned' },
+    pending:   { t: '·', fg: 'var(--sub)',     word: 'planned' },
+  };
+  BLOCK_PHASE_COLOR = { Rebuild: 'var(--accent2)', Base: 'var(--accent2)', Build: 'var(--accent)', Peak: 'var(--accent)', Taper: 'var(--warn)', Race: 'var(--accent)' };
+  BLOCK_REASON = {
+    'insufficient-baseline': 'fewer than 3 qualifying runs in the block’s first 14 days',
+    'insufficient-current': 'fewer than 3 qualifying runs in the last 14 days',
+    'no-goal-time': 'the plan has no parseable goal time',
+    'no-predictions': 'no race predictions banked in this window',
+    'no-baseline-prediction': 'no race prediction near the block start',
+  };
+  BLOCK_DAY_REASON = { distance: 'shorter than planned', intensity: 'ran too hard for the intent' };
+
+  fmtGap(sec) { const s = Math.abs(Math.round(sec)); return (sec < 0 ? '−' : sec > 0 ? '+' : '±') + this.fmtHMS(s); }
+
+  // a headline stat: value + label, or the explicit insufficient-data mark —
+  // never a zero or a dash presented as a value (null-metric honesty)
+  blockStat(h, label, value, color, reason) {
+    return h('div', { key: label, style: { minWidth: '84px' } },
+      value != null
+        ? h('div', { style: { fontFamily: "'JetBrains Mono',monospace", fontWeight: 800, fontSize: 'var(--fs-lg)', color: color || 'var(--ink)' } }, value)
+        : h('div', { className: 'block-insufficient', title: this.BLOCK_REASON[reason] || reason || 'not enough evidence in this block', style: { fontSize: 'var(--fs-xs)', fontWeight: 700, color: 'var(--warn)', padding: '3px 0' } }, 'insufficient data'),
+      h('div', { style: { fontSize: 'var(--fs-2xs)', fontWeight: 700, letterSpacing: '.08em', color: 'var(--sub)', marginTop: '2px' } }, label));
+  }
+
+  renderBlockWeekDrill(w) {
+    const R = window.React, h = R.createElement;
+    const mono = "'JetBrains Mono',monospace";
+    const days = w.days || [];
+    return h('div', { className: 'block-drill', style: { margin: '0 0 var(--sp-2)', padding: 'var(--sp-1) var(--sp-3) var(--sp-2)', borderLeft: '2px solid var(--line)' } },
+      days.length ? days.map((d) => {
+        const g = this.BLOCK_GLYPH[d.status] || this.BLOCK_GLYPH.pending;
+        const planned = d.plannedKind
+          ? (d.plannedKm ? d.plannedKm + ' km' : d.plannedKind) + (d.plannedLoad ? ' · ' + d.plannedLoad : '')
+          : 'not planned';
+        const actual = d.actualKm != null
+          ? d.actualKm + ' km' + (d.actualPaceS ? ' @ ' + this.fmtPace(d.actualPaceS) + '/km' : '') + (d.actualHr ? ' · HR ' + d.actualHr : '')
+          : '';
+        return h('div', { key: d.date + ':' + (d.activityId || d.status), className: 'block-day', style: { display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)', padding: 'var(--sp-1) 0', borderBottom: '1px solid var(--line)', fontSize: 'var(--fs-sm)' } },
+          h('span', { key: 'd', style: { minWidth: '58px', color: 'var(--sub)', fontWeight: 600 } }, this.mDate(d.date)),
+          h('span', { key: 't', style: { flex: '1 1 120px', fontWeight: 700 } }, d.title || (d.plannedKind || 'Unplanned run')),
+          h('span', { key: 'p', style: { minWidth: '96px', color: 'var(--sub)', fontWeight: 500 } }, planned),
+          h('span', { key: 's', style: { minWidth: '120px', color: g.fg, fontWeight: 700 } },
+            g.t + ' ' + g.word + (d.reason ? ' — ' + (this.BLOCK_DAY_REASON[d.reason] || d.reason) : '')),
+          h('span', { key: 'a', style: { fontFamily: mono, color: 'var(--sub)', fontSize: 'var(--fs-xs)' } }, actual),
+          d.activityId != null
+            ? h('a', { key: 'l', className: 'block-run-link', href: './run/' + d.activityId, style: { color: 'var(--accent)', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' } }, 'run →')
+            : null);
+      }) : h('div', { style: { color: 'var(--warn)', fontSize: 'var(--fs-sm)', fontWeight: 600, padding: 'var(--sp-2) 0' } },
+        '⚠ this week has no days planned yet — the plan must stay detailed to race day'));
+  }
+
+  renderBlockCard(doc, live, displayToday) {
+    const R = window.React, h = R.createElement;
+    const mono = "'JetBrains Mono',monospace";
+    const weeks = doc.weeks || [];
+    const ex = doc.execution || {};
+    const ad = doc.adaptation || {};
+    const ef = ad.ef || {}, cad = ad.cadence || {}, gap = ad.goalGap || {};
+    const records = ad.records || [];
+    // the week-N highlight follows the viewer's live clock (display-today
+    // rule); every number below is the sync-time truth from the document
+    let wkNow = -1;
+    if (live && weeks.length) {
+      wkNow = weeks.findIndex((w) => displayToday >= w.mon && displayToday <= w.sun);
+      if (wkNow < 0) wkNow = displayToday < weeks[0].mon ? 0 : weeks.length - 1;
+    }
+
+    // ---- headline stats line ----
+    const q = ex.qualityHitRate || {};
+    const stats = [
+      this.blockStat(h, live ? 'WEEK' : 'WEEKS', live ? (wkNow + 1) + ' of ' + weeks.length : String(weeks.length)),
+      this.blockStat(h, 'EXECUTED', ex.percentExecuted != null ? ex.percentExecuted + '%' : null, 'var(--accent)', ex.percentExecuted == null ? 'no scored days yet' : null),
+      this.blockStat(h, live ? 'KM SO FAR' : 'KM RUN', (ex.kmActual != null ? ex.kmActual : '—') + ' / ' + (ex.kmPlanned != null ? ex.kmPlanned : '—')),
+      this.blockStat(h, 'PACE @ REF HR', ef.deltaSPerKm != null ? (ef.deltaSPerKm > 0 ? '+' : ef.deltaSPerKm < 0 ? '−' : '±') + Math.abs(ef.deltaSPerKm) + ' s/km' : null,
+        ef.deltaSPerKm < 0 ? 'var(--good)' : ef.deltaSPerKm > 0 ? 'var(--warn)' : 'var(--sub)', ef.reason),
+      this.blockStat(h, 'GOAL GAP', gap.deltaS != null ? this.fmtGap(gap.deltaS) : null,
+        gap.deltaS < 0 ? 'var(--good)' : gap.deltaS > 0 ? 'var(--warn)' : 'var(--sub)', gap.reason),
+      this.blockStat(h, 'RECORDS', String(records.length), records.length ? 'var(--accent)' : 'var(--sub)'),
+    ];
+    if (q.of) stats.splice(3, 0, this.blockStat(h, 'QUALITY', q.hit + '/' + q.of, q.hit === q.of ? 'var(--good)' : 'var(--warn)'));
+
+    // ---- phase strip: one segment per week, coloured by phase ----
+    const strip = h('div', { key: 'strip' },
+      h('div', { style: { display: 'flex', gap: '2px', marginTop: 'var(--sp-3)' } }, weeks.map((w, i) =>
+        h('div', { key: w.mon, title: (w.wk || '') + ' · ' + (w.phase || '') + ' · ' + w.mon,
+          style: { flex: 1, height: '6px', borderRadius: '3px',
+            background: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--accent)',
+            opacity: !live ? 1 : i === wkNow ? 1 : (displayToday > w.sun ? .4 : .75),
+            outline: live && i === wkNow ? '2px solid var(--ink)' : 'none', outlineOffset: '1px' } }))),
+      h('div', { style: { display: 'flex', gap: '2px', marginTop: '3px', marginBottom: 'var(--sp-3)' } },
+        (() => {
+          const groups = [];
+          weeks.forEach((w) => {
+            const last = groups[groups.length - 1];
+            if (last && last.phase === w.phase) last.n += 1;
+            else groups.push({ phase: w.phase, n: 1 });
+          });
+          return groups.map((g, i) => h('div', { key: i, style: { flex: g.n, fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: this.BLOCK_PHASE_COLOR[g.phase] || 'var(--sub)', overflow: 'hidden', whiteSpace: 'nowrap' } }, (g.phase || '').toUpperCase()));
+        })()));
+
+    // ---- per-week execution rows (compliance visual language) ----
+    const weekRows = weeks.map((w, i) => {
+      const key = doc.raceDate + ':' + w.mon;
+      const open = this.state.blockWeek === key;
+      const cur = live && i === wkNow;
+      const glyphs = (w.days || []).map((d, j) => {
+        const g = this.BLOCK_GLYPH[d.status] || this.BLOCK_GLYPH.pending;
+        return h('span', { key: j, title: d.date + ' · ' + g.word, 'aria-hidden': 'true', style: { color: g.fg, fontWeight: 800, fontFamily: mono } }, g.t);
+      });
+      const km = w.scored
+        ? (w.actualKm != null ? w.actualKm : 0) + ' / ' + (w.plannedKm != null ? w.plannedKm : '—') + ' km'
+        : (w.plannedKm != null ? w.plannedKm + ' km planned' : 'no km planned');
+      return h('div', { key: w.mon },
+        h('button', { className: 'block-week', 'aria-expanded': String(open),
+          'aria-label': (w.wk || w.mon) + (cur ? ', this week' : '') + ', ' + km + '. Show its days.',
+          onClick: () => this.toggleBlockWeek(key),
+          style: { display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', width: '100%', padding: 'var(--sp-2)', border: '1px solid ' + (cur ? 'var(--accent)' : 'var(--line)'), borderRadius: 'var(--r-md)', background: cur ? 'var(--panel2)' : 'transparent', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', cursor: 'pointer', marginBottom: 'var(--sp-1)', textAlign: 'left' } },
+          h('span', { key: 'wk', style: { minWidth: '48px', fontWeight: 800 } }, w.wk || this.mDate(w.mon)),
+          h('span', { key: 'ph', style: { minWidth: '56px', fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.phase || '').toUpperCase()),
+          cur ? h('span', { key: 'tag', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', padding: '2px 8px', borderRadius: 'var(--r-pill)', background: 'var(--accentFade)', color: 'var(--accent)' } }, 'THIS WK') : null,
+          h('span', { key: 'g', style: { display: 'flex', gap: '7px', flex: 1 } }, glyphs.length ? glyphs : h('span', { style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700 } }, 'undetailed')),
+          h('span', { key: 'km', style: { fontFamily: mono, color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, whiteSpace: 'nowrap' } }, km),
+          h('span', { key: 'c', 'aria-hidden': 'true', style: { color: 'var(--sub)' } }, open ? '▾' : '▸')),
+        open ? this.renderBlockWeekDrill(w) : null);
+    });
+
+    // ---- adaptation detail line: records + cadence, stated not judged ----
+    const adBits = [];
+    if (records.length) {
+      adBits.push('records fell: ' + records.map((r) => r.distance + ' ' + this.fmtHMS(r.sec) + ' (was ' + this.fmtHMS(r.prevSec) + ')').join(' · '));
+    }
+    if (cad.deltaSpm != null) {
+      adBits.push('cadence @ ref pace ' + (cad.deltaSpm > 0 ? '+' : cad.deltaSpm < 0 ? '−' : '±') + Math.abs(cad.deltaSpm) + ' spm');
+    } else if (cad.reason) {
+      adBits.push('cadence: insufficient data');
+    }
+    if (gap.nowHalfS != null) {
+      adBits.push('predictor half ' + this.fmtHMS(gap.startHalfS) + ' → ' + this.fmtHMS(gap.nowHalfS) + ' vs goal ' + this.fmtHMS(gap.goalS));
+    }
+
+    // ---- forward tilt (current block only) ----
+    let forward = null;
+    if (live && doc.forward) {
+      const fw = doc.forward;
+      const maxKm = Math.max.apply(null, (fw.silhouette || []).map((s) => s.km || 0).concat([1]));
+      forward = h('div', { key: 'fw', className: 'block-forward', style: { display: 'flex', alignItems: 'flex-end', gap: 'var(--sp-4)', marginTop: 'var(--sp-3)', paddingTop: 'var(--sp-3)', borderTop: '1px solid var(--line)' } },
+        h('div', { key: 'n' },
+          h('div', { style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: 'var(--sub)' } }, 'TO RACE DAY'),
+          h('div', { style: { fontFamily: mono, fontWeight: 800, fontSize: 'var(--fs-lg)', marginTop: '2px' } },
+            fw.weeksRemaining + (fw.weeksRemaining === 1 ? ' wk' : ' wks') + ' · ' + fw.kmRemaining + ' km'),
+          (fw.undetailedWeeks || []).length
+            ? h('div', { style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700, marginTop: 'var(--sp-1)' } },
+              '⚠ undetailed: ' + fw.undetailedWeeks.join(', '))
+            : null),
+        h('div', { key: 's', 'aria-label': 'Planned weekly kilometres to race day', style: { display: 'flex', alignItems: 'flex-end', gap: '6px', height: '46px' } },
+          (fw.silhouette || []).map((s) => h('div', { key: s.mon, title: (s.wk || s.mon) + ' · ' + (s.km != null ? s.km + ' km' : 'no km') },
+            h('div', { style: { width: '18px', height: Math.max(4, Math.round(38 * ((s.km || 0) / maxKm))) + 'px', borderRadius: '2px 2px 0 0', background: this.BLOCK_PHASE_COLOR[s.phase] || 'var(--accent)', opacity: .8 } }),
+            h('div', { style: { fontSize: 'var(--fs-2xs)', color: 'var(--sub)', fontWeight: 700, textAlign: 'center', marginTop: '2px' } }, s.km != null ? s.km : '—')))));
+    }
+
+    return h('div', { className: live ? 'card block-card-live' : 'block-card-past', style: live ? {} : { marginTop: 'var(--sp-2)', padding: 'var(--sp-3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' } },
+      h('div', { key: 'head', style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--sp-3)', flexWrap: 'wrap' } },
+        h('div', { key: 'id' },
+          h('div', { className: 'card-title' }, doc.raceName || 'Training block'),
+          h('div', { className: 'card-sub' },
+            this.mDate(doc.window.start) + ' → ' + this.mDate(doc.window.end) + ' ’' + doc.raceDate.slice(2, 4)
+            + (live ? ' · live report card — numbers as of the last sync' : ' · retrospective'))),
+        h('div', { key: 'stats', style: { display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' } }, stats)),
+      strip,
+      h('div', { key: 'weeks' }, weekRows),
+      adBits.length ? h('div', { key: 'ad', style: { color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, marginTop: 'var(--sp-2)', lineHeight: 1.6 } }, adBits.join('  ·  ')) : null,
+      forward);
+  }
+
+  renderBlockCompare(h, sums) {
+    const mono = "'JetBrains Mono',monospace";
+    const sel = this.state.blockCompare;
+    const pair = sel.map((d) => sums.find((s) => s.raceDate === d)).filter(Boolean);
+    if (pair.length !== 2) {
+      return h('div', { key: 'hint', style: { color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, marginTop: 'var(--sp-2)' } },
+        'pick two blocks to set them side by side — the comparison lives in the URL, so it’s a link');
+    }
+    // best-per-row marks: the run-comparison grammar (accent + weight 800)
+    const ROWS = [
+      { label: 'EXECUTED', get: (s) => s.percentExecuted, fmt: (v) => v + '%', best: 'max' },
+      { label: 'VOLUME', get: (s) => s.kmActual, fmt: (v) => v + ' km', best: 'max' },
+      { label: 'PACE @ REF HR Δ', get: (s) => s.efDeltaSPerKm, fmt: (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v) + ' s/km', best: 'min' },
+      { label: 'CADENCE Δ', get: (s) => s.cadenceDeltaSpm, fmt: (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v) + ' spm', best: 'max' },
+      { label: 'GOAL GAP Δ', get: (s) => s.goalGapDeltaS, fmt: (v) => this.fmtGap(v), best: 'min' },
+      { label: 'RECORDS', get: (s) => s.recordsCount, fmt: (v) => String(v), best: 'max' },
+    ];
+    const grid = 'display:grid;grid-template-columns:minmax(96px,140px) repeat(2,minmax(0,1fr));gap:var(--sp-2) var(--sp-3)';
+    const cells = [h('div', { key: 'h0' })].concat(pair.map((s, i) =>
+      h('div', { key: 'h' + i, style: { fontWeight: 800, fontSize: 'var(--fs-sm)' } },
+        s.raceName, h('span', { style: { color: 'var(--sub)', fontWeight: 600 } }, ' · ' + s.raceDate.slice(0, 4)))));
+    ROWS.forEach((row) => {
+      const vals = pair.map(row.get);
+      const present = vals.filter((v) => v != null && Number.isFinite(v));
+      const best = present.length >= 2 ? (row.best === 'min' ? Math.min(...present) : Math.max(...present)) : null;
+      cells.push(h('div', { key: row.label, style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', color: 'var(--sub)', alignSelf: 'center' } }, row.label));
+      vals.forEach((v, i) => cells.push(h('div', { key: row.label + i, style: {
+        fontFamily: mono, fontSize: 'var(--fs-sm)',
+        color: best != null && v === best ? 'var(--accent)' : v != null ? 'var(--ink)' : 'var(--sub)',
+        fontWeight: best != null && v === best ? '800' : '600',
+      }, title: v == null ? 'insufficient data in this block' : undefined }, v != null ? row.fmt(v) : '—')));
+    });
+    return h('div', { key: 'grid', className: 'block-compare', style: { marginTop: 'var(--sp-3)' } }, h('div', { style: this.styleOf(grid) }, cells));
+  }
+
+  styleOf(css) { const o = {}; css.split(';').forEach((k) => { const i = k.indexOf(':'); if (i > 0) o[k.slice(0, i).trim().replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = k.slice(i + 1).trim(); }); return o; }
+
+  renderBlockSection(BL, displayToday) {
+    const R = window.React, h = R.createElement;
+    const past = BL.past || [];
+
+    // past blocks: collapsed summary rows that expand via the archive API to
+    // the same layout in past tense — with the honest offline state
+    const pastRows = past.map((s) => {
+      const st = this.state.blockPast[s.raceDate];
+      const open = this.state.blockPastOpen === s.raceDate;
+      let body = null;
+      if (open) {
+        if (!st || st.state === 'loading') {
+          body = h('div', { style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, padding: 'var(--sp-2) 0' } }, 'Loading the block from the archive…');
+        } else if (st.state === 'offline') {
+          body = h('div', { className: 'block-offline', style: { marginTop: 'var(--sp-2)', padding: 'var(--sp-3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' } },
+            h('div', { key: 't', style: { fontWeight: 800 } }, 'Archive offline'),
+            h('div', { key: 'm', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, margin: 'var(--sp-2) 0 var(--sp-3)', lineHeight: 1.5 } },
+              'The full story of this block lives in the activity archive, which isn’t reachable right now. The summary above is from the last sync — try again once the archive is back.'),
+            h('button', { key: 'r', className: 'block-retry', onClick: () => this.fetchPastBlock(s.raceDate),
+              style: { padding: 'var(--sp-2) var(--sp-4)', border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', background: 'var(--panel2)', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', fontWeight: 700, cursor: 'pointer' } }, 'Try again'));
+        } else {
+          body = this.renderBlockCard(st.doc, false, displayToday);
+        }
+      }
+      return h('div', { key: s.raceDate, style: { marginTop: 'var(--sp-2)' } },
+        h('button', { className: 'block-past', 'aria-expanded': String(open), onClick: () => this.openPastBlock(s.raceDate),
+          style: { display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)', width: '100%', padding: 'var(--sp-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)', background: 'transparent', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', cursor: 'pointer', textAlign: 'left' } },
+          h('span', { key: 'n', style: { fontWeight: 800 } }, s.raceName || 'Block'),
+          h('span', { key: 'd', style: { color: 'var(--sub)', fontWeight: 600 } }, this.mDate(s.raceDate) + ' ’' + s.raceDate.slice(2, 4)),
+          h('span', { key: 'w', style: { color: 'var(--sub)', flex: 1 } }, (s.weeksTotal != null ? s.weeksTotal + ' wks' : '')),
+          h('span', { key: 'x', style: { fontFamily: "'JetBrains Mono',monospace", fontWeight: 700 } }, s.percentExecuted != null ? s.percentExecuted + '% executed' : '—'),
+          h('span', { key: 'k', style: { fontFamily: "'JetBrains Mono',monospace", color: 'var(--sub)' } }, s.kmActual != null ? s.kmActual + ' km' : ''),
+          h('span', { key: 'r', style: { color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600 } }, (s.recordsCount || 0) + (s.recordsCount === 1 ? ' record' : ' records')),
+          h('span', { key: 'c', 'aria-hidden': 'true', style: { color: 'var(--sub)' } }, open ? '▾' : '▸')),
+        body);
+    });
+
+    // comparison entry point: hidden below two blocks — nothing to compare
+    // is a normal state, not an error
+    const sums = [];
+    if (BL.current && BL.current.summary) sums.push(BL.current.summary);
+    past.forEach((p) => { if (p.raceDate && !sums.some((x) => x.raceDate === p.raceDate)) sums.push(p); });
+    let compare = null;
+    if (sums.length >= 2) {
+      compare = h('div', { key: 'cmp', style: { marginTop: 'var(--sp-3)', paddingTop: 'var(--sp-3)', borderTop: '1px solid var(--line)' } },
+        h('div', { key: 'chips', style: { display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', flexWrap: 'wrap' } },
+          h('span', { key: 'l', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: 'var(--sub)' } }, 'COMPARE'),
+          sums.map((s) => h('button', { key: s.raceDate, className: 'block-cmp-chip', 'aria-pressed': String(this.state.blockCompare.includes(s.raceDate)),
+            onClick: () => this.toggleCompareBlock(s.raceDate),
+            style: { padding: 'var(--sp-1) var(--sp-3)', border: '1px solid ' + (this.state.blockCompare.includes(s.raceDate) ? 'var(--accent)' : 'var(--line)'), borderRadius: 'var(--r-pill)', background: this.state.blockCompare.includes(s.raceDate) ? 'var(--accentFade)' : 'transparent', color: this.state.blockCompare.includes(s.raceDate) ? 'var(--accent)' : 'var(--sub)', fontFamily: 'inherit', fontSize: 'var(--fs-xs)', fontWeight: 700, cursor: 'pointer' } },
+            (s.raceName || s.raceDate) + ' · ' + s.raceDate.slice(0, 4)))),
+        this.renderBlockCompare(h, sums));
+    }
+
+    return h('div', { id: 'block-section' },
+      BL.current ? this.renderBlockCard(BL.current, true, displayToday) : null,
+      pastRows.length ? h('div', { key: 'past' },
+        h('div', { key: 'ph', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: 'var(--sub)', margin: 'var(--sp-3) 0 0' } }, 'PAST BLOCKS'),
+        pastRows) : null,
+      compare);
+  }
+
   // ---- chart engine plumbing -------------------------------------------------
   // Wires the shared hover/pin/keyboard state into a descriptor, builds the
   // spec (chart-core), renders it (chart-view), and remembers the spec so the
@@ -532,6 +858,13 @@ class Component extends DCLogic {
       .then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); else this.setState({ dataError: true }); })
       .catch(() => this.setState({ dataError: true }));
     document.addEventListener('click', () => this.dismissHover());
+    // block comparison from the URL (add-block-lens D6): two valid race-date
+    // keys render the comparison without further interaction
+    const cmp = new URLSearchParams(window.location.search).get('blocks');
+    if (cmp) {
+      const sel = cmp.split(',').filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s)).slice(0, 2);
+      if (sel.length) this.setState({ blockCompare: sel });
+    }
     // last-sync indicator (absent when opened as a static file / no server API)
     if (this.tb()) this.tb().initSyncStatus(this);
     // keep date-driven views live: re-render when the local day or the time-of-
@@ -937,6 +1270,18 @@ class Component extends DCLogic {
       }
     }
 
+    // ---- The Block (add-block-lens): static-first from blockLens — only a
+    // past-block expansion ever touches the archive API. Absent key (older
+    // data files, ingest-fed instances) → no section, nothing else affected.
+    const BLNS = D.blockLens || null;
+    const blockSec = [];
+    if (BLNS && (BLNS.current || (BLNS.past || []).length) && window.React) {
+      const bits = [];
+      if (BLNS.current) bits.push(BLNS.current.raceName + ' · race ' + this.mDate(BLNS.current.raceDate));
+      if ((BLNS.past || []).length) bits.push(BLNS.past.length + ' past');
+      blockSec.push({ meta: bits.join(' · '), el: this.renderBlockSection(BLNS, displayToday) });
+    }
+
     let liveText = '';
     { const h = this.state.hover; const sp = h && this._specs && this._specs[h.chart];
       if (sp && sp.hover.card) liveText = sp.hover.card.rows.map(r => r.t).join(', '); }
@@ -972,6 +1317,7 @@ class Component extends DCLogic {
       hasInsights, eff, cadRef, recs, wall,
       hasYoy, yoy,
       effPanel, cadPanel, yoyPanel,
+      blockSec,
       liveText
     };
   }

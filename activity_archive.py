@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -247,6 +247,25 @@ CREATE TABLE IF NOT EXISTS activity_maps (
 """
 
 
+# Schema v9 (add-block-lens, design D2): ONE derived table — one row per
+# training block, keyed by its race date. `block_json` is the FULL lens
+# document (weeks, drill rows, adaptation metrics, forward tilt); the promoted
+# columns are just the index over it. Disposable-cache semantics like
+# run_metrics / plan_compliance: always recomputable from plan_snapshots ×
+# plan_compliance × run_metrics × race_predictions, keyed by the engine's
+# BLOCK_LENS_VERSION (see block_lens.py).
+SCHEMA_V9_SQL = """
+CREATE TABLE IF NOT EXISTS block_lens (
+  race_date    TEXT PRIMARY KEY,
+  race_name    TEXT NOT NULL,
+  lens_version INTEGER NOT NULL,
+  is_complete  INTEGER NOT NULL,
+  block_json   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+"""
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -283,7 +302,8 @@ def _open(db: Path) -> sqlite3.Connection:
         _apply_schema_v6(conn)
         _apply_schema_v7(conn)
         conn.executescript(SCHEMA_V8_SQL)
-        # Forward-only migration: v1→…→v8 is purely additive (CREATE IF
+        conn.executescript(SCHEMA_V9_SQL)
+        # Forward-only migration: v1→…→v9 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -650,6 +670,54 @@ def metrics_coverage(conn: sqlite3.Connection, version: int) -> dict:
         "prediction_earliest": pred_earliest,
         "prediction_latest": pred_latest,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# block lens (schema v9 — owned by the block-lens engine; see block_lens.py
+# for the derivation that fills this table)
+# ──────────────────────────────────────────────────────────────────────────────
+def upsert_block_lens(conn: sqlite3.Connection, race_date: str, race_name: str,
+                      lens_version: int, is_complete: bool, doc: dict) -> None:
+    """INSERT OR REPLACE keyed by race_date — derived rows are disposable
+    (design D2), so a recompute simply replaces the stale row. Commits per
+    call: an interrupted derivation never repeats done work."""
+    conn.execute(
+        "INSERT OR REPLACE INTO block_lens "
+        "(race_date, race_name, lens_version, is_complete, block_json, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (race_date, race_name, lens_version, 1 if is_complete else 0,
+         json.dumps(doc, ensure_ascii=False), _now()))
+    conn.commit()
+
+
+def block_lens_row(conn: sqlite3.Connection, race_date: str) -> tuple | None:
+    """(lens_version, is_complete) for one block, or None — the derivation
+    driver's skip check (a complete row at the current version is frozen)."""
+    return conn.execute(
+        "SELECT lens_version, is_complete FROM block_lens WHERE race_date = ?",
+        (race_date,)).fetchone()
+
+
+def block_lens_rows(conn: sqlite3.Connection) -> list[tuple]:
+    """(race_date, race_name, is_complete, block_json) of every stored block,
+    newest race first — the assembly order the data contract promises."""
+    return conn.execute(
+        "SELECT race_date, race_name, is_complete, block_json "
+        "FROM block_lens ORDER BY race_date DESC").fetchall()
+
+
+def block_lens_coverage(conn: sqlite3.Connection, version: int) -> dict:
+    """The block-lens section --verify-archive reports: block count, complete
+    count, stale-version leftovers, the latest race date."""
+    blocks, latest = conn.execute(
+        "SELECT COUNT(*), MAX(race_date) FROM block_lens").fetchone()
+    complete = conn.execute(
+        "SELECT COUNT(*) FROM block_lens WHERE is_complete = 1").fetchone()[0]
+    stale = conn.execute(
+        "SELECT COUNT(*) FROM block_lens WHERE lens_version != ?",
+        (version,)).fetchone()[0]
+    return {"blocks": blocks, "complete": complete, "stale": stale,
+            "latest_race": latest}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,38 @@ const STREAMS_TEXT = JSON.stringify({
   v: Array.from({ length: 400 }, (_, i) => +(2.5 + (i % 10) / 20).toFixed(2)),
   lat: Array.from({ length: 400 }, (_, i) => +(47.37 + i * 0.00001).toFixed(5)),
   lon: Array.from({ length: 400 }, (_, i) => +(8.53 + i * 0.00001).toFixed(5)),
+});
+
+// Block-lens documents (add-block-lens 2.x), stored as EXACT strings — the
+// by-date endpoint must serve these bytes verbatim, never parse-and-
+// reserialise; the listing lifts the summary EMBEDDED by the Python engine.
+// NOTE: this archive deliberately carries NO plan_snapshots / plan_compliance
+// tables — a 200 from the block endpoints proves they touch nothing beyond a
+// SELECT on block_lens (no request-time derivation).
+const BLOCK_SUMMARY_CURRENT = {
+  raceName: "Sonthofen Half", raceDate: "2026-08-09",
+  isComplete: false, weeksTotal: 5, percentExecuted: 69,
+  kmPlanned: 116, kmActual: 24.2, efDeltaSPerKm: null,
+  cadenceDeltaSpm: 0.0, goalGapDeltaS: -50, recordsCount: 0,
+};
+const BLOCK_DOC_CURRENT = JSON.stringify({
+  raceName: "Sonthofen Half", raceDate: "2026-08-09", isComplete: false,
+  weeks: [{ wk: "Wk 1", days: [{ date: "2026-07-06", status: "done" }] }],
+  summary: BLOCK_SUMMARY_CURRENT,
+});
+const BLOCK_SUMMARY_SPRING = {
+  raceName: "Spring Half", raceDate: "2025-04-12",
+  isComplete: true, weeksTotal: 4, percentExecuted: 100,
+  kmPlanned: 55, kmActual: 55, efDeltaSPerKm: -12.0,
+  cadenceDeltaSpm: 3.0, goalGapDeltaS: -200, recordsCount: 1,
+};
+const BLOCK_DOC_SPRING = JSON.stringify({
+  raceName: "Spring Half", raceDate: "2025-04-12", isComplete: true,
+  weeks: [{ wk: "Wk 1" }], summary: BLOCK_SUMMARY_SPRING,
+});
+const BLOCK_DOC_AUTUMN = JSON.stringify({
+  raceName: "Autumn 10K", raceDate: "2024-10-01", isComplete: true,
+  weeks: [], summary: { raceName: "Autumn 10K", raceDate: "2024-10-01", isComplete: true },
 });
 
 function makeArchive(dir) {
@@ -131,6 +163,19 @@ function makeArchive(dir) {
       crop_x, crop_y, crop_size, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'x')`)
     .run(10, 15, 17000, 11300, 17001, 11300, 4352123.5, 2893456.25, 412.75);
+  // block-lens rows (schema v9), inserted OUT of race-date order so the
+  // listing's ORDER BY is what sorts them
+  db.exec(`CREATE TABLE block_lens (
+    race_date    TEXT PRIMARY KEY,
+    race_name    TEXT NOT NULL,
+    lens_version INTEGER NOT NULL,
+    is_complete  INTEGER NOT NULL,
+    block_json   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL)`);
+  const bins = db.prepare("INSERT INTO block_lens VALUES (?, ?, ?, ?, ?, ?)");
+  bins.run("2025-04-12", "Spring Half", 1, 1, BLOCK_DOC_SPRING, "2026-07-17T04:00:00");
+  bins.run("2026-08-09", "Sonthofen Half", 1, 0, BLOCK_DOC_CURRENT, "2026-07-17T04:00:00");
+  bins.run("2024-10-01", "Autumn 10K", 1, 1, BLOCK_DOC_AUTUMN, "2026-07-17T04:00:00");
   db.close();
 }
 
@@ -179,8 +224,11 @@ function makeBareArchive(dir) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-archive-test-"));
 const emptyDir = await mkdtemp(join(tmpdir(), "splits-archive-empty-"));
 const bareDir = await mkdtemp(join(tmpdir(), "splits-archive-bare-"));
+const brokenDir = await mkdtemp(join(tmpdir(), "splits-archive-broken-"));
 makeArchive(dataDir);
 makeBareArchive(bareDir);
+// provisioned-but-unusable: the file exists, SQLite can't read it → 503
+await writeFile(join(brokenDir, "activity-archive.db"), "this is not a database");
 const dbPath = join(dataDir, "activity-archive.db");
 const dbBytesBefore = await readFile(dbPath);
 
@@ -189,11 +237,13 @@ const B = "http://localhost:" + PORT;          // archive in DATA_DIR (default f
 const Bmissing = "http://localhost:" + (PORT + 1); // no archive anywhere → 503
 const Boverride = "http://localhost:" + (PORT + 2); // SPLITS_ARCHIVE_DIR override
 const Bbare = "http://localhost:" + (PORT + 3);    // pre-metrics archive (no run_metrics table)
+const Bbroken = "http://localhost:" + (PORT + 4);  // corrupt archive file → 503
 
 const server = startServer(PORT, { SPLITS_DATA_DIR: dataDir });
 const serverMissing = startServer(PORT + 1, { SPLITS_DATA_DIR: emptyDir });
 const serverOverride = startServer(PORT + 2, { SPLITS_DATA_DIR: emptyDir, SPLITS_ARCHIVE_DIR: dataDir });
 const serverBare = startServer(PORT + 3, { SPLITS_DATA_DIR: bareDir });
+const serverBroken = startServer(PORT + 4, { SPLITS_DATA_DIR: brokenDir });
 
 const list = (base, qs = "") => fetch(base + "/api/archive/activities" + qs);
 const byId = (base, id) => fetch(base + "/api/archive/activities/" + id);
@@ -219,6 +269,7 @@ try {
   await waitReady(Bmissing, serverMissing.errRef);
   await waitReady(Boverride, serverOverride.errRef);
   await waitReady(Bbare, serverBare.errRef);
+  await waitReady(Bbroken, serverBroken.errRef);
 
   // ── listing: newest-first promoted rows ────────────────────────────────────
   const all = await (await list(B)).json();
@@ -402,6 +453,61 @@ try {
   assert.strictEqual((await fetch(Bbare + "/api/archive/tiles/15/17000/11300.png")).status, 404,
     "pre-v8 archive: tile → 404, not a 503");
 
+  // ── block-lens endpoints (add-block-lens 2.x) ─────────────────────────────
+  // listing: newest race first, promoted columns + the EMBEDDED summary slice
+  const blocks = (await (await fetch(B + "/api/archive/blocks")).json()).blocks;
+  assert.deepStrictEqual(blocks.map((b) => b.raceDate),
+    ["2026-08-09", "2025-04-12", "2024-10-01"], "blocks are listed newest race first");
+  assert.deepStrictEqual(Object.keys(blocks[0]).sort(),
+    ["isComplete", "lensVersion", "raceDate", "raceName", "summary", "updatedAt"],
+    "listing rows carry promoted columns + summary, nothing else");
+  assert.strictEqual(blocks[0].isComplete, false);
+  assert.strictEqual(blocks[1].isComplete, true);
+  assert.deepStrictEqual(blocks[0].summary, BLOCK_SUMMARY_CURRENT,
+    "the summary is the engine's embedded slice, lifted verbatim");
+  assert.deepStrictEqual(blocks[1].summary, BLOCK_SUMMARY_SPRING);
+  assert.ok(!blocks.some((b) => "weeks" in (b.summary || {})),
+    "the listing never carries week-level detail");
+
+  // single block: the stored TEXT byte-for-byte (never parse-and-reserialise)
+  const blockDoc = await fetch(B + "/api/archive/blocks/2026-08-09");
+  assert.strictEqual(blockDoc.status, 200);
+  assert.strictEqual(await blockDoc.text(), BLOCK_DOC_CURRENT,
+    "the stored lens document is served verbatim");
+  assert.strictEqual(await (await fetch(B + "/api/archive/blocks/2025-04-12")).text(),
+    BLOCK_DOC_SPRING);
+
+  // fail-soft contract: unknown key / malformed key → 404; POST → 405
+  assert.strictEqual((await fetch(B + "/api/archive/blocks/2030-01-01")).status, 404,
+    "unknown race date → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/blocks/not-a-date")).status, 404,
+    "malformed race date → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/blocks", { method: "POST", body: "x" })).status,
+    405, "POST blocks → 405");
+  assert.strictEqual((await fetch(B + "/api/archive/blocks/2026-08-09", { method: "PUT", body: "x" })).status,
+    405, "PUT block → 405");
+
+  // a pre-v9 archive (no block_lens table): empty list with 200 on the
+  // listing, 404 by date — "no lens yet", never an outage
+  const bareBlocks = await fetch(Bbare + "/api/archive/blocks");
+  assert.strictEqual(bareBlocks.status, 200, "pre-v9 archive: listing still 200");
+  assert.deepStrictEqual((await bareBlocks.json()).blocks, [], "…with an empty list");
+  assert.strictEqual((await fetch(Bbare + "/api/archive/blocks/2026-08-09")).status, 404,
+    "pre-v9 archive: by-date → 404, not a 503");
+
+  // archive away: missing db → 404 (not provisioned), corrupt db → 503 on
+  // both endpoints — and the server keeps serving everything else
+  assert.strictEqual((await fetch(Bmissing + "/api/archive/blocks")).status, 404,
+    "missing db → 404 on the block listing");
+  assert.strictEqual((await fetch(Bmissing + "/api/archive/blocks/2026-08-09")).status, 404,
+    "missing db → 404 on the block document");
+  assert.strictEqual((await fetch(Bbroken + "/api/archive/blocks")).status, 503,
+    "unusable db → 503 fail-soft on the block listing");
+  assert.strictEqual((await fetch(Bbroken + "/api/archive/blocks/2026-08-09")).status, 503,
+    "unusable db → 503 fail-soft on the block document");
+  assert.ok((await fetch(Bbroken + "/api/status")).ok,
+    "the server process survives archive failure");
+
   // write methods rejected, no state change
   assert.strictEqual((await fetch(B + "/api/archive/activities", { method: "POST", body: "x" })).status, 405, "POST → 405");
   assert.strictEqual((await fetch(B + "/api/archive/activities/10", { method: "PUT", body: "x" })).status, 405, "PUT → 405");
@@ -435,8 +541,10 @@ try {
   serverMissing.kill();
   serverOverride.kill();
   serverBare.kill();
+  serverBroken.kill();
   await rm(dataDir, { recursive: true, force: true }).catch(() => {});
   await rm(emptyDir, { recursive: true, force: true }).catch(() => {});
   await rm(bareDir, { recursive: true, force: true }).catch(() => {});
+  await rm(brokenDir, { recursive: true, force: true }).catch(() => {});
 }
 process.exit(failed ? 1 : 0);

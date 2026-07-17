@@ -128,7 +128,7 @@
     </div>
     <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="0">
       <div style="display:flex;flex-direction:column;gap:var(--sp-1);font-family:'JetBrains Mono';font-size:var(--fs-xs);font-weight:600;margin-bottom:var(--sp-2);padding:var(--sp-2) var(--sp-3);background:var(--panel2);border-radius:var(--r-md)">
-        <div style="color:var(--sub)">at {{ ro.at }}</div>
+        <div style="color:var(--sub)">{{ ro.at }}</div>
         <sc-for list="{{ ro.runs }}" as="rr" hint-placeholder-count="2">
           <div style="display:flex;align-items:center;gap:var(--sp-2)">
             <span style="width:8px;height:8px;border-radius:50%;background:{{ rr.dot }};flex:none"></span>
@@ -403,7 +403,12 @@ class Component extends DCLogic {
         pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
 
         // the readout: every run at ONE distance; a run already finished at
-        // that distance reads as ended, never as a value (spec 8.x)
+        // that distance reads as ended, never as a value (spec 8.x). It
+        // renders in BOTH states with the same row count — if it appeared
+        // only on hover, its insertion would shift the tracks down under a
+        // stationary cursor, Chromium would re-evaluate hover, clear the
+        // crosshair, and the readout would strobe (real flicker, caught by
+        // the e2e crosshair step).
         if (ci != null) {
           const at = (grid[ci] / 1000).toFixed(2) + ' km';
           const runs = streamed.map((s) => {
@@ -416,8 +421,11 @@ class Component extends DCLogic {
             if (r.elev && r.elev[ci] != null) parts.push(Math.round(r.elev[ci]) + ' m');
             return { dot: color.get(s.id), name: label(s), vals: parts.join(' · ') || '—' };
           });
-          pg.readout = [{ at, runs }];
+          pg.readout = [{ at: 'at ' + at, runs }];
           liveText = 'at ' + at + ': ' + runs.map((r) => r.name + ' ' + r.vals).join('; ');
+        } else {
+          pg.readout = [{ at: 'hover or focus a track — ←/→ moves the crosshair',
+            runs: streamed.map((s) => ({ dot: color.get(s.id), name: label(s), vals: '—' })) }];
         }
       }
       // per-run stream notes (summary-only runs stay in the comparison)

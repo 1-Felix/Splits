@@ -51,7 +51,8 @@ _PACE_RE = re.compile(r"(\d{1,2}):(\d{2})")
 def _fmt_pace(sec) -> str:
     if not sec:
         return "—"
-    return f"{int(sec // 60)}:{int(round(sec % 60)):02d}"
+    sec = int(round(sec))  # round the TOTAL first — 419.9 is 7:00, never 6:60
+    return f"{sec // 60}:{sec % 60:02d}"
 
 
 def _fmt_hms(sec) -> str:

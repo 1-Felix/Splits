@@ -41,7 +41,11 @@ from statistics import median
 import activity_archive
 import insight_metrics
 
-BLOCK_LENS_VERSION = 1
+# v2 (code-review fixes): a block younger than the adaptation window yields
+# null deltas (insufficient-span) instead of a structurally-zero comparison;
+# weeks retired from the latest snapshot rejoin the rollup as retired entries;
+# an undetailed week's remaining km prorates by its remaining days.
+BLOCK_LENS_VERSION = 2
 
 # ──────────────────────────────────────────────────────────────────────────────
 # algorithm parameters — all covered by BLOCK_LENS_VERSION
@@ -50,6 +54,12 @@ ADAPT_WINDOW_DAYS = 14        # EF/cadence: median over the block's first/last 1
 MIN_QUALIFYING_RUNS = 3       # fewer in a window → null + reason, never a delta
 PARTIAL_CREDIT = 0.5          # a partial day's weight in percent-executed
 GOAL_ANCHOR_TOLERANCE_DAYS = 14  # predictor row this far from block start still anchors
+# A completed block keeps recomputing this long past race day before it
+# freezes, so a late-syncing race upload still lands in the retrospective —
+# the same rationale as compliance's nightly rescore of the last closed week.
+# Lifecycle-only (recompute timing, never document content), so changing it
+# needs no version bump.
+COMPLETE_GRACE_DAYS = 3
 
 # insight_metrics owns the records vocabulary; reuse it verbatim so the block's
 # records feed speaks the same distance labels as insights.recordsFeed
@@ -86,14 +96,16 @@ def parse_goal_seconds(goal_time) -> int | None:
 # block enumeration (design D1)
 # ──────────────────────────────────────────────────────────────────────────────
 def enumerate_blocks(conn) -> list[dict]:
-    """One entry per (race.name, race.date) key across all plan snapshots,
-    oldest race first. `start` is the earliest week.mon EVER seen for the key
-    (weeks may retire from later snapshots); `weeks`/`race` come from the
-    key's latest snapshot; `latest_snapshot` marks which entry the newest
-    snapshot overall belongs to — that key is the live plan's block."""
+    """One entry per race DATE across all plan snapshots, oldest race first —
+    the same key the block_lens table and the archive API use, so a renamed
+    race stays one block (the name is an attribute; only a race-date edit
+    spawns a new identity). `start` is the earliest week.mon EVER seen for
+    the date (weeks may retire from later snapshots); `race_name`/`race`/
+    `weeks` come from the date's latest snapshot. The entry the newest
+    snapshot overall belongs to is the live plan's block."""
     rows = conn.execute(
         "SELECT id, plan_json FROM plan_snapshots ORDER BY id").fetchall()
-    blocks: dict[tuple, dict] = {}
+    blocks: dict[str, dict] = {}
     last_key = None
     for sid, plan_json in rows:
         try:
@@ -106,19 +118,18 @@ def enumerate_blocks(conn) -> list[dict]:
                  if w.get("mon") and w.get("sun")]
         if not date or not weeks:
             continue
-        key = (name, date)
         start = min(w["mon"] for w in weeks)
-        b = blocks.get(key)
+        b = blocks.get(date)
         if b is None:
-            blocks[key] = {"race_name": name, "race_date": date, "start": start,
-                           "race": race, "weeks": weeks}
+            blocks[date] = {"race_name": name, "race_date": date, "start": start,
+                            "race": race, "weeks": weeks}
         else:
             b["start"] = min(b["start"], start)
-            b["race"], b["weeks"] = race, weeks
-        last_key = key
+            b["race_name"], b["race"], b["weeks"] = name, race, weeks
+        last_key = date
     out = sorted(blocks.values(), key=lambda b: b["race_date"])
     for b in out:
-        b["is_live"] = last_key == (b["race_name"], b["race_date"])
+        b["is_live"] = last_key == b["race_date"]
     return out
 
 
@@ -155,59 +166,82 @@ def build_execution(block: dict, comp_rows: list[dict]) -> tuple[list[dict], dic
     """(weeks, execution) for one block. Weeks carry the phase strip fields,
     per-week verdict counts, km and the day-level drill; execution is the
     block-level rollup. Compliance rows keep their stored planned_* fields —
-    execution is always measured against what the plan said at the time."""
-    race_date = block["race_date"]
-    weeks_out = []
-    counts_total = {s: 0 for s in _STATUSES}
-    scored_days = 0
-    weighted = 0.0
-    quality_hit = quality_of = 0
-    km_planned_to_date = km_actual_total = 0.0
+    execution is always measured against what the plan said at the time.
 
+    Verdicts whose dates no snapshot week covers anymore (a week retired by a
+    mid-block restructure) still happened inside the block window: they rejoin
+    the story as `retired` week entries grouped by calendar week, so nothing
+    the athlete ran ever silently vanishes from the rollup or the drill."""
+    race_date = block["race_date"]
+    totals = {"counts": {s: 0 for s in _STATUSES}, "scored_days": 0,
+              "weighted": 0.0, "quality_hit": 0, "quality_of": 0,
+              "km_planned_to_date": 0.0, "km_actual": 0.0}
+
+    def score_entry(entry: dict, rows: list[dict]) -> dict:
+        counts = {s: 0 for s in _STATUSES}
+        actual_km = 0.0
+        for r in rows:
+            if r["date"] == race_date:  # drill yes, aggregates no
+                continue
+            if r["status"] in counts:
+                counts[r["status"]] += 1
+                totals["counts"][r["status"]] += 1
+            actual_km += r["actual_km"] or 0
+            if r["planned_kind"] is not None and r["status"] != "pending":
+                totals["km_planned_to_date"] += r["planned_km"] or 0
+                totals["scored_days"] += 1
+                if r["status"] in ("done", "swapped"):
+                    totals["weighted"] += 1.0
+                elif r["status"] == "partial":
+                    totals["weighted"] += PARTIAL_CREDIT
+                if r["planned_load"] == "Hard":
+                    totals["quality_of"] += 1
+                    if r["status"] in ("done", "swapped"):
+                        totals["quality_hit"] += 1
+        totals["km_actual"] += actual_km
+        entry.update(scored=True, counts=counts, actualKm=round(actual_km, 1),
+                     days=[_day_row(r) for r in rows])
+        return entry
+
+    weeks_out = []
+    claimed: set[int] = set()
     for w in block["weeks"]:
-        rows = [r for r in comp_rows if w["mon"] <= r["date"] <= w["sun"]]
+        idxs = [i for i, r in enumerate(comp_rows)
+                if w["mon"] <= r["date"] <= w["sun"]]
+        claimed.update(idxs)
         entry = {"wk": w.get("wk"), "mon": w["mon"], "sun": w["sun"],
                  "phase": w.get("phase"), "label": w.get("label"),
                  "focus": w.get("focus"), "plannedKm": w.get("km"),
-                 "scored": bool(rows)}
-        if rows:
-            counts = {s: 0 for s in _STATUSES}
-            actual_km = 0.0
-            for r in rows:
-                if r["date"] == race_date:  # drill yes, aggregates no
-                    continue
-                if r["status"] in counts:
-                    counts[r["status"]] += 1
-                    counts_total[r["status"]] += 1
-                actual_km += r["actual_km"] or 0
-                if r["planned_kind"] is not None and r["status"] != "pending":
-                    km_planned_to_date += r["planned_km"] or 0
-                    scored_days += 1
-                    if r["status"] in ("done", "swapped"):
-                        weighted += 1.0
-                    elif r["status"] == "partial":
-                        weighted += PARTIAL_CREDIT
-                    if r["planned_load"] == "Hard":
-                        quality_of += 1
-                        if r["status"] in ("done", "swapped"):
-                            quality_hit += 1
-            entry["counts"] = counts
-            entry["actualKm"] = round(actual_km, 1)
-            entry["days"] = [_day_row(r) for r in rows]
-            km_actual_total += actual_km
+                 "scored": False}
+        if idxs:
+            score_entry(entry, [comp_rows[i] for i in idxs])
         else:  # unscored (future) week: planned shape only, no verdicts
             entry["days"] = [_planned_day_row(d) for d in (w.get("days") or [])]
         weeks_out.append(entry)
 
+    retired = [r for i, r in enumerate(comp_rows) if i not in claimed]
+    by_week: dict[str, list[dict]] = {}
+    for r in retired:
+        d = dt.date.fromisoformat(r["date"])
+        by_week.setdefault((d - dt.timedelta(days=d.weekday())).isoformat(),
+                           []).append(r)
+    for mon, rows in by_week.items():
+        sun = (dt.date.fromisoformat(mon) + dt.timedelta(days=6)).isoformat()
+        weeks_out.append(score_entry(
+            {"wk": rows[0].get("wk"), "mon": mon, "sun": sun, "phase": None,
+             "label": None, "focus": None, "plannedKm": None, "retired": True},
+            rows))
+    weeks_out.sort(key=lambda w: w["mon"])
+
     execution = {
-        "percentExecuted": (round(100.0 * weighted / scored_days)
-                            if scored_days else None),
-        "scoredDays": scored_days,
-        "qualityHitRate": {"hit": quality_hit, "of": quality_of},
+        "percentExecuted": (round(100.0 * totals["weighted"] / totals["scored_days"])
+                            if totals["scored_days"] else None),
+        "scoredDays": totals["scored_days"],
+        "qualityHitRate": {"hit": totals["quality_hit"], "of": totals["quality_of"]},
         "kmPlanned": round(sum(w.get("km") or 0 for w in block["weeks"]), 1),
-        "kmPlannedToDate": round(km_planned_to_date, 1),
-        "kmActual": round(km_actual_total, 1),
-        "counts": counts_total,
+        "kmPlannedToDate": round(totals["km_planned_to_date"], 1),
+        "kmActual": round(totals["km_actual"], 1),
+        "counts": totals["counts"],
     }
     return weeks_out, execution
 
@@ -231,8 +265,10 @@ def _delta_metric(conn, col: str, start: dt.date, end: dt.date,
                   key_start: str, key_end: str, key_delta: str,
                   ndigits: int) -> dict:
     """Median of `col` over [start, start+13] vs [end-13, end]; null + reason
-    when either window is thin. Windows may overlap on a young block — that is
-    stated by the run counts, not hidden."""
+    when either window is thin. A block whose whole span fits inside one
+    window would compare identical medians and report a structurally-zero
+    delta — that is no comparison at all, so it is null too, never a fake
+    'no change'."""
     first_to = min(start + dt.timedelta(days=ADAPT_WINDOW_DAYS - 1), end)
     last_from = max(end - dt.timedelta(days=ADAPT_WINDOW_DAYS - 1), start)
     m_start, n_start = _window_medians(conn, col, _fmt_date(start), _fmt_date(first_to))
@@ -242,6 +278,8 @@ def _delta_metric(conn, col: str, start: dt.date, end: dt.date,
         out.update({key_delta: None, "reason": "insufficient-baseline"})
     elif m_end is None:
         out.update({key_delta: None, "reason": "insufficient-current"})
+    elif (end - start).days < ADAPT_WINDOW_DAYS:  # both windows identical
+        out.update({key_delta: None, "reason": "insufficient-span"})
     else:
         out.update({key_start: round(m_start, ndigits),
                     key_end: round(m_end, ndigits),
@@ -332,8 +370,12 @@ def build_forward(block: dict, today: dt.date) -> dict:
     km_remaining = 0.0
     for w in remaining:
         days = w.get("days")
-        if days is None:  # undetailed — the header km is all the plan says
-            km_remaining += w.get("km") or 0
+        if days is None:
+            # undetailed — the header km is all the plan says; prorate a
+            # partially-elapsed week by its remaining days so mid-week the
+            # already-gone share doesn't inflate what is still runnable
+            left = min(7, (dt.date.fromisoformat(w["sun"]) - today).days + 1)
+            km_remaining += (w.get("km") or 0) * left / 7.0
         else:
             km_remaining += sum((d.get("km") or 0) for d in days
                                 if (d.get("date") or "") >= today_iso
@@ -345,8 +387,9 @@ def build_forward(block: dict, today: dt.date) -> dict:
                         "km": w.get("km"), "phase": w.get("phase")}
                        for w in remaining],
         # same rule as coach_briefing.integrity_warnings: a future week with
-        # no days is a plan-integrity gap
-        "undetailedWeeks": [w.get("wk") for w in remaining
+        # no days is a plan-integrity gap. Fall back to the week's Monday so
+        # an unlabeled week never puts a None into consumers' joins.
+        "undetailedWeeks": [w.get("wk") or w.get("mon") for w in remaining
                             if w.get("days") is None],
     }
 
@@ -386,7 +429,9 @@ def build_block_document(conn, block: dict, today: dt.date,
         "adaptation": adaptation,
     }
     if is_current:
-        doc["weekNow"] = _week_now(block["weeks"], today_iso)
+        # over the BUILT list (retired entries included) so "week N of M"
+        # counts the same weeks the card renders
+        doc["weekNow"] = _week_now(weeks, today_iso)
         doc["forward"] = build_forward(block, today)
     # the headline slice — embedded so the archive API and the past-block list
     # can lift it verbatim (SELECT-and-shape, no derivation downstream)
@@ -409,20 +454,24 @@ def build_block_document(conn, block: dict, today: dt.date,
 
 def derive_block_lens(conn, today: dt.date) -> dict:
     """One sync's lens work: recompute the current block always, completed
-    blocks only when their stored row is missing or stale-versioned (a
-    BLOCK_LENS_VERSION bump heals every row). A not-yet-complete block that
-    is no longer the live plan (race-date edit) keeps recomputing until its
-    own race date passes and it freezes. Per-block failures warn and skip —
-    one bad snapshot can never sink the others."""
+    blocks only while their race day is inside the grace window (so a
+    late-syncing race upload still lands in the retrospective) or when the
+    stored row is missing, stale-versioned (a BLOCK_LENS_VERSION bump heals
+    every row) or carries an outdated race name. A not-yet-complete block
+    that is no longer the live plan (race-date edit) keeps recomputing until
+    its own race date passes and it freezes. Per-block failures warn and
+    skip — one bad snapshot can never sink the others."""
     blocks = enumerate_blocks(conn)
     today_iso = today.isoformat()
+    freeze_before = (today - dt.timedelta(days=COMPLETE_GRACE_DAYS)).isoformat()
     recomputed = 0
     for b in blocks:
         is_current = b["is_live"] and b["race_date"] >= today_iso
         row = activity_archive.block_lens_row(conn, b["race_date"])
         if (row and not is_current and row[0] == BLOCK_LENS_VERSION
-                and row[1] == 1):
-            continue  # complete at the current version — frozen
+                and row[1] == 1 and row[2] == b["race_name"]
+                and b["race_date"] < freeze_before):
+            continue  # complete, grace over, current version — frozen
         try:
             doc = build_block_document(conn, b, today, is_current)
             activity_archive.upsert_block_lens(
@@ -450,11 +499,12 @@ def assemble_block_lens(conn, today: dt.date) -> dict:
     today_iso = today.isoformat()
     current = None
     past = []
-    for race_date, race_name, _is_complete, doc_json in rows:
+    for race_date, _race_name, _is_complete, doc_json in rows:
         doc = json.loads(doc_json)
+        # identity is the race DATE (design D1) — the stored name may lag one
+        # derive behind a rename and must not disqualify the current block
         if (current is None and live
                 and race_date == live["race_date"]
-                and race_name == live["race_name"]
                 and race_date >= today_iso):
             current = doc
         else:

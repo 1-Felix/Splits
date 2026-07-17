@@ -304,6 +304,41 @@ def test_closed_week_frozen_against_first_scoring_snapshot():
     conn.close()
 
 
+def test_recurring_week_label_never_freezes_across_blocks():
+    """Block-local labels ("Wk 2") recur across blocks. The frozen-snapshot
+    lookup must resolve by the week's DATE WINDOW: the next block's "Wk 2"
+    scores against its own snapshot, and the previous block's rows stay
+    untouched. (Regression: a label-keyed lookup froze the new week against
+    the OLD block's snapshot and rescored the old dates instead.)"""
+    d = _tmp()
+    conn = _seed_archive(d)
+    pc.run_compliance(conn, "raw old block", _plan(), TODAY, MAX_HR)
+    old_rows = arch.compliance_rows(conn)
+    old_snap = old_rows[0]["snapshot_id"]
+
+    # the NEXT block reuses the label with different dates (post-race restart)
+    week = _closed_week()  # keeps wk="Wk 2"
+    week.update(mon="2026-08-31", sun="2026-09-06", km=20)
+    dates = ["2026-08-31"] + [f"2026-09-{i:02d}" for i in range(1, 7)]
+    for day, date in zip(week["days"], dates):
+        day["date"] = date
+    arch.upsert_activities(conn, [_garmin_act(20, "2026-09-02", 5.0, 2100, hr=145)])
+    next_plan = {"race": {"date": "2026-10-11", "goalPaceSecPerKm": 341},
+                 "block": [week]}
+    pc.run_compliance(conn, "raw next block", next_plan,
+                      dt.date(2026, 9, 8), MAX_HR)
+
+    rows = arch.compliance_rows(conn)
+    new_wed = next((r for r in rows if r["date"] == "2026-09-02"), None)
+    assert new_wed is not None, "the new block's week was scored at all"
+    assert new_wed["snapshot_id"] != old_snap, \
+        "…against its OWN snapshot, not the old block's"
+    assert new_wed["status"] == "done" and new_wed["planned_km"] == 5
+    assert [r for r in rows if r["date"] <= "2026-07-05"] == old_rows, \
+        "the previous block's frozen rows are untouched"
+    conn.close()
+
+
 def test_version_bump_rescored_against_original_snapshot():
     d = _tmp()
     conn = _seed_archive(d)

@@ -143,6 +143,14 @@ def _seeded_conn(d: Path):
     return conn, plan
 
 
+# ── pace formatting: total-seconds rounding, no 6:60 carry ───────────────────
+def test_fmt_pace_rounds_total_seconds():
+    assert cb._fmt_pace(419.9) == "7:00", "59.9s must carry into the minute"
+    assert cb._fmt_pace(420) == "7:00"
+    assert cb._fmt_pace(455.4) == "7:35"
+    assert cb._fmt_pace(None) == "—"
+
+
 # ── pace parser (task 5.2) ───────────────────────────────────────────────────
 def test_parse_pace_target():
     assert cb.parse_pace_target("5:25–5:35") == 330

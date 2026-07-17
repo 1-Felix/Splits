@@ -162,8 +162,10 @@ async function waitReady(base, errRef) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-blocksec-"));
 const noneDir = await mkdtemp(join(tmpdir(), "splits-blocksec-none-"));
 const oneDir = await mkdtemp(join(tmpdir(), "splits-blocksec-one-"));
+// the stray {} mirrors the producer's `doc.get("summary") or {}` fallback —
+// the page must skip it, never crash on it
 await writeFile(join(dataDir, "garmin-data.js"),
-  lensData({ lensVersion: 1, current: CURRENT_DOC, past: [SPRING_SUMMARY] }));
+  lensData({ lensVersion: 1, current: CURRENT_DOC, past: [SPRING_SUMMARY, {}] }));
 await writeFile(join(noneDir, "garmin-data.js"), lensData(null));
 await writeFile(join(oneDir, "garmin-data.js"),
   lensData({ lensVersion: 1, current: CURRENT_DOC, past: [] }));
@@ -198,7 +200,9 @@ try {
   let text = await sectionText();
   assert.ok(text.includes("Sonthofen Half"), "the current block's race names the card");
   assert.ok(text.includes("75%"), "percent executed from static data");
-  assert.ok(text.includes("24.2 / 79"), "km done vs planned from static data");
+  assert.ok(text.includes("24.2 / 31"), "km vs plan TO DATE — the briefing's ratio, not the whole-block total");
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll("#block-section button.block-past").length), 1,
+    "a summary-less {} past entry is skipped, never rendered or crashed on");
   assert.ok(/Wk 1/.test(text) && /Wk 3/.test(text), "every week row renders");
   assert.ok(text.includes("TO RACE DAY"), "forward tilt renders on the live card");
   assert.strictEqual(archiveRequests.length, 0, "no archive request before any past-block drill");
@@ -286,12 +290,14 @@ try {
   assert.ok(!(await pageNone.evaluate(() => !!document.getElementById("block-section"))), "…and no empty shell either");
   await pageNone.close();
 
-  // ── offline honesty: the expanded past block degrades, retry needs no reload
+  // ── offline honesty: a REAL outage (unreadable db → 503) degrades inside
+  // the section and retry needs no reload ───────────────────────────────────
   step = "offline past block";
   await page.goto(B + "/progress", { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !!document.getElementById("block-section"), null, { timeout: 15000 });
   const dbPath = join(dataDir, "activity-archive.db");
   await rename(dbPath, dbPath + ".away");
+  await writeFile(dbPath, "not a database");   // provisioned-but-unusable → 503
   await page.evaluate(() => { window.__noReload = true; });
   await page.click("#block-section button.block-past");
   await page.waitForFunction(() =>
@@ -301,10 +307,25 @@ try {
   text = await sectionText();
   assert.ok(text.includes("100% executed"), "the static summary row stays intact while offline");
   step = "offline retry";
+  await rm(dbPath);
   await rename(dbPath + ".away", dbPath);
   await page.click("#block-section button.block-retry");
   await page.waitForFunction(() => !!document.querySelector("#block-section .block-card-past"), null, { timeout: 10000 });
   assert.ok(await page.evaluate(() => window.__noReload === true), "retry worked without a page reload");
+
+  // ── a 404 (no archive / block not stored) is honest, not an outage ────────
+  step = "missing block is not an outage";
+  await rename(dbPath, dbPath + ".away");      // no archive file at all → 404
+  await page.goto(B + "/progress", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => !!document.getElementById("block-section"), null, { timeout: 15000 });
+  await page.click("#block-section button.block-past");
+  await page.waitForFunction(() =>
+    document.querySelector("#block-section") &&
+    document.querySelector("#block-section").innerText.includes("Not in the archive"),
+    null, { timeout: 10000 });
+  assert.ok(!(await sectionText()).includes("Archive offline"),
+    "a deliberate 404 never claims an outage or offers a doomed retry");
+  await rename(dbPath + ".away", dbPath);
 
   assert.strictEqual(pageErrors.length, 0, "no uncaught page errors: " + JSON.stringify(pageErrors));
   console.log("ALL PASS");

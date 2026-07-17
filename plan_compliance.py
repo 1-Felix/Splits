@@ -303,11 +303,15 @@ def run_compliance(conn, raw_text: str, plan: dict, today: dt.date,
     for week in weeks_to_score(plan.get("block") or [], today):
         week_snapshot = snapshot_id
         if week.get("sun", "") < today_iso:  # closed → freeze at first post-close scoring
-            week_snapshot = _existing_week_snapshot(conn, week.get("wk")) or snapshot_id
+            week_snapshot = _existing_week_snapshot(conn, week) or snapshot_id
             if week_snapshot != snapshot_id:
-                frozen = activity_archive.snapshot_plan(conn, week_snapshot) or plan
-                week = next((w for w in frozen.get("block", [])
-                             if w.get("wk") == week.get("wk")), week)
+                frozen = activity_archive.snapshot_plan(conn, week_snapshot) or {}
+                match = next((w for w in frozen.get("block", [])
+                              if w.get("mon") == week.get("mon")), None)
+                if match is not None:
+                    week = match
+                else:  # stored rows predate this week's shape — score fresh
+                    week_snapshot = snapshot_id
         acts = _acts_for_range(conn, week["mon"], week["sun"])
         rows = score_week(week, acts, today, max_hr, week_snapshot)
         if rows:
@@ -318,10 +322,15 @@ def run_compliance(conn, raw_text: str, plan: dict, today: dt.date,
             "weeks_healed": healed}
 
 
-def _existing_week_snapshot(conn, wk) -> int | None:
+def _existing_week_snapshot(conn, week) -> int | None:
+    """The snapshot the week's stored rows already reference — looked up by
+    the week's DATE WINDOW, never its label: block-local labels ("Wk 1")
+    recur across blocks, so a label lookup would freeze a new block's week
+    against a previous block's snapshot and rescore the wrong dates."""
     row = conn.execute(
-        "SELECT snapshot_id FROM plan_compliance WHERE wk = ? LIMIT 1",
-        (wk,)).fetchone()
+        "SELECT snapshot_id FROM plan_compliance "
+        "WHERE date >= ? AND date <= ? LIMIT 1",
+        (week.get("mon"), week.get("sun"))).fetchone()
     return row[0] if row else None
 
 

@@ -300,8 +300,11 @@ def test_current_block_document():
     assert ad["ef"]["deltaSPerKm"] is None
     assert ad["ef"]["reason"] == "insufficient-baseline"
     assert ad["ef"]["startRuns"] == 2
-    assert ad["cadence"]["deltaSpm"] == 0.0, \
-        "cadence has enough evidence even while EF does not"
+    # cadence HAS enough runs, but the 10-day-old block fits inside one
+    # comparison window — identical windows compare nothing, never a fake ±0
+    assert ad["cadence"]["deltaSpm"] is None
+    assert ad["cadence"]["reason"] == "insufficient-span"
+    assert ad["cadence"]["startRuns"] == 4
     assert ad["goalGap"]["deltaS"] == -50
 
     fw = doc["forward"]
@@ -312,8 +315,47 @@ def test_current_block_document():
     assert fw["undetailedWeeks"] == ["B-Wk4"]
 
     s = doc["summary"]
-    assert s["efDeltaSPerKm"] is None and s["cadenceDeltaSpm"] == 0.0
+    assert s["efDeltaSPerKm"] is None and s["cadenceDeltaSpm"] is None
     conn.close()
+
+
+def test_retired_week_rejoins_the_rollup():
+    """A mid-block restructure that drops a scored week must never make the
+    athlete's stored work vanish from the totals or the drill."""
+    conn = arch.open_archive(_tmp())
+    _seed_block_b(conn)
+    edited = json.loads(json.dumps(PLAN_B))
+    edited["block"] = edited["block"][1:]          # Wk1 retired from the plan
+    pc.run_compliance(conn, "raw-plan-b-v2", edited, TODAY, MAX_HR)
+    bl.derive_block_lens(conn, TODAY)
+    doc = _docs(conn)["2026-08-09"]
+
+    wk1 = doc["weeks"][0]
+    assert wk1.get("retired") is True and wk1["mon"] == "2026-07-06"
+    assert wk1["counts"] == {"done": 3, "partial": 1, "missed": 1,
+                             "swapped": 0, "unplanned": 0}
+    assert wk1["plannedKm"] is None, "the header km retired with the week"
+    assert len(wk1["days"]) == 5, "the drill keeps every scored day"
+    assert doc["execution"]["kmActual"] == 24.2, "nothing the athlete ran vanished"
+    assert doc["execution"]["percentExecuted"] == 69, \
+        "retired verdicts still weigh into percent-executed"
+    assert doc["weekNow"] == 2 and doc["weeksTotal"] == 5, \
+        "week N of M counts the merged list the card renders"
+    assert doc["window"]["start"] == "2026-07-06"
+    conn.close()
+
+
+def test_forward_prorates_partially_elapsed_undetailed_week():
+    block = {"race_date": "2026-08-09", "weeks": [
+        {"mon": "2026-07-13", "sun": "2026-07-19", "km": 28, "days": None},
+        {"wk": "Wk X", "mon": "2026-07-20", "sun": "2026-07-26", "km": 21,
+         "days": None},
+    ]}
+    fw = bl.build_forward(block, dt.date(2026, 7, 17))  # Friday of week one
+    assert fw["kmRemaining"] == 33.0, \
+        "3 of 7 days left → 12 of the 28 header km, plus the full future week"
+    assert fw["undetailedWeeks"] == ["2026-07-13", "Wk X"], \
+        "an unlabeled week falls back to its Monday, never None"
 
 
 # ── persistence + versioning (design D2) ─────────────────────────────────────
@@ -340,6 +382,39 @@ def test_version_bump_heals_stale_rows():
     stats = bl.derive_block_lens(conn, TODAY)
     assert stats["recomputed"] == 2, "stale-version rows heal, completed included"
     assert arch.block_lens_coverage(conn, bl.BLOCK_LENS_VERSION)["stale"] == 0
+    conn.close()
+
+
+def test_completed_block_grace_window_catches_late_race_data():
+    """The freeze waits COMPLETE_GRACE_DAYS past race day, so a race that
+    syncs late still lands in the retrospective."""
+    conn = _seeded_conn()
+    day_after = dt.date(2026, 5, 11)
+    bl.derive_block_lens(conn, day_after)
+    stats = bl.derive_block_lens(conn, day_after)
+    assert stats["recomputed"] == 2, \
+        "a just-completed block keeps recomputing inside the grace window"
+    stats = bl.derive_block_lens(conn, dt.date(2026, 5, 15))
+    assert stats["recomputed"] == 1, "grace over → the completed block freezes"
+    conn.close()
+
+
+def test_race_rename_is_one_block_and_heals_the_stored_name():
+    """A rename is an attribute change, not a new training block: one row per
+    race date, and the stored name catches up on the next derive even for a
+    completed block."""
+    conn = _seeded_conn()
+    bl.derive_block_lens(conn, TODAY)
+    renamed = json.loads(json.dumps(PLAN_A))
+    renamed["race"]["name"] = "Spring Halbmarathon"
+    pc.run_compliance(conn, "raw-plan-a-renamed", renamed, TODAY, MAX_HR)
+
+    assert len(bl.enumerate_blocks(conn)) == 2, "same date → same block"
+    bl.derive_block_lens(conn, TODAY)
+    names = {rd: name for rd, name, _c, _doc in arch.block_lens_rows(conn)}
+    assert names["2026-05-10"] == "Spring Halbmarathon", \
+        "the frozen row recomputes once to heal the name"
+    assert _docs(conn)["2026-05-10"]["raceName"] == "Spring Halbmarathon"
     conn.close()
 
 

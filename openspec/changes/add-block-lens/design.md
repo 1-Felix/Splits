@@ -47,13 +47,16 @@ fail-soft and additive.
 
 ## Decisions
 
-### D1 — Block identity: keyed by race, enumerated from snapshots
+### D1 — Block identity: keyed by race date, enumerated from snapshots
 
-A block is `(race.name, race.date)` as found in `plan_snapshots.plan_json`.
-For each distinct race key: window = earliest `week.mon` seen across that
-race's snapshots → `race.date`; the **latest** snapshot for the race defines
-the final planned shape (weeks, phases, planned km). The block whose race date
-is ≥ today (from the live plan) is *current*; all others are *past*.
+A block is a race **date** as found in `plan_snapshots.plan_json` — the same
+key the `block_lens` table and the archive API use; the race name is an
+attribute from the date's latest snapshot (review fix: a rename must not fork
+the block or leave two identities fighting over one date-keyed row). For each
+date: window = earliest `week.mon` seen across its snapshots → `race.date`;
+the **latest** snapshot defines the final planned shape (weeks, phases,
+planned km). The block whose race date is ≥ today (from the live plan) is
+*current*; all others are *past*.
 Compliance rows keep their own `snapshot_id` linkage — execution is always
 measured against what the plan said at the time, which the snapshot mechanism
 already guarantees.
@@ -79,9 +82,11 @@ Additive schema v9, derived-only, always recomputable from snapshots ×
 compliance × run_metrics × race_predictions — same contract as `run_metrics`
 and `plan_compliance`. This is what lets the archive API stay a window: block
 endpoints SELECT `block_json` verbatim, deriving nothing at request time.
-Every sync recomputes the current block's row; completed blocks recompute only
-when `lens_version` bumps (cheap either way — it's aggregation, not stream
-processing).
+Every sync recomputes the current block's row; a just-completed block keeps
+recomputing through a short grace window so late-syncing race data still lands
+in the retrospective (review fix); frozen completed blocks recompute only when
+`lens_version` bumps or their stored race name goes stale (cheap either way —
+it's aggregation, not stream processing).
 
 *Alternative considered:* derive only into `garmin-data.js` with no table —
 rejected: past-block drill would force either request-time derivation

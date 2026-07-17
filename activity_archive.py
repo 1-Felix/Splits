@@ -691,11 +691,12 @@ def upsert_block_lens(conn: sqlite3.Connection, race_date: str, race_name: str,
 
 
 def block_lens_row(conn: sqlite3.Connection, race_date: str) -> tuple | None:
-    """(lens_version, is_complete) for one block, or None — the derivation
-    driver's skip check (a complete row at the current version is frozen)."""
+    """(lens_version, is_complete, race_name) for one block, or None — the
+    derivation driver's skip check (a complete row at the current version
+    with an unchanged race name freezes once its grace window closes)."""
     return conn.execute(
-        "SELECT lens_version, is_complete FROM block_lens WHERE race_date = ?",
-        (race_date,)).fetchone()
+        "SELECT lens_version, is_complete, race_name "
+        "FROM block_lens WHERE race_date = ?", (race_date,)).fetchone()
 
 
 def block_lens_rows(conn: sqlite3.Connection) -> list[tuple]:

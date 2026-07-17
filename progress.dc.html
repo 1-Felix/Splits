@@ -412,14 +412,23 @@ class Component extends DCLogic {
     if (this.state.blockPastOpen === raceDate) { this.setState({ blockPastOpen: null }); return; }
     this.setState({ blockPastOpen: raceDate, blockWeek: null });
     const cur = this.state.blockPast[raceDate];
-    if (!cur || cur.state === 'offline') this.fetchPastBlock(raceDate);
+    // offline may have healed; missing may have been written by a newer sync
+    if (!cur || cur.state === 'offline' || cur.state === 'missing') this.fetchPastBlock(raceDate);
   };
   fetchPastBlock = (raceDate) => {
-    this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'loading', doc: null } } });
+    const settle = (state, doc) =>
+      this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state, doc: doc || null } } });
+    settle('loading');
+    // a 404 is the server saying "this block isn't stored here" (pre-v9
+    // archive, older backup, no archive on this instance) — a fact the next
+    // sync may change, never an outage; only real failures read as offline
     fetch('./api/archive/blocks/' + raceDate)
-      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-      .then((doc) => this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'ready', doc } } }))
-      .catch(() => this.setState({ blockPast: { ...this.state.blockPast, [raceDate]: { state: 'offline', doc: null } } }));
+      .then((r) => {
+        if (r.status === 404) { settle('missing'); return null; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json().then((doc) => settle('ready', doc));
+      })
+      .catch(() => settle('offline'));
   };
   toggleCompareBlock = (raceDate) => {
     const sel = this.state.blockCompare.includes(raceDate)
@@ -533,6 +542,7 @@ class Component extends DCLogic {
   BLOCK_REASON = {
     'insufficient-baseline': 'fewer than 3 qualifying runs in the block’s first 14 days',
     'insufficient-current': 'fewer than 3 qualifying runs in the last 14 days',
+    'insufficient-span': 'the block is younger than the 14-day comparison window',
     'no-goal-time': 'the plan has no parseable goal time',
     'no-predictions': 'no race predictions banked in this window',
     'no-baseline-prediction': 'no race prediction near the block start',
@@ -596,10 +606,14 @@ class Component extends DCLogic {
 
     // ---- headline stats line ----
     const q = ex.qualityHitRate || {};
+    // live: km vs plan TO DATE — the same ratio the coach briefing states, so
+    // athlete and coach read one number; the whole-block total stays visible
+    // through the forward tilt. A retrospective compares against the full plan.
+    const kmDenom = live ? ex.kmPlannedToDate : ex.kmPlanned;
     const stats = [
       this.blockStat(h, live ? 'WEEK' : 'WEEKS', live ? (wkNow + 1) + ' of ' + weeks.length : String(weeks.length)),
       this.blockStat(h, 'EXECUTED', ex.percentExecuted != null ? ex.percentExecuted + '%' : null, 'var(--accent)', ex.percentExecuted == null ? 'no scored days yet' : null),
-      this.blockStat(h, live ? 'KM SO FAR' : 'KM RUN', (ex.kmActual != null ? ex.kmActual : '—') + ' / ' + (ex.kmPlanned != null ? ex.kmPlanned : '—')),
+      this.blockStat(h, live ? 'KM VS PLAN' : 'KM RUN', (ex.kmActual != null ? ex.kmActual : '—') + ' / ' + (kmDenom != null ? kmDenom : '—')),
       this.blockStat(h, 'PACE @ REF HR', ef.deltaSPerKm != null ? (ef.deltaSPerKm > 0 ? '+' : ef.deltaSPerKm < 0 ? '−' : '±') + Math.abs(ef.deltaSPerKm) + ' s/km' : null,
         ef.deltaSPerKm < 0 ? 'var(--good)' : ef.deltaSPerKm > 0 ? 'var(--warn)' : 'var(--sub)', ef.reason),
       this.blockStat(h, 'GOAL GAP', gap.deltaS != null ? this.fmtGap(gap.deltaS) : null,
@@ -645,7 +659,7 @@ class Component extends DCLogic {
           onClick: () => this.toggleBlockWeek(key),
           style: { display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', width: '100%', padding: 'var(--sp-2)', border: '1px solid ' + (cur ? 'var(--accent)' : 'var(--line)'), borderRadius: 'var(--r-md)', background: cur ? 'var(--panel2)' : 'transparent', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', cursor: 'pointer', marginBottom: 'var(--sp-1)', textAlign: 'left' } },
           h('span', { key: 'wk', style: { minWidth: '48px', fontWeight: 800 } }, w.wk || this.mDate(w.mon)),
-          h('span', { key: 'ph', style: { minWidth: '56px', fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.phase || '').toUpperCase()),
+          h('span', { key: 'ph', style: { minWidth: '56px', fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.retired ? 'retired' : w.phase || '').toUpperCase()),
           cur ? h('span', { key: 'tag', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', padding: '2px 8px', borderRadius: 'var(--r-pill)', background: 'var(--accentFade)', color: 'var(--accent)' } }, 'THIS WK') : null,
           h('span', { key: 'g', style: { display: 'flex', gap: '7px', flex: 1 } }, glyphs.length ? glyphs : h('span', { style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700 } }, 'undetailed')),
           h('span', { key: 'km', style: { fontFamily: mono, color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, whiteSpace: 'nowrap' } }, km),
@@ -718,7 +732,7 @@ class Component extends DCLogic {
       { label: 'GOAL GAP Δ', get: (s) => s.goalGapDeltaS, fmt: (v) => this.fmtGap(v), best: 'min' },
       { label: 'RECORDS', get: (s) => s.recordsCount, fmt: (v) => String(v), best: 'max' },
     ];
-    const grid = 'display:grid;grid-template-columns:minmax(96px,140px) repeat(2,minmax(0,1fr));gap:var(--sp-2) var(--sp-3)';
+    const grid = { display: 'grid', gridTemplateColumns: 'minmax(96px,140px) repeat(2,minmax(0,1fr))', gap: 'var(--sp-2) var(--sp-3)' };
     const cells = [h('div', { key: 'h0' })].concat(pair.map((s, i) =>
       h('div', { key: 'h' + i, style: { fontWeight: 800, fontSize: 'var(--fs-sm)' } },
         s.raceName, h('span', { style: { color: 'var(--sub)', fontWeight: 600 } }, ' · ' + s.raceDate.slice(0, 4)))));
@@ -733,14 +747,14 @@ class Component extends DCLogic {
         fontWeight: best != null && v === best ? '800' : '600',
       }, title: v == null ? 'insufficient data in this block' : undefined }, v != null ? row.fmt(v) : '—')));
     });
-    return h('div', { key: 'grid', className: 'block-compare', style: { marginTop: 'var(--sp-3)' } }, h('div', { style: this.styleOf(grid) }, cells));
+    return h('div', { key: 'grid', className: 'block-compare', style: { marginTop: 'var(--sp-3)' } }, h('div', { style: grid }, cells));
   }
-
-  styleOf(css) { const o = {}; css.split(';').forEach((k) => { const i = k.indexOf(':'); if (i > 0) o[k.slice(0, i).trim().replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = k.slice(i + 1).trim(); }); return o; }
 
   renderBlockSection(BL, displayToday) {
     const R = window.React, h = R.createElement;
-    const past = BL.past || [];
+    // the producer can emit {} for a summary-less stored document — a row we
+    // cannot label is a row we cannot render, never a page-blanking crash
+    const past = (BL.past || []).filter((s) => s && s.raceDate);
 
     // past blocks: collapsed summary rows that expand via the archive API to
     // the same layout in past tense — with the honest offline state
@@ -751,6 +765,11 @@ class Component extends DCLogic {
       if (open) {
         if (!st || st.state === 'loading') {
           body = h('div', { style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, padding: 'var(--sp-2) 0' } }, 'Loading the block from the archive…');
+        } else if (st.state === 'missing') {
+          body = h('div', { className: 'block-missing', style: { marginTop: 'var(--sp-2)', padding: 'var(--sp-3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' } },
+            h('div', { key: 't', style: { fontWeight: 800 } }, 'Not in the archive'),
+            h('div', { key: 'm', style: { color: 'var(--sub)', fontSize: 'var(--fs-sm)', fontWeight: 500, marginTop: 'var(--sp-2)', lineHeight: 1.5 } },
+              'The archive on this instance doesn’t hold this block’s full story yet — the next sync writes it. The summary above is everything the last sync knows.'));
         } else if (st.state === 'offline') {
           body = h('div', { className: 'block-offline', style: { marginTop: 'var(--sp-2)', padding: 'var(--sp-3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' } },
             h('div', { key: 't', style: { fontWeight: 800 } }, 'Archive offline'),
@@ -1275,10 +1294,11 @@ class Component extends DCLogic {
     // data files, ingest-fed instances) → no section, nothing else affected.
     const BLNS = D.blockLens || null;
     const blockSec = [];
-    if (BLNS && (BLNS.current || (BLNS.past || []).length) && window.React) {
+    const blPast = BLNS ? (BLNS.past || []).filter((s) => s && s.raceDate) : [];
+    if (BLNS && (BLNS.current || blPast.length) && window.React) {
       const bits = [];
       if (BLNS.current) bits.push(BLNS.current.raceName + ' · race ' + this.mDate(BLNS.current.raceDate));
-      if ((BLNS.past || []).length) bits.push(BLNS.past.length + ' past');
+      if (blPast.length) bits.push(blPast.length + ' past');
       blockSec.push({ meta: bits.join(' · '), el: this.renderBlockSection(BLNS, displayToday) });
     }
 

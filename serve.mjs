@@ -439,8 +439,12 @@ async function handleArchive(req, res, pathname, url) {
   try {
     db = await openArchive();
   } catch {
-    // missing db / unopenable file / no driver — pages and other APIs keep working
-    json(req, res, 503, { ok: false, error: "archive unavailable" });
+    // pages and other APIs keep working either way. A db file that doesn't
+    // exist at all is "this instance has no archive" (404 — e.g. ingest-fed
+    // instances), not an outage; an existing-but-unopenable db is a 503.
+    const provisioned = Boolean(await stat(ARCHIVE_DB).catch(() => null));
+    json(req, res, provisioned ? 503 : 404,
+      { ok: false, error: provisioned ? "archive unavailable" : "no archive on this instance" });
     return;
   }
   try {
@@ -664,7 +668,14 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (pathname === "/api/status") {
-      json(req, res, 200, { syncing, lastSync: await lastSyncTime(), lastResult });
+      // ingestFed/archive let the pages fit the instance: an ingest-fed
+      // instance has no Garmin sync to offer, and one without an archive db
+      // has no archive pages to link to.
+      json(req, res, 200, {
+        syncing, lastSync: await lastSyncTime(), lastResult,
+        ingestFed: Boolean(INGEST_TOKEN),
+        archive: Boolean(await stat(ARCHIVE_DB).catch(() => null)),
+      });
       return;
     }
     if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")

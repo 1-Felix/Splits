@@ -75,6 +75,16 @@ assert.doesNotThrow(() => persistTheme("volt", { setItem: () => { throw new Erro
   // pages OUTSIDE the nav (run detail, compare) mark nothing current
   const onRun = navModel("run");
   assert.deepStrictEqual(onRun.map((n) => n.current), [false, false, false], "non-nav page marks nothing current");
+
+  // archive: false drops the Archive tab (instance without an archive db);
+  // anything else — true, undefined, or no opts — keeps the full nav
+  const noArchive = navModel("cockpit", { archive: false });
+  assert.deepStrictEqual(noArchive.map((n) => n.label), ["Cockpit", "Progress"], "archive:false drops the tab");
+  assert.deepStrictEqual(noArchive.map((n) => n.current), [true, false], "current survives the filter");
+  assert.deepStrictEqual(navModel("cockpit", { archive: true }).map((n) => n.label),
+    ["Cockpit", "Progress", "Archive"], "archive:true keeps the tab");
+  assert.deepStrictEqual(navModel("cockpit", {}).map((n) => n.label),
+    ["Cockpit", "Progress", "Archive"], "unknown availability keeps the tab");
 }
 
 // ── greeting ──────────────────────────────────────────────────────────────────

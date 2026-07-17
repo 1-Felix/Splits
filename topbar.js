@@ -83,8 +83,12 @@ const NAV_PAGES = [
   { key: "archive", label: "Archive", href: "./archive" },
 ];
 
-export function navModel(currentPage) {
-  return NAV_PAGES.map((p) => {
+// opts.archive === false drops the Archive tab — an instance without an
+// archive db (ingest-fed) has no archive pages to offer. Default keeps it:
+// unknown (static file, status not yet fetched) must not hide navigation.
+export function navModel(currentPage, opts = {}) {
+  const pages = opts.archive === false ? NAV_PAGES.filter((p) => p.key !== "archive") : NAV_PAGES;
+  return pages.map((p) => {
     const current = p.key === currentPage;
     return {
       ...p,
@@ -175,7 +179,14 @@ export function initSyncStatus(host) {
   fetch("./api/status").then((r) => r.ok ? r.json() : null)
     .then((s) => {
       if (!s) return;
-      host.setState({ lastSync: s.lastSync, lastResult: s.lastResult, statusReady: true });
+      host.setState({
+        lastSync: s.lastSync, lastResult: s.lastResult, statusReady: true,
+        // instance shape: ingest-fed hides the Garmin pill; a missing archive
+        // db hides the Archive tab + drill links. Absent fields (older server)
+        // leave the defaults: pill shown, archive assumed present.
+        ingestFed: Boolean(s.ingestFed),
+        archiveAvail: s.archive !== false,
+      });
       if (s.syncing) waitForSync(host);
     })
     .catch(() => {});

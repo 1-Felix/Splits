@@ -56,10 +56,12 @@
           <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
         </sc-for>
       </nav>
-      <button onClick="{{ sync.onClick }}" title="{{ sync.title }}" aria-label="{{ sync.title }}" style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600;background:transparent;cursor:pointer;font-family:inherit">
-        <span style="{{ sync.dotStyle }}"></span>
-        {{ sync.label }}
-      </button>
+      <sc-for list="{{ syncWrap }}" as="sync" hint-placeholder-count="1">
+        <button onClick="{{ sync.onClick }}" title="{{ sync.title }}" aria-label="{{ sync.title }}" style="display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);font-size:var(--fs-sm);color:var(--sub);font-weight:600;background:transparent;cursor:pointer;font-family:inherit">
+          <span style="{{ sync.dotStyle }}"></span>
+          {{ sync.label }}
+        </button>
+      </sc-for>
       <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
         <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
           <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
@@ -68,6 +70,15 @@
       <div style="width:36px;height:36px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:var(--fs-md)">{{ initial }}</div>
     </div>
   </header>
+
+  <!-- ===== DATA-LOAD FAILURE: the placeholder dataset below is NOT the
+       athlete's data — say so instead of impersonating a healthy page ===== -->
+  <sc-for list="{{ loadFail }}" as="lf" hint-placeholder-count="0">
+    <div role="alert" style="display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-4);padding:var(--sp-3) var(--sp-4);border:1px solid var(--warn);border-radius:var(--r-md);background:var(--panel);color:var(--warn);font-size:var(--fs-sm);font-weight:600">
+      <span style="flex:1">Couldn't load your training data — the numbers below are placeholders, not yours. Your login session may have expired.</span>
+      <button onClick="{{ lf.reload }}" style="padding:var(--sp-1) var(--sp-3);border:1px solid var(--warn);border-radius:var(--r-pill);background:transparent;color:var(--warn);font-weight:700;font-size:var(--fs-sm);cursor:pointer;font-family:inherit">Reload</button>
+    </div>
+  </sc-for>
 
   <!-- ===== VOLUME (relocated from the cockpit — THE LONG GAME) ===== -->
   <div class="section-head">
@@ -512,7 +523,12 @@ class Component extends DCLogic {
     // renderer (chart-view) — neutral placeholders render until they resolve
     import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
     import('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
-    import('./running-data.js').then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); }).catch(() => {});
+    // a failed data import must NOT silently leave the built-in placeholder
+    // dataset on screen (an expired SSO session redirects this import into
+    // HTML) — dataError raises an explicit banner over it instead.
+    import('./running-data.js')
+      .then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData, hover: null }); else this.setState({ dataError: true }); })
+      .catch(() => this.setState({ dataError: true }));
     document.addEventListener('click', () => this.dismissHover());
     // last-sync indicator (absent when opened as a static file / no server API)
     if (this.tb()) this.tb().initSyncStatus(this);
@@ -575,7 +591,7 @@ class Component extends DCLogic {
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
-    const nav = this.tb() ? this.tb().navModel('progress') : [];
+    const nav = this.tb() ? this.tb().navModel('progress', { archive: this.state.archiveAvail !== false }) : [];
     const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
     const now = this.state.now || new Date();
@@ -926,7 +942,12 @@ class Component extends DCLogic {
       lastSync: this.state.lastSync, lastResult: this.state.lastResult,
       syncedOn: D.today, today: displayToday,
     }) : { label: '', title: '', dotStyle: '', dateLabel: this.mDate(D.today) };
-    const sync = { onClick: this.syncNow, label: pill.label, title: pill.title, dotStyle: pill.dotStyle };
+    // ingest-fed instances have no Garmin account to sync — no pill at all
+    const syncWrap = this.state.ingestFed ? [] : [{ onClick: this.syncNow, label: pill.label, title: pill.title, dotStyle: pill.dotStyle }];
+    // failed data import over http(s) → the explicit banner; a static-file
+    // open (design preview) keeps the placeholder dataset silently
+    const loadFail = this.state.dataError && !this.state.data && window.location.protocol !== 'file:'
+      ? [{ reload: () => window.location.reload() }] : [];
 
     // contribution panel: ONE panel model page-wide, rendered beneath its own
     // chart via these per-chart 0/1 lists (chart-drill D6)
@@ -938,7 +959,7 @@ class Component extends DCLogic {
 
     return {
       rootStyle, themes, nav, initial: D.profile.name[0],
-      greeting: this.greetingText(now) + ', ' + D.profile.name, sync,
+      greeting: this.greetingText(now) + ', ' + D.profile.name, syncWrap, loadFail,
       onDismiss: () => this.dismissHover(),
       historyWindow: '30-month history · synced ' + pill.dateLabel,
       race, vol, hasVo2, vo2, pace, fit, form: formObj, cad,

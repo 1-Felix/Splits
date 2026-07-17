@@ -104,10 +104,10 @@ async function runBuilder(dir) {
   });
 }
 
-function startServer(port, dir) {
+function startServer(port, dir, extraEnv = {}) {
   const child = spawn(process.execPath, ["serve.mjs"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), SPLITS_DATA_DIR: dir, SYNC_ON_BOOT: "off", SYNC_AT: "off" },
+    env: { ...process.env, PORT: String(port), SPLITS_DATA_DIR: dir, SYNC_ON_BOOT: "off", SYNC_AT: "off", ...extraEnv },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let err = "";
@@ -147,9 +147,17 @@ await writeFile(join(emptyDir, "plan-data.js"), PLAN_DATA);
 await writeFile(join(fullDir, "garmin-data.js"), FULL_GARMIN_DATA);
 await writeFile(join(fullDir, "plan-data.js"), "export const planData = {};\n");
 
+// slim + empty boot ingest-fed (like Max's real instance) so /api/status
+// reports the instance shape the pages key their chrome off; full stays
+// Garmin. The ingest boot re-runs the builder, so the athlete env must match
+// the fixture build or the boot pass rewrites garmin-data.js differently.
+const INGEST_ENV = {
+  SPLITS_INGEST_TOKEN: "slim-test-token", SPLITS_PYTHON: process.env.SPLITS_PYTHON || "python",
+  ATHLETE_NAME: "Max", ATHLETE_AGE: "26", ATHLETE_MAX_HR: "192",
+};
 const servers = [
-  startServer(BASE_PORT, slimDir),
-  startServer(BASE_PORT + 1, emptyDir),
+  startServer(BASE_PORT, slimDir, INGEST_ENV),
+  startServer(BASE_PORT + 1, emptyDir, INGEST_ENV),
   startServer(BASE_PORT + 2, fullDir),
 ];
 
@@ -176,10 +184,28 @@ try {
   const cockpitReady = () => document.querySelectorAll('rect[data-hb="heat"]').length > 300;
   const progressReady = () => document.body.innerText.includes("Avg run pace");
 
+  // ── instance-shape API: status flags + the honest archive 404 ─────────────
+  step = "instance-shape API";
+  {
+    const slim = await (await fetch(`http://localhost:${BASE_PORT}/api/status`)).json();
+    assert.strictEqual(slim.ingestFed, true, "ingest-fed instance says so");
+    assert.strictEqual(slim.archive, false, "no archive db → archive:false");
+    const full = await (await fetch(`http://localhost:${BASE_PORT + 2}/api/status`)).json();
+    assert.strictEqual(full.ingestFed, false, "Garmin instance is not ingest-fed");
+    const arch = await fetch(`http://localhost:${BASE_PORT}/api/archive/activities`);
+    assert.strictEqual(arch.status, 404, "no archive db is a 404 (not provisioned), not a 503 (outage)");
+  }
+
   // ── slim instance (2 ingested runs): cockpit ──────────────────────────────
   step = "slim cockpit";
   {
-    const r = await render(BASE_PORT, "/", cockpitReady);
+    // settled = heatmap up AND the status fetch landed (the Garmin pill is
+    // gone) — the pill/nav assertions below are deterministic after that
+    const r = await render(BASE_PORT, "/", () =>
+      document.querySelectorAll('rect[data-hb="heat"]').length > 300 &&
+      !document.body.innerText.includes("Garmin ·"));
+    assert.ok(!r.text.includes("Garmin"), "no Garmin sync pill on an ingest-fed instance");
+    assert.ok(!r.text.includes("Archive"), "no Archive nav tab without an archive db");
     assert.deepStrictEqual(r.errors, [], "slim cockpit throws nothing");
     assert.strictEqual(r.heatCells, 365, "full heatmap");
     assert.ok(!r.cardReady, "readiness card hidden when readiness is absent");
@@ -191,6 +217,25 @@ try {
     assert.ok(r.text.includes("HALF PREDICTION"), "prediction KPI still there");
     assert.ok(r.text.includes("ENERGY"), "energy tile shows when calories exist (D13)");
     assert.ok(r.text.includes("Resting HR"), "RHR trend card shows when banked (D12)");
+  }
+
+  // ── data-load failure: the demo fallback must announce itself ─────────────
+  // (an expired SSO session turns the running-data.js import into HTML — the
+  // page used to silently render the built-in placeholder dataset as if real)
+  step = "data-load failure banner";
+  {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.route("**/running-data.js", (route) => route.abort());
+    await page.goto(`http://localhost:${BASE_PORT}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("Couldn't load your training data"), null, { timeout: 15000 });
+    const text = await page.evaluate(() => document.body.innerText);
+    assert.deepStrictEqual(errors, [], "a failed data import throws nothing");
+    assert.ok(text.includes("placeholders, not yours"), "the banner says the numbers are placeholders");
+    assert.ok(text.includes("Reload"), "the banner offers a reload");
+    await page.close();
   }
 
   // ── slim instance: /progress ──────────────────────────────────────────────
@@ -206,13 +251,16 @@ try {
   // ── slim instance: archive-fed routes degrade, never error (design D8) ────
   step = "slim archive routes";
   {
-    const arch = await render(BASE_PORT, "/archive", () => document.body.innerText.includes("Archive offline"));
+    // no archive db = "this instance keeps no archive" (permanent shape, no
+    // retry) — NOT the transient "Archive offline … try again" outage state
+    const arch = await render(BASE_PORT, "/archive", () => document.body.innerText.includes("No archive on this instance"));
     assert.deepStrictEqual(arch.errors, [], "/archive throws nothing without an archive DB");
+    assert.ok(!arch.text.includes("Archive offline"), "absent archive is not reported as an outage");
 
     const cmp = await render(BASE_PORT, "/compare", () => document.body.innerText.includes("Nothing to compare yet"));
     assert.deepStrictEqual(cmp.errors, [], "/compare throws nothing without an archive DB");
 
-    const runPg = await render(BASE_PORT, "/run/12345", () => document.body.innerText.includes("Archive offline"));
+    const runPg = await render(BASE_PORT, "/run/12345", () => document.body.innerText.includes("Unknown run"));
     assert.deepStrictEqual(runPg.errors, [], "/run/:id throws nothing without an archive DB");
   }
 
@@ -235,6 +283,7 @@ try {
   {
     const r = await render(BASE_PORT + 2, "/", cockpitReady);
     assert.deepStrictEqual(r.errors, [], "full cockpit throws nothing");
+    assert.ok(r.text.includes("Garmin"), "the Garmin sync pill survives on a Garmin-fed instance");
     assert.ok(r.cardReady, "readiness card present when readiness exists");
     assert.ok(r.text.includes("HRV · overnight"), "HRV card present");
     assert.ok(r.text.includes("VO₂ MAX"), "VO₂ KPI tile present");

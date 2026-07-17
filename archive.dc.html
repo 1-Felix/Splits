@@ -237,10 +237,12 @@ class Component extends DCLogic {
           status: 'ready', moreStatus: null,
         });
       })
-      .catch(() => {
+      .catch((e) => {
         if (seq !== this._seq) return;
-        if (this.state.rows.length) this.setState({ moreStatus: 'failed' });
-        else this.setState({ status: 'offline', moreStatus: null });
+        if (this.state.rows.length) { this.setState({ moreStatus: 'failed' }); return; }
+        // 404 = this instance has no archive db at all (ingest-fed) — a
+        // permanent shape, not an outage to retry
+        this.setState({ status: String(e && e.message) === '404' ? 'absent' : 'offline', moreStatus: null });
       });
   }
   retry = () => this.fetchList(this._retryReset !== false);
@@ -283,12 +285,13 @@ class Component extends DCLogic {
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
-    const nav = this.tb() ? this.tb().navModel('archive') : [];
+    const nav = this.tb() ? this.tb().navModel('archive', { archive: this.state.archiveAvail !== false }) : [];
 
-    // sync pill — only when the static data file is present to anchor freshness
+    // sync pill — only when the static data file is present to anchor
+    // freshness, and never on an ingest-fed instance (no Garmin to sync)
     const D = this.state.data;
     let syncWrap = [];
-    if (D && this.tb()) {
+    if (D && this.tb() && !this.state.ingestFed) {
       const pill = this.tb().syncPillModel({
         syncState: this.state.syncState, syncError: this.state.syncError,
         lastSync: this.state.lastSync, lastResult: this.state.lastResult,
@@ -314,6 +317,8 @@ class Component extends DCLogic {
       notReady = [{ title: 'Loading the archive…', body: 'Fetching activities from the archive.', color: 'var(--sub)', retry: [] }];
     } else if (this.state.status === 'offline') {
       notReady = [{ title: 'Archive offline', body: 'The activity archive isn’t reachable right now. The rest of SPLITS keeps working — try again once the archive volume is back.', color: 'var(--warn)', retry: [{ go: this.retry }] }];
+    } else if (this.state.status === 'absent') {
+      notReady = [{ title: 'No archive on this instance', body: 'This SPLITS instance runs on ingested watch data and keeps no activity archive — run details live on the cockpit’s run cards instead.', color: 'var(--sub)', retry: [] }];
     } else if (!this.state.rows.length) {
       empty = [{}];
     } else {

@@ -4,7 +4,9 @@ INGEST-FED instance (a runner with no Garmin; runs arrive via POST /api/ingest a
 are banked in ingested-runs.json). Produces the same `garmin-data.js` the Garmin
 sync would, but only the "Slim + HR zones" field set (design D3/D7).
 
-  ingested-runs.json  → THIS SCRIPT → garmin-data.js  (telemetry)
+  ingested-runs.json  → THIS SCRIPT → garmin-data.js       (telemetry)
+                                    → activity-archive.db  (archive — same schema
+                                      as the Garmin pipeline's, own volume)
   plan-data.js        ← the coach (race / weekPlan / coach — untouched)
   running-data.js     → merges both into `athleteData`
 
@@ -20,12 +22,16 @@ history.vo2max, readiness, history.sleep. Health Connect gives no route/cadence.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import math
 import os
 import re
 import sys
 from pathlib import Path
+
+import activity_archive
+import insight_metrics
 
 # Windows consoles default to cp1252, which can't encode the ✓ glyph below
 # (mirrors sync_garmin.py). Without this the build's success print raises.
@@ -440,18 +446,26 @@ def _usable(run) -> bool:
         return False
 
 
-def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
-                       plan_goal: str | None = None,
-                       rhr_days: dict | None = None) -> dict:
-    runs = [r for r in runs if _usable(r)]
-    # maxHR = the best evidence available (design D9): the highest of the
-    # explicit profile setting and the observed per-run max (an observation is
-    # a lower bound on the true max); 220−age only when neither exists.
+def _calibration(runs: list[dict], profile: dict, rhr_days: dict | None = None):
+    """(max_hr, rhr) shared by the telemetry build and the archive pass — the
+    zone bounds inside a run's distilled detail must come out identical on both
+    surfaces (design D6), so the calibration lives in exactly one place.
+
+    maxHR = the best evidence available (design D9): the highest of the
+    explicit profile setting and the observed per-run max (an observation is
+    a lower bound on the true max); 220−age only when neither exists."""
     explicit = int(profile["maxHR"]) if profile.get("maxHR") else None
     observed = observed_max_hr(runs)
     cands = [v for v in (explicit, observed) if v]
     max_hr = int(max(cands)) if cands else (220 - int(profile.get("age", 30)))
-    rhr = recent_resting_hr(rhr_days)
+    return max_hr, recent_resting_hr(rhr_days)
+
+
+def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
+                       plan_goal: str | None = None,
+                       rhr_days: dict | None = None) -> dict:
+    runs = [r for r in runs if _usable(r)]
+    max_hr, rhr = _calibration(runs, profile, rhr_days)
     week_km, week_runs = weekly_volume(runs, today)
     ctl, atl = fitness_fatigue(runs, max_hr, today)
     start_month, pace, cad = monthly_pace(runs)
@@ -490,6 +504,200 @@ def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
     if energy:
         data["energy"] = energy                  # D13 — omitted entirely when unknown
     return data
+
+
+# ── the archive pass (add-ingest-archive design D1–D8) ───────────────────────
+# Every banked run additionally lands in activity-archive.db — the SAME schema
+# the Garmin pipeline writes (activity_archive owns it), on this instance's own
+# volume. The db is a disposable derived cache: delete it and the next build
+# fully regenerates it from ingested-runs.json, with identical ids.
+#
+# FOLLOW-UP (deliberately out of scope, add-ingest-archive design non-goals):
+# plan_snapshots/plan_compliance rows — the run page's planned-vs-actual chip
+# stays empty on ingest instances until a pass here banks snapshots and scores
+# weeks the way sync_garmin does via plan_compliance.py. Worth its own change.
+
+# Bump when synth_streams or the distilled-detail derivation changes shape —
+# the marker in archive_meta makes the next build recompute every run's
+# derived artifacts (mirrors insight_metrics.METRICS_VERSION for metrics rows).
+INGEST_DISTILL_VERSION = 1
+_DISTILL_MARKER = "ingest_distill_version"
+
+
+def derive_activity_id(session_uid: str, salt: int = 0) -> int:
+    """Stable numeric archive id for a Health Connect session UID (design D3):
+    first 12 hex chars of sha256 → 48-bit int — stateless, deterministic, and
+    JS-safe (< 2^53; the API serializes ids into JSON and /run/:id parses \\d+).
+    `salt` is the collision escape hatch: salt N hashes `uid#N` instead."""
+    key = session_uid if salt == 0 else f"{session_uid}#{salt}"
+    return int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def _resolve_activity_id(conn, session_uid: str) -> int:
+    """The id a run may occupy: its derived id, unless another run's row already
+    sits there (the stored summary_json embeds the owner's sessionUid, so a
+    collision is observable, never silent) — then the deterministic salted
+    rehash, with a loud warning. Runs are processed in start-time order, so a
+    rebuild resolves collisions identically and ids stay stable."""
+    salt = 0
+    while True:
+        aid = derive_activity_id(session_uid, salt)
+        row = conn.execute("SELECT summary_json FROM activities WHERE activity_id = ?",
+                           (aid,)).fetchone()
+        if row is None:
+            return aid
+        try:
+            stored_uid = (json.loads(row[0]) or {}).get("sessionUid")
+        except (json.JSONDecodeError, AttributeError):
+            stored_uid = None
+        if stored_uid == session_uid:
+            return aid
+        salt += 1
+        print(f"  ! archive id collision: {session_uid!r} hashes onto row {aid} "
+              f"(owned by {stored_uid!r}) — re-deriving with salt #{salt}",
+              file=sys.stderr, flush=True)
+
+
+def synth_streams(run: dict):
+    """detail_streams_json in the archive's columnar contract, synthesized from
+    the banked samples (design D5): `t` = the union of HR/speed sample times,
+    `hr` / `v` aligned to it with nulls where a metric has no sample at that
+    instant, `d` = cumulative integration of the speed series (pause-capped like
+    every other integration in this builder) normalized so its final value
+    equals the banked distance. Metrics the source does not supply (cad, elev,
+    gap, pwr, lat/lon, pc) are OMITTED keys — the run page's existing
+    absent-metric degradation applies. None without a usable speed series —
+    there is no honest distance axis to chart."""
+    spds = _sorted_samples(run, "speedSamples")
+    if len(spds) < 2:
+        return None
+    hrs = _sorted_samples(run, "hrSamples")
+    v_at = {s["tSec"]: s["mps"] for s in spds}
+    hr_at = {s["tSec"]: s["bpm"] for s in hrs}
+    axis = sorted(set(v_at) | set(hr_at))
+
+    # cumulative distance: each interval weighs the last seen speed, gaps
+    # capped so a watch pause never fabricates distance; then scaled so the
+    # final value equals the banked total (the device's own measurement).
+    d_raw = [0.0]
+    cum = 0.0
+    last_v = v_at.get(axis[0])
+    for i in range(1, len(axis)):
+        gap = min(axis[i] - axis[i - 1], SAMPLE_GAP_CAP_S)
+        if last_v and gap > 0:
+            cum += last_v * gap
+        d_raw.append(cum)
+        if axis[i] in v_at:
+            last_v = v_at[axis[i]]
+    scale = run["distanceM"] / cum if cum > 0 else 0.0
+
+    out = {"t": [int(round(t)) for t in axis],
+           "d": [int(round(v * scale)) for v in d_raw],
+           "v": [round(v_at[t], 2) if t in v_at else None for t in axis]}
+    if hrs:
+        out["hr"] = [int(round(hr_at[t])) if t in hr_at else None for t in axis]
+    return out
+
+
+def _metric_samples(streams: dict) -> list[tuple]:
+    """The insight-metrics samples dict — (elapsed_s, cumulative_m, hr, cadence,
+    speed_mps) tuples, exactly read_stream's contract — built from the SAME
+    synthesized columns the archive serves, so metrics and charts can never
+    disagree. Cadence is always None (Samsung writes no per-sample cadence):
+    the refpace pools stay empty and refpace_cadence_spm stays NULL — pinned
+    by the samples-dict parity test."""
+    hr = streams.get("hr") or [None] * len(streams["t"])
+    return [(float(t), float(d), h, None, v)
+            for t, d, h, v in zip(streams["t"], streams["d"], hr, streams["v"])]
+
+
+def _upsert_archive_row(conn, aid: int, run: dict) -> None:
+    """One archive row per banked run: promoted columns mapped from the banked
+    payload, summary_json = that payload VERBATIM (design D4 — the banked run
+    IS this pipeline's raw source payload; its sessionUid keeps the id mapping
+    recoverable). name / avg_cadence / elevation_gain_m / detail_json stay NULL
+    — honest absence, never fabrication. A row whose content is unchanged is
+    left untouched so updated_at only moves when something did (design D8)."""
+    summary = json.dumps(run, ensure_ascii=False)
+    avg_hr = run.get("avgHr")
+    max_hr = run.get("maxHr")
+    vals = (run["startTimeLocal"], run.get("sportType", "running").lower(),
+            run["distanceM"], run["durationS"],
+            int(round(avg_hr)) if avg_hr else None,
+            int(round(max_hr)) if max_hr else None,
+            summary)
+    prior = conn.execute(
+        """SELECT start_time_local, type_key, distance_m, duration_s,
+                  avg_hr, max_hr, summary_json
+           FROM activities WHERE activity_id = ?""", (aid,)).fetchone()
+    if prior is not None and tuple(prior) == vals:
+        return
+    now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    conn.execute(activity_archive._UPSERT_SQL, (
+        aid, vals[0], vals[1], None, vals[2], vals[3], vals[4], vals[5],
+        None, None, summary, now, now))
+    conn.commit()
+
+
+def build_archive(data_dir: Path, runs: list[dict], profile: dict,
+                  rhr_days: dict | None = None) -> int:
+    """The archive build pass: upsert every usable banked run into
+    activity-archive.db and bring its derived artifacts (columnar streams,
+    distilled detail, run_metrics) to the current versions. Write-once in the
+    steady state — derived artifacts are recomputed only when missing or when
+    a version marker moved (design D8). Returns the number of archived runs."""
+    runs = sorted((r for r in runs if _usable(r) and r.get("sessionUid")),
+                  key=lambda r: r["startTimeLocal"])
+    if not runs:
+        # nothing banked yet — leave the instance unprovisioned (no db file)
+        # rather than creating an empty archive that would flip /api/status's
+        # `archive` flag and reveal empty archive chrome on a fresh instance
+        return 0
+    max_hr, rhr = _calibration(runs, profile, rhr_days)
+    conn = activity_archive.open_archive(Path(data_dir))
+    try:
+        stale = (activity_archive.get_meta(conn, _DISTILL_MARKER)
+                 != str(INGEST_DISTILL_VERSION))
+        for run in runs:
+            aid = _resolve_activity_id(conn, run["sessionUid"])
+            _upsert_archive_row(conn, aid, run)
+            missing = conn.execute(
+                """SELECT detail_streams_json IS NULL, detail_distilled_json IS NULL
+                   FROM activities WHERE activity_id = ?""", (aid,)).fetchone()
+            streams = None
+            if stale or missing[0]:
+                streams = synth_streams(run)
+                if streams:
+                    activity_archive.write_streams(conn, aid, streams)
+            if stale or missing[1]:
+                det = run_detail(run, max_hr, rhr)
+                if det:
+                    activity_archive.write_distilled(conn, aid, det)
+            has_metrics = conn.execute(
+                "SELECT 1 FROM run_metrics WHERE activity_id = ? AND metrics_version = ?",
+                (aid, insight_metrics.METRICS_VERSION)).fetchone()
+            if not has_metrics:
+                mrow = {
+                    "activity_id": aid,
+                    "metrics_version": insight_metrics.METRICS_VERSION,
+                    "start_time_local": run["startTimeLocal"],
+                    "is_treadmill": 1 if run.get("sportType", "").lower()
+                                    == "treadmill_running" else 0,
+                }
+                streams = streams or synth_streams(run)
+                if streams:
+                    samples = _metric_samples(streams)
+                    mrow.update(insight_metrics.best_efforts(samples))
+                    mrow.update(insight_metrics.band_aggregates(samples))
+                # a sample-less run banks an empty row — the absence is
+                # deterministic, so recomputing it every build would be waste
+                activity_archive.upsert_run_metrics(conn, mrow)
+        if stale:
+            activity_archive.set_meta(conn, _DISTILL_MARKER,
+                                      str(INGEST_DISTILL_VERSION))
+        return len(runs)
+    finally:
+        conn.close()
 
 
 # ── file I/O (used by the ingest trigger and on boot) ────────────────────────
@@ -543,6 +751,13 @@ def main() -> None:
     tmp.write_text(build_garmin_data_js(data), encoding="utf-8")
     tmp.replace(data_dir / "garmin-data.js")
     print(f"✓ built garmin-data.js from {len(runs)} ingested run(s)", flush=True)
+    try:
+        n = build_archive(data_dir, runs, profile, rhr_days)
+        print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
+    except Exception as e:  # noqa: BLE001 — the archive is a derived cache; a
+        # failure here must never sink the telemetry build (task 3.7)
+        print(f"  ! archive pass failed ({type(e).__name__}: {e}) — "
+              f"telemetry build unaffected", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

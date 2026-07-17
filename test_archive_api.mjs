@@ -354,11 +354,11 @@ try {
   assert.strictEqual(oversized.status, 400, "a 93-day span → 400");
   assert.ok(/92/.test((await oversized.json()).error), "the refusal names the constraint");
 
-  // non-GET rejected; fail-soft 503 without a database; raw payloads never leave
+  // non-GET rejected; not-provisioned 404 without a database; raw payloads never leave
   assert.strictEqual((await fetch(B + "/api/archive/run-metrics?from=2025-03-01&to=2025-03-31",
     { method: "POST", body: "x" })).status, 405, "POST run-metrics → 405");
-  assert.strictEqual((await runMetrics(Bmissing, "?from=2025-03-01&to=2025-03-31")).status, 503,
-    "missing db → 503 on run-metrics");
+  assert.strictEqual((await runMetrics(Bmissing, "?from=2025-03-01&to=2025-03-31")).status, 404,
+    "missing db → 404 (not provisioned) on run-metrics");
   assert.ok(!(await (await runMetrics(B, "?from=2025-03-01&to=2025-03-31")).text()).includes(RAW_MARKER),
     "raw payloads never leave via run-metrics");
 
@@ -391,8 +391,8 @@ try {
   assert.strictEqual((await fetch(B + "/api/archive/tiles/xx/1/1.png")).status, 404, "malformed coords → 404");
   assert.strictEqual((await fetch(B + "/api/archive/tiles/15/17000/11300.png",
     { method: "POST", body: "x" })).status, 405, "POST tile → 405");
-  assert.strictEqual((await fetch(Bmissing + "/api/archive/tiles/15/17000/11300.png")).status, 503,
-    "missing db → 503 on tiles (fail-soft, like every archive endpoint)");
+  assert.strictEqual((await fetch(Bmissing + "/api/archive/tiles/15/17000/11300.png")).status, 404,
+    "missing db → 404 on tiles (not provisioned, like every archive endpoint)");
 
   // a pre-v8 archive (no map_tiles/activity_maps tables): by-id serves
   // without a map field and tiles are absent — "no maps yet", never an outage
@@ -407,10 +407,15 @@ try {
   assert.strictEqual((await fetch(B + "/api/archive/activities/10", { method: "PUT", body: "x" })).status, 405, "PUT → 405");
   assert.strictEqual((await fetch(B + "/api/archive/activities/10", { method: "DELETE" })).status, 405, "DELETE → 405");
 
-  // ── fail-soft: no database → 503, everything else keeps serving ───────────
-  assert.strictEqual((await list(Bmissing)).status, 503, "missing db → 503 on the list");
-  assert.strictEqual((await byId(Bmissing, 10)).status, 503, "missing db → 503 on by-id");
-  assert.strictEqual((await streams(Bmissing, 10)).status, 503, "missing db → 503 on streams");
+  // ── fail-soft: no database file = "not provisioned" (404, distinct error
+  // body), everything else keeps serving. 503 is reserved for an existing-
+  // but-unusable db (outage) — instance-aware chrome / add-ingest-archive. ───
+  const missingList = await list(Bmissing);
+  assert.strictEqual(missingList.status, 404, "missing db → 404 on the list");
+  assert.strictEqual((await missingList.json()).error, "no archive on this instance",
+    "the body names the shape, not an outage");
+  assert.strictEqual((await byId(Bmissing, 10)).status, 404, "missing db → 404 on by-id");
+  assert.strictEqual((await streams(Bmissing, 10)).status, 404, "missing db → 404 on streams");
   assert.ok((await fetch(Bmissing + "/api/status")).ok, "other APIs unaffected");
   assert.ok((await fetch(Bmissing + "/Running%20Dashboard.dc.html")).ok, "dashboard page still serves");
 

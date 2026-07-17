@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-activity_archive.py — the durable activity archive behind sync_garmin.py.
+activity_archive.py — the durable activity archive. TWO producers, ONE schema:
+
+  • sync_garmin.py (Garmin instances): every synced activity, keyed by
+    Garmin's activityId — the original and still the primary producer;
+  • ingest_builder.py (ingest-fed instances, add-ingest-archive): every
+    banked Health Connect run, keyed by a derived 48-bit hash of its session
+    UID, written on the instance's OWN volume. That file is a disposable
+    derived cache — deleting it is always safe, the next build regenerates
+    it completely (with identical ids) from ingested-runs.json.
+
+This module owns the schema for both; serve.mjs's archive API is the single
+read window over either file and never knows which pipeline wrote it.
 
 `garmin-data.js` is a rolling window that forgets; this module remembers.
 Every synced Garmin activity is stored once (keyed by Garmin's activityId)

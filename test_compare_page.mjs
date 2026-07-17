@@ -9,7 +9,7 @@
 // and wholesale when the archive is away.
 import assert from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,6 +82,9 @@ async function waitReady(base, errRef) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-cmppage-"));
 const emptyDir = await mkdtemp(join(tmpdir(), "splits-cmppage-empty-"));
 makeArchive(dataDir);
+// a present-but-unopenable db = a real OUTAGE (503 → "Archive offline"); a
+// missing file would be "not provisioned" (404) and show different copy
+await writeFile(join(emptyDir, "activity-archive.db"), "not a sqlite file");
 const server = startServer(PORT, { SPLITS_DATA_DIR: dataDir });
 const serverMissing = startServer(PORT + 1, { SPLITS_DATA_DIR: emptyDir });
 

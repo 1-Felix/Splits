@@ -322,6 +322,302 @@ def test_rhr_trend_absent_without_data():
     assert "restingHr" not in d["history"]
 
 
+# ── the archive pass (add-ingest-archive) ────────────────────────────────────
+import json
+import sqlite3
+import tempfile
+from pathlib import Path
+
+import activity_archive as arch
+import ingest_builder as ib
+import insight_metrics as im
+
+
+def _tmpdir() -> Path:
+    return Path(tempfile.mkdtemp())
+
+
+def _db(data_dir: Path) -> sqlite3.Connection:
+    return sqlite3.connect(arch.archive_path(data_dir))
+
+
+def test_samples_dict_parity_with_read_stream():
+    # 1.1 — the same physical run recorded both ways: 1 s sampling, constant
+    # 2.2 m/s, HR 135 for 20 min. The Garmin path goes through read_stream;
+    # the ingest path through synth_streams + _metric_samples. The pure
+    # engines must agree on every field both sources can supply — and the
+    # fields ingest cannot supply (cadence) must be empty/NULL, never zero-ish
+    # fabrications. This test IS the samples-dict contract pin (design D7).
+    seconds = 1200
+    keys = ("sumElapsedDuration", "sumDistance", "directHeartRate",
+            "directRunCadence", "directGradeAdjustedSpeed")
+    det = {"metricDescriptors": [{"key": k, "metricsIndex": i}
+                                 for i, k in enumerate(keys)],
+           "activityDetailMetrics": [{"metrics": [t, 2.2 * t, 135, 85, 2.2]}
+                                     for t in range(seconds + 1)]}
+    garmin = im.read_stream(det)
+    run = {"sessionUid": "par", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": seconds, "distanceM": 2.2 * seconds, "avgHr": 135,
+           "sportType": "running", "source": "x",
+           "hrSamples": [{"tSec": t, "bpm": 135} for t in range(seconds + 1)],
+           "speedSamples": [{"tSec": t, "mps": 2.2} for t in range(seconds + 1)]}
+    ingest = ib._metric_samples(ib.synth_streams(run))
+
+    eg, ei = im.best_efforts(garmin), im.best_efforts(ingest)
+    assert ei["best_1k_s"] is not None and abs(ei["best_1k_s"] - eg["best_1k_s"]) <= 1.0
+    assert abs(ei["best_mile_s"] - eg["best_mile_s"]) <= 1.0
+    assert ei["best_5k_s"] is None and eg["best_5k_s"] is None, \
+        "distances beyond the run stay NULL on both paths"
+
+    ag, ai = im.band_aggregates(garmin), im.band_aggregates(ingest)
+    assert abs(ai["refhr_time_s"] - ag["refhr_time_s"]) <= 2, (ag, ai)
+    assert abs(ai["refhr_dist_m"] - ag["refhr_dist_m"]) <= 10, (ag, ai)
+    assert abs(ai["refhr_pace_s_per_km"] - ag["refhr_pace_s_per_km"]) <= 2
+    # what an ingest samples dict HAS: t, d, hr, v. What it lacks: cadence —
+    # so the refpace pools stay empty and the display value stays NULL.
+    assert ag["refpace_time_s"] > 0, "the Garmin fixture does carry cadence"
+    assert ai["refpace_time_s"] == 0.0 and ai["refpace_cadence_x_time"] == 0.0
+    assert ai["refpace_cadence_spm"] is None, "no evidence ≠ zero cadence"
+
+
+def test_derive_activity_id_deterministic_distinct_js_safe():
+    uid = "11111111-2222-3333-4444-555555555555"
+    a = ib.derive_activity_id(uid)
+    assert a == ib.derive_activity_id(uid), "deterministic"
+    assert a != ib.derive_activity_id("99999999-2222-3333-4444-555555555555")
+    assert 0 <= a < 2 ** 48 < 2 ** 53, "48-bit, JS-safe"
+    assert ib.derive_activity_id(uid, salt=1) not in (a, ib.derive_activity_id(uid, salt=2)), \
+        "salted derivations are distinct from the base and each other"
+
+
+def test_id_collision_salted_rehash_not_silent():
+    # 2.2 — force two distinct UIDs onto one id: the later run must land on the
+    # deterministic salted rehash, both rows must exist, neither overwritten.
+    tmp = _tmpdir()
+    real = ib.derive_activity_id
+
+    def forced(uid, salt=0):
+        return 777 if salt == 0 else real(uid, salt)
+
+    a = dict(STEADY_RUN, sessionUid="col-a")
+    b = dict(STEADY_RUN, sessionUid="col-b",
+             startTimeLocal="2026-07-16T07:00:00")
+    ib.derive_activity_id = forced
+    try:
+        ib.build_archive(tmp, [a, b], PROFILE)
+    finally:
+        ib.derive_activity_id = real
+    conn = _db(tmp)
+    rows = {aid: json.loads(s)["sessionUid"] for aid, s in
+            conn.execute("SELECT activity_id, summary_json FROM activities")}
+    conn.close()
+    assert rows == {777: "col-a", real("col-b", 1): "col-b"}, \
+        "earlier run keeps the base id; the collider re-derives with salt #1"
+
+
+def test_archive_schema_parity_with_garmin_created_db():
+    # 3.1 — a fresh ingest-built archive must be indistinguishable in shape
+    # from one the Garmin pipeline would create: same tables, same version.
+    ingest_dir, garmin_dir = _tmpdir(), _tmpdir()
+    ib.build_archive(ingest_dir, [STEADY_RUN], PROFILE)
+    arch.open_archive(garmin_dir).close()
+
+    def shape(d):
+        conn = _db(d)
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%'")}
+        version = conn.execute(
+            "SELECT value FROM archive_meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        conn.close()
+        return tables, version
+
+    assert shape(ingest_dir) == shape(garmin_dir)
+    assert shape(ingest_dir)[1] == str(arch.SCHEMA_VERSION)
+
+
+def test_archive_row_promoted_columns_and_verbatim_summary():
+    # 3.2 — promoted columns map from the banked payload; summary_json is that
+    # payload VERBATIM; fields the source can't supply stay NULL (even when a
+    # cousin field like elevationGainM exists in the payload — promotion is
+    # honest absence, the distilled detail owns elevation display).
+    tmp = _tmpdir()
+    tread = dict(STEADY_RUN, sessionUid="tm", sportType="TREADMILL_RUNNING",
+                 startTimeLocal="2026-07-14T07:00:00")
+    ib.build_archive(tmp, [STEADY_RUN, tread, RUNS[0]], PROFILE)
+    conn = _db(tmp)
+    row = conn.execute(
+        """SELECT start_time_local, type_key, distance_m, duration_s, avg_hr,
+                  max_hr, name, avg_cadence, elevation_gain_m, detail_json,
+                  summary_json
+           FROM activities WHERE activity_id = ?""",
+        (ib.derive_activity_id("sp"),)).fetchone()
+    assert row[:6] == ("2026-07-15T07:00:00", "running", 2100, 700, 150, 166)
+    assert row[6:10] == (None, None, None, None), \
+        "name / avg_cadence / elevation_gain_m / detail_json stay NULL"
+    assert json.loads(row[10]) == STEADY_RUN, "banked payload survives verbatim"
+    t_key = conn.execute(
+        "SELECT type_key FROM activities WHERE activity_id = ?",
+        (ib.derive_activity_id("tm"),)).fetchone()[0]
+    assert t_key == "treadmill_running", "type_key normalized to the filter chips"
+    n = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+    conn.close()
+    assert n == 3, "every banked run gets a row — no recent-runs cap"
+
+
+def test_streams_synthesis_axis_normalization_and_omitted_keys():
+    # 3.3 — shared t axis from the union of sample times, hr/v aligned with
+    # nulls preserved, d integrated and normalized to the banked distance,
+    # absent metrics omitted entirely.
+    run = {"sessionUid": "st", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 100, "distanceM": 315, "avgHr": 150,
+           "sportType": "running", "source": "x",
+           "hrSamples": [{"tSec": t, "bpm": 150} for t in range(0, 101, 5)],
+           "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(0, 101, 10)]}
+    st = ib.synth_streams(run)
+    assert st["t"] == list(range(0, 101, 5)), "union axis of HR + speed times"
+    assert st["v"][0] == 3.0 and st["v"][1] is None, \
+        "no speed sample at t=5 → null preserved, not interpolated"
+    assert st["hr"] == [150] * 21
+    # raw integration reads 300 m; the device's own total (315) wins
+    assert st["d"][-1] == 315 and st["d"][0] == 0
+    assert all(a <= b for a, b in zip(st["d"], st["d"][1:])), "d non-decreasing"
+    assert set(st) == {"t", "d", "hr", "v"}, \
+        "cad/elev/gap/pwr/lat/lon/pc are omitted keys, never fabricated"
+    assert ib.synth_streams(RUNS[0]) is None, \
+        "no speed series → no streams (no honest distance axis exists)"
+
+
+def test_archived_distilled_equals_recent_runs_detail():
+    # 3.4 — one derivation, two consumers: the archived dict must equal the
+    # cockpit's recentRuns[].detail for the same run, byte for byte.
+    tmp = _tmpdir()
+    cockpit = build_athlete_data([STEADY_RUN, RUNS[0]], PROFILE, TODAY)
+    ib.build_archive(tmp, [STEADY_RUN, RUNS[0]], PROFILE)
+    conn = _db(tmp)
+    stored = conn.execute(
+        "SELECT detail_distilled_json FROM activities WHERE activity_id = ?",
+        (ib.derive_activity_id("sp"),)).fetchone()[0]
+    no_speed = conn.execute(
+        "SELECT detail_distilled_json FROM activities WHERE activity_id = ?",
+        (ib.derive_activity_id("a"),)).fetchone()[0]
+    conn.close()
+    steady_row = next(r for r in cockpit["recentRuns"] if r["km"] == 2.1)
+    assert json.loads(stored) == steady_row["detail"]
+    assert no_speed is None, "no speed series → no distilled detail, honest NULL"
+
+
+def test_run_metrics_from_the_pure_engines():
+    # 3.5 — rows appear at METRICS_VERSION via best_efforts/band_aggregates
+    # over the synthesized samples; treadmill flagged; a sample-less run banks
+    # an empty row (deterministic absence — no nightly retry loop).
+    tmp = _tmpdir()
+    tread = dict(STEADY_RUN, sessionUid="tm", sportType="treadmill_running",
+                 startTimeLocal="2026-07-14T07:00:00")
+    ib.build_archive(tmp, [STEADY_RUN, tread, RUNS[0]], PROFILE)
+    conn = _db(tmp)
+    rows = {r[0]: r for r in conn.execute(
+        "SELECT activity_id, metrics_version, is_treadmill, best_1k_s "
+        "FROM run_metrics")}
+    conn.close()
+    steady = rows[ib.derive_activity_id("sp")]
+    assert steady[1] == im.METRICS_VERSION and steady[2] == 0
+    assert abs(steady[3] - 1000 / 3.0) <= 1.5, "best 1k at constant 3 m/s"
+    assert rows[ib.derive_activity_id("tm")][2] == 1, "treadmill flagged"
+    empty = rows[ib.derive_activity_id("a")]
+    assert empty[1] == im.METRICS_VERSION and empty[3] is None, \
+        "no speed series → empty row at the current version"
+
+
+def test_zero_runs_leaves_the_instance_unprovisioned():
+    # a fresh instance must stay "no archive on this instance" (404 + hidden
+    # chrome) until the first run lands — an empty db would flip /api/status's
+    # archive flag and reveal empty archive chrome
+    tmp = _tmpdir()
+    assert ib.build_archive(tmp, [], PROFILE) == 0
+    assert not arch.archive_path(tmp).exists()
+
+
+def test_archive_idempotent_version_bumps_and_self_healing():
+    # 3.6 — steady state is write-once; a version bump recomputes; a deleted
+    # db regenerates completely with identical ids.
+    tmp = _tmpdir()
+    runs = [STEADY_RUN, RUNS[0]]
+    ib.build_archive(tmp, runs, PROFILE)
+
+    def snapshot():
+        conn = _db(tmp)
+        acts = conn.execute(
+            "SELECT activity_id, updated_at, first_seen_at, summary_json, "
+            "detail_streams_json, detail_distilled_json "
+            "FROM activities ORDER BY activity_id").fetchall()
+        mets = conn.execute(
+            "SELECT activity_id, metrics_version, computed_at, best_1k_s "
+            "FROM run_metrics ORDER BY activity_id").fetchall()
+        conn.close()
+        return acts, mets
+
+    first = snapshot()
+    import time
+    time.sleep(1.1)          # updated_at has 1 s resolution — churn would show
+    ib.build_archive(tmp, runs, PROFILE)
+    assert snapshot() == first, "second pass is a no-op: no churn anywhere"
+
+    # a distill-version bump recomputes streams + distilled (write-once until)
+    conn = _db(tmp)
+    conn.execute("UPDATE activities SET detail_streams_json = '{\"t\":[0]}' "
+                 "WHERE activity_id = ?", (ib.derive_activity_id("sp"),))
+    conn.commit(); conn.close()
+    ib.build_archive(tmp, runs, PROFILE)
+    conn = _db(tmp)
+    tampered = conn.execute(
+        "SELECT detail_streams_json FROM activities WHERE activity_id = ?",
+        (ib.derive_activity_id("sp"),)).fetchone()[0]
+    conn.close()
+    assert tampered == '{"t":[0]}', "same version → existing artifact untouched"
+    old = ib.INGEST_DISTILL_VERSION
+    ib.INGEST_DISTILL_VERSION = old + 1
+    try:
+        ib.build_archive(tmp, runs, PROFILE)
+    finally:
+        ib.INGEST_DISTILL_VERSION = old
+    conn = _db(tmp)
+    healed = json.loads(conn.execute(
+        "SELECT detail_streams_json FROM activities WHERE activity_id = ?",
+        (ib.derive_activity_id("sp"),)).fetchone()[0])
+    conn.close()
+    assert len(healed["t"]) > 1, "bumped marker → streams recomputed"
+
+    # a METRICS_VERSION bump recomputes metrics rows (stale row replaced)
+    real_mv = im.METRICS_VERSION
+    im.METRICS_VERSION = real_mv + 1
+    try:
+        ib.build_archive(tmp, runs, PROFILE)
+    finally:
+        im.METRICS_VERSION = real_mv
+    conn = _db(tmp)
+    versions = [r[0] for r in conn.execute(
+        "SELECT DISTINCT metrics_version FROM run_metrics")]
+    conn.close()
+    assert versions == [real_mv + 1], "stale rows replaced, not duplicated"
+
+    # deleting the file is always safe: full regeneration, identical ids
+    ids_before = sorted(r[0] for r in first[0])
+    arch.archive_path(tmp).unlink()
+    ib.build_archive(tmp, runs, PROFILE)
+    conn = _db(tmp)
+    ids_after = sorted(r[0] for r in conn.execute(
+        "SELECT activity_id FROM activities"))
+    streams = conn.execute(
+        "SELECT COUNT(*) FROM activities WHERE detail_streams_json IS NOT NULL"
+    ).fetchone()[0]
+    metrics = conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0]
+    conn.close()
+    assert ids_after == ids_before, "previously shared /run/:id links keep resolving"
+    assert streams == 1 and metrics == 2, "streams, detail and metrics all healed"
+
+
 def test_empty_store_is_safe():
     d = build_athlete_data([], PROFILE, TODAY, plan_goal=None)
     assert len(d["heatmapKm"]) == 365 and sum(d["heatmapKm"]) == 0

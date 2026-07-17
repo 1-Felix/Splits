@@ -306,6 +306,9 @@ class Component extends DCLogic {
     ].map((c) => ({ label: c.label, on: String(this.state.type === c.v), pick: () => this.applyFilters({ type: c.v }) }));
     const thisYear = this.state.now.getFullYear();
     const years = [];
+    // FOLLOW-UP (add-ingest-archive 6.2): 2024 is Felix's account start —
+    // on an ingest instance whose history begins later (Max: 2026) the older
+    // chips are dead weight; derive the floor from the archive's own MIN year.
     for (let y = thisYear; y >= 2024; y--) years.push(String(y)); // the account's history starts 2024-05
     const yearChips = [{ label: 'All years', v: '' }, ...years.map((y) => ({ label: y, v: y }))]
       .map((c) => ({ label: c.label, on: String(this.state.year === c.v), pick: () => this.applyFilters({ year: c.v }) }));

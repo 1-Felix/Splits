@@ -2,8 +2,9 @@
 // garmin-data.js appears in the data dir carrying the pushed run (telemetry-ingest
 // task 3.6). Exercises the whole ingest-fed path with the real Python builder.
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, copyFile } from "node:fs/promises";
+import { mkdtemp, rm, copyFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -48,7 +49,8 @@ try {
     sessionUid: "e2e-1", startTimeLocal: "2026-07-14T07:00:00",
     durationS: 1800, distanceM: 5000, avgHr: 150, sportType: "running",
     avgSpeed: 2.78, source: "com.sec.android.app.shealth",
-    hrSamples: [{ tSec: 0, bpm: 150 }, { tSec: 5, bpm: 150 }, { tSec: 10, bpm: 150 }],
+    hrSamples: Array.from({ length: 361 }, (_, i) => ({ tSec: i * 5, bpm: 150 })),
+    speedSamples: Array.from({ length: 361 }, (_, i) => ({ tSec: i * 5, mps: 2.78 })),
   });
   const r = await fetch(B + "/api/ingest", { method: "POST", headers: auth, body });
   assert.strictEqual(r.status, 200, "ingest → 200");
@@ -80,6 +82,39 @@ try {
   assert.strictEqual(d.hrZones.length, 5, "5 HR zones");
   assert.strictEqual(d.heatmapKm.length, 365, "heatmap length 365");
   assert.strictEqual(d.predictions.halfGoal, "1:59:59", "halfGoal from plan-data.js goal");
+
+  // ── the archive pass (add-ingest-archive 4.1): the same build wrote a real
+  // activity-archive.db and every archive endpoint serves the pushed run ────
+  const aid = parseInt(createHash("sha256").update("e2e-1").digest("hex").slice(0, 12), 16);
+  assert.ok(await waitFor(async () => (await fetch(B + "/api/archive/activities")).ok),
+    "archive endpoints did not come up after the build");
+  assert.ok(await stat(join(dataDir, "activity-archive.db")).catch(() => null),
+    "activity-archive.db exists on the instance's own volume");
+
+  const status = await (await fetch(B + "/api/status")).json();
+  assert.strictEqual(status.ingestFed, true, "status: ingest-fed");
+  assert.strictEqual(status.archive, true, "status: archive flag flipped by the build");
+
+  const list = await (await fetch(B + "/api/archive/activities")).json();
+  assert.strictEqual(list.total, 1, "archive lists the pushed run");
+  assert.strictEqual(list.activities[0].activityId, aid, "derived 48-bit id from the session UID");
+  assert.strictEqual(list.activities[0].distanceM, 5000, "promoted distance");
+
+  const act = await (await fetch(B + `/api/archive/activities/${aid}`)).json();
+  assert.strictEqual(act.type, "running", "promoted type_key");
+  assert.ok(act.detail && Array.isArray(act.detail.splits) && act.detail.splits.length >= 4,
+    "distilled detail with per-km splits");
+  assert.strictEqual(act.name, null, "no name — honest NULL, no fabrication");
+
+  const streams = await (await fetch(B + `/api/archive/activities/${aid}/streams`)).json();
+  assert.ok(streams.t.length > 100 && streams.hr && streams.v, "columnar streams serve");
+  assert.strictEqual(streams.d[streams.d.length - 1], 5000, "distance normalized to the banked total");
+  assert.ok(!("lat" in streams) && !("cad" in streams), "absent metrics are omitted keys");
+
+  const rm2 = await (await fetch(B + "/api/archive/run-metrics?from=2026-07-01&to=2026-07-31")).json();
+  assert.strictEqual(rm2.runs.length, 1, "run-metrics serves the run");
+  assert.strictEqual(rm2.runs[0].activityId, aid, "run-metrics row keyed by the derived id");
+  assert.ok(rm2.runs[0].metricsVersion >= 2, "metrics stamped at the engine's version");
 
   console.log("ALL PASS");
 } catch (e) {

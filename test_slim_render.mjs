@@ -6,6 +6,7 @@
 // the exact contract Max's instance will serve — including the freshly-booted
 // zero-runs state.
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -184,15 +185,20 @@ try {
   const cockpitReady = () => document.querySelectorAll('rect[data-hb="heat"]').length > 300;
   const progressReady = () => document.body.innerText.includes("Avg run pace");
 
-  // ── instance-shape API: status flags + the honest archive 404 ─────────────
+  // ── instance-shape API: status flags on all three instances ──────────────
   step = "instance-shape API";
   {
     const slim = await (await fetch(`http://localhost:${BASE_PORT}/api/status`)).json();
     assert.strictEqual(slim.ingestFed, true, "ingest-fed instance says so");
-    assert.strictEqual(slim.archive, false, "no archive db → archive:false");
+    assert.strictEqual(slim.archive, true,
+      "the ingest build wrote a real archive db → archive:true (add-ingest-archive)");
+    const empty = await (await fetch(`http://localhost:${BASE_PORT + 1}/api/status`)).json();
+    assert.strictEqual(empty.archive, false,
+      "zero banked runs → no db provisioned, archive chrome stays hidden");
     const full = await (await fetch(`http://localhost:${BASE_PORT + 2}/api/status`)).json();
     assert.strictEqual(full.ingestFed, false, "Garmin instance is not ingest-fed");
-    const arch = await fetch(`http://localhost:${BASE_PORT}/api/archive/activities`);
+    assert.strictEqual(full.archive, false, "this fixture keeps no archive db");
+    const arch = await fetch(`http://localhost:${BASE_PORT + 2}/api/archive/activities`);
     assert.strictEqual(arch.status, 404, "no archive db is a 404 (not provisioned), not a 503 (outage)");
   }
 
@@ -205,7 +211,8 @@ try {
       document.querySelectorAll('rect[data-hb="heat"]').length > 300 &&
       !document.body.innerText.includes("Garmin ·"));
     assert.ok(!r.text.includes("Garmin"), "no Garmin sync pill on an ingest-fed instance");
-    assert.ok(!r.text.includes("Archive"), "no Archive nav tab without an archive db");
+    assert.ok(r.text.includes("Archive"),
+      "the Archive nav tab is BACK — the build provisioned a real archive db");
     assert.deepStrictEqual(r.errors, [], "slim cockpit throws nothing");
     assert.strictEqual(r.heatCells, 365, "full heatmap");
     assert.ok(!r.cardReady, "readiness card hidden when readiness is absent");
@@ -248,20 +255,56 @@ try {
     assert.ok(r.text.includes("Fitness & fatigue"), "fitness card renders");
   }
 
-  // ── slim instance: archive-fed routes degrade, never error (design D8) ────
-  step = "slim archive routes";
+  // ── slim instance: the archive surfaces are LIVE (add-ingest-archive) ─────
+  step = "slim archive live";
+  const aid = (uid) => parseInt(createHash("sha256").update(uid).digest("hex").slice(0, 12), 16);
   {
-    // no archive db = "this instance keeps no archive" (permanent shape, no
-    // retry) — NOT the transient "Archive offline … try again" outage state
-    const arch = await render(BASE_PORT, "/archive", () => document.body.innerText.includes("No archive on this instance"));
-    assert.deepStrictEqual(arch.errors, [], "/archive throws nothing without an archive DB");
-    assert.ok(!arch.text.includes("Archive offline"), "absent archive is not reported as an outage");
+    // /archive lists BOTH banked runs — no recent-runs cap
+    const arch = await render(BASE_PORT, "/archive", () =>
+      document.querySelectorAll(".arch-row").length === 2);
+    assert.deepStrictEqual(arch.errors, [], "/archive throws nothing on a live ingest archive");
+    assert.ok(arch.text.includes("5.0") && arch.text.includes("6.0"),
+      "both runs' distances listed");
 
-    const cmp = await render(BASE_PORT, "/compare", () => document.body.innerText.includes("Nothing to compare yet"));
-    assert.deepStrictEqual(cmp.errors, [], "/compare throws nothing without an archive DB");
+    // /run/:id renders HR + pace charts in no-basemap mode (no GPS on ingest)
+    const runPg = await render(BASE_PORT, `/run/${aid("hc-uid-1")}`, () =>
+      document.querySelectorAll("svg[data-chart='trend']").length >= 2);
+    assert.deepStrictEqual(runPg.errors, [], "/run/:id throws nothing");
+    assert.ok(!runPg.text.includes("OpenStreetMap"),
+      "no basemap and no attribution — ingest streams carry no lat/lon");
+    assert.ok(!runPg.text.includes("Unknown run"), "the derived id resolves");
 
-    const runPg = await render(BASE_PORT, "/run/12345", () => document.body.innerText.includes("Unknown run"));
-    assert.deepStrictEqual(runPg.errors, [], "/run/:id throws nothing without an archive DB");
+    // /compare of the two runs renders; the sample-less run degrades honestly
+    const cmp = await render(BASE_PORT, `/compare?ids=${aid("hc-uid-1")},${aid("hc-uid-2")}`, () =>
+      document.body.innerText.includes("Comparing 2 runs"));
+    assert.deepStrictEqual(cmp.errors, [], "/compare throws nothing");
+    assert.ok(cmp.text.includes("has no stored sample stream"),
+      "the run banked without a speed series compares by summary, honestly");
+  }
+
+  // ── slim instance: the cockpit heatmap day-drill is BACK ──────────────────
+  step = "slim heat drill";
+  {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(`http://localhost:${BASE_PORT}/`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(cockpitReady, null, { timeout: 15000 });
+    // today's cell (index 364) holds the 5 km run — pinning it must offer the
+    // drill affordance again now that the instance has an archive
+    await page.evaluate(() =>
+      document.querySelectorAll('rect[data-hb="heat"]')[364].dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })));
+    await page.waitForFunction(() =>
+      document.querySelector('[data-card="heat"]') &&
+      document.querySelector('[data-card="heat"]').innerText.includes("view this day"),
+      null, { timeout: 10000 });
+    await page.focus('svg[aria-label^="Running heatmap"]');
+    await page.keyboard.press("Enter");
+    await page.waitForFunction((id) => window.location.pathname === "/run/" + id,
+      aid("hc-uid-1"), { timeout: 10000 });
+    assert.deepStrictEqual(errors, [], "the day drill navigates without errors");
+    await page.close();
   }
 
   // ── freshly-booted instance (0 runs banked): both pages survive ───────────
@@ -295,6 +338,28 @@ try {
     const r = await render(BASE_PORT + 2, "/progress", progressReady);
     assert.deepStrictEqual(r.errors, [], "full progress throws nothing");
     assert.ok(r.text.includes("VO₂ max"), "VO₂ chart card present");
+  }
+
+  // ── no-archive shape (moved off the slim fixture, which now HAS one): an
+  // instance without a db degrades honestly — hidden chrome, 404, never an
+  // outage state (design D8 / add-ingest-archive 4.3) ───────────────────────
+  step = "no-archive routes";
+  {
+    const cockpit = await render(BASE_PORT + 2, "/", cockpitReady);
+    assert.ok(!cockpit.text.includes("Archive"), "no Archive nav tab without an archive db");
+
+    const arch = await render(BASE_PORT + 2, "/archive", () =>
+      document.body.innerText.includes("No archive on this instance"));
+    assert.deepStrictEqual(arch.errors, [], "/archive throws nothing without an archive DB");
+    assert.ok(!arch.text.includes("Archive offline"), "absent archive is not reported as an outage");
+
+    const cmp = await render(BASE_PORT + 2, "/compare", () =>
+      document.body.innerText.includes("Nothing to compare yet"));
+    assert.deepStrictEqual(cmp.errors, [], "/compare throws nothing without an archive DB");
+
+    const runPg = await render(BASE_PORT + 2, "/run/12345", () =>
+      document.body.innerText.includes("Unknown run"));
+    assert.deepStrictEqual(runPg.errors, [], "/run/:id throws nothing without an archive DB");
   }
 
   console.log("ALL PASS");

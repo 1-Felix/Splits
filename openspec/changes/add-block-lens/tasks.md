@@ -35,5 +35,5 @@
 ## 5. Verify + deploy
 
 - [x] 5.1 Full local test run (Python + mjs) green; run a real local sync and eyeball `blockLens` in `garmin-data.js`, the /progress section, and the briefing section
-- [ ] 5.2 Deploy to the NUC (container build + sync), verify schema v9 applied, the Sonthofen block renders live, API endpoints respond, briefing carries the Block report
-- [ ] 5.3 Sync delta specs to main specs and mark the roadmap's 3c as shipped-early via the block lens
+- [x] 5.2 Deploy to the NUC (container build + sync), verify schema v9 applied, the Sonthofen block renders live, API endpoints respond, briefing carries the Block report
+- [x] 5.3 Sync delta specs to main specs and mark the roadmap's 3c as shipped-early via the block lens

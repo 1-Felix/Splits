@@ -14,8 +14,8 @@ android {
         applicationId = "com.splits.bridge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1-spike"
+        versionCode = 2
+        versionName = "0.2" // 0.2: schedule-after-rejections fix + status-bar insets
     }
 
     buildTypes {

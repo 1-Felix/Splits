@@ -24,7 +24,11 @@ class SyncEngine(private val context: Context) {
         private val RHR_OVERLAP_DAYS = 7L
     }
 
-    data class Outcome(val ok: Boolean, val retry: Boolean, val summary: String)
+    /** [completed] = the pass ran to the end (even with rejected runs) — as
+     *  opposed to the preflight failures (unconfigured / SDK / permissions)
+     *  where scheduling background sync would be pointless. */
+    data class Outcome(val ok: Boolean, val retry: Boolean, val summary: String,
+                       val completed: Boolean = false)
 
     suspend fun sync(log: (String) -> Unit = {}): Outcome {
         val config = BridgeConfig(context)
@@ -113,7 +117,7 @@ class SyncEngine(private val context: Context) {
         }
         config.lastSyncSummary = stamped(summary)
         Log.i(TAG, summary)
-        return Outcome(ok = rejected == 0, retry = false, summary = summary)
+        return Outcome(ok = rejected == 0, retry = false, summary = summary, completed = true)
     }
 
     private fun rhrSyncedFrom(config: BridgeConfig, zone: ZoneId): Instant? = try {

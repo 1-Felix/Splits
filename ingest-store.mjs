@@ -69,8 +69,11 @@ export function validateRunPayload(obj) {
 
   // scope expansion (design D9–D13): optional per-run metrics — null when the
   // provider doesn't write them (Samsung: no elevation/steps), validated when it does
+  // same bound as the per-sample check — the bridge derives maxHr as the max
+  // of hrSamples, so a stricter bound here would reject a faithfully built
+  // payload (and the bridge treats 422 as permanent: the run would never land)
   const maxHr = obj.maxHr == null ? null : obj.maxHr;
-  if (maxHr !== null && (!isNum(maxHr) || maxHr <= 0 || maxHr >= 260)) return { ok: false, error: "maxHr must be null or a bpm in (0,260)" };
+  if (maxHr !== null && (!isNum(maxHr) || maxHr <= 0 || maxHr >= 300)) return { ok: false, error: "maxHr must be null or a bpm in (0,300)" };
   const nonNeg = { elevationGainM: null, activeKcal: null, totalKcal: null, steps: null };
   for (const k of Object.keys(nonNeg)) {
     const v = obj[k] == null ? null : obj[k];

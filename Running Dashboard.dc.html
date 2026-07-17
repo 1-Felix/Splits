@@ -540,20 +540,23 @@ class Component extends DCLogic {
         style: { border: '1px solid var(--line)', borderRadius: 'var(--r-pill)', background: 'transparent', color: 'var(--sub)', width: '24px', height: '24px', cursor: 'pointer', fontFamily: 'inherit', flex: 'none' } }, '✕'));
     return [{ el }];
   }
+  // Both key handlers use FUNCTIONAL setState: rapid presses outrun React's
+  // state commit, so reading this.state.hover here would step from a stale
+  // index (two quick ArrowRights landing one week ahead instead of two).
   chartKey = (chart, n, e) => {
-    const k = e.key; const h = this.state.hover;
-    const cur = (h && h.chart === chart) ? h.i : -1;
-    if (k === 'ArrowRight' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: Math.min(n - 1, cur + 1), pinned: true } }); }
-    else if (k === 'ArrowLeft' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur <= 0 ? 0 : cur - 1, pinned: true } }); }
+    const k = e.key;
+    const curOf = (s) => (s.hover && s.hover.chart === chart) ? s.hover.i : -1;
+    if (k === 'ArrowRight' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: Math.min(n - 1, curOf(s) + 1), pinned: true } })); }
+    else if (k === 'ArrowLeft' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: curOf(s) <= 0 ? 0 : curOf(s) - 1, pinned: true } })); }
     else if (k === 'Escape') { this.setState({ hover: null }); }
-    else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur < 0 ? 0 : cur, pinned: true } }); }
+    else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: curOf(s) < 0 ? 0 : curOf(s), pinned: true } })); }
   };
   heatKey = (n, e) => {
-    const k = e.key; const h = this.state.hover;
-    const cur = (h && h.chart === 'heat') ? h.i : -1;
+    const k = e.key;
+    const curOf = (s) => (s.hover && s.hover.chart === 'heat') ? s.hover.i : -1;
     const step = (k === 'ArrowUp' || k === 'ArrowDown') ? 7 : 1;
-    if (k === 'ArrowRight' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart: 'heat', i: Math.min(n - 1, (cur < 0 ? 0 : cur) + step), pinned: true } }); }
-    else if (k === 'ArrowLeft' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart: 'heat', i: Math.max(0, (cur < 0 ? 0 : cur) - step), pinned: true } }); }
+    if (k === 'ArrowRight' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState((s) => { const cur = curOf(s); return { hover: { chart: 'heat', i: Math.min(n - 1, (cur < 0 ? 0 : cur) + step), pinned: true } }; }); }
+    else if (k === 'ArrowLeft' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState((s) => { const cur = curOf(s); return { hover: { chart: 'heat', i: Math.max(0, (cur < 0 ? 0 : cur) - step), pinned: true } }; }); }
     else if (k === 'Escape') { this.setState({ hover: null }); }
   };
   // ---- chart engine plumbing -------------------------------------------------
@@ -1197,7 +1200,9 @@ class Component extends DCLogic {
       rootStyle, themes, nav, initial:D.profile.name[0],
       greeting: this.greetingText(now) + ', ' + D.profile.name, syncWrap, loadFail,
       onDismiss: () => this.dismissHover(),
-      race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:D.predictions, kpis,
+      // the hero interpolates pred.halfNow directly — degrade a null (fresh
+      // instance, no eligible run yet) to the same em-dash the KPI tile uses
+      race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:{...pred, halfNow: pred.halfNow || '—'}, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, roadTitle, coach:D.coach, coachLog:D.coach.log,
       zones, sleep:sleepObj, hrv:hrvObj, hasSleep, rhr:rhrObj, hasRhr, heat, runs,
       traj, trajCard,

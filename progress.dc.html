@@ -293,13 +293,15 @@ class Component extends DCLogic {
     if (this.state.panel) this.closePanel();
     if (this.state.hover && this.state.hover.pinned) this.setState({ hover: null });
   };
+  // functional setState — rapid presses outrun the state commit, and stepping
+  // from this.state.hover here would skip or repeat an index (cockpit twin)
   chartKey = (chart, n, e) => {
-    const k = e.key; const h = this.state.hover;
-    const cur = (h && h.chart === chart) ? h.i : -1;
-    if (k === 'ArrowRight' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: Math.min(n - 1, cur + 1), pinned: true } }); }
-    else if (k === 'ArrowLeft' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur <= 0 ? 0 : cur - 1, pinned: true } }); }
+    const k = e.key;
+    const curOf = (s) => (s.hover && s.hover.chart === chart) ? s.hover.i : -1;
+    if (k === 'ArrowRight' || k === 'ArrowUp') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: Math.min(n - 1, curOf(s) + 1), pinned: true } })); }
+    else if (k === 'ArrowLeft' || k === 'ArrowDown') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: curOf(s) <= 0 ? 0 : curOf(s) - 1, pinned: true } })); }
     else if (k === 'Escape') { this.setState({ hover: null }); }
-    else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState({ hover: { chart, i: cur < 0 ? 0 : cur, pinned: true } }); }
+    else if (k === 'Enter' || k === ' ') { if (e.preventDefault) e.preventDefault(); this.setState((s) => ({ hover: { chart, i: curOf(s) < 0 ? 0 : curOf(s), pinned: true } })); }
   };
 
   // ---- record click-through: navigate to the run's own page (run-detail 7.1)
@@ -688,9 +690,13 @@ class Component extends DCLogic {
     const paceCut = this.scopeCut('pace', H.paceSecPerKm.length, this.MONTH_SCOPES);
     const paceVals = H.paceSecPerKm.slice(-paceCut.keep);
     const paceDates = monthDates(H.vo2maxStartMonth, H.paceSecPerKm.length).slice(-paceCut.keep);
+    // a fresh ingest-fed instance boots with history.paceSecPerKm = [] — the
+    // headline degrades to an em-dash instead of NaN:NaN
     const pace = {
-      last: this.fmtPace(paceVals[paceVals.length - 1]),
-      delta: '−' + this.fmtPace(H.paceSecPerKm[0] - H.paceSecPerKm[H.paceSecPerKm.length - 1]) + ' /km all-time',
+      last: paceVals.length ? this.fmtPace(paceVals[paceVals.length - 1]) : '—',
+      delta: H.paceSecPerKm.length
+        ? '−' + this.fmtPace(H.paceSecPerKm[0] - H.paceSecPerKm[H.paceSecPerKm.length - 1]) + ' /km all-time'
+        : '',
       sub: spanOf(paceDates, 'mo'),
       scopes: paceCut.scopes,
       chart: this.engineChart('pace', {

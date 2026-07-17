@@ -10,6 +10,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
@@ -63,7 +65,16 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = BridgeConfig(this)
-        setContentView(buildUi())
+        val root = buildUi()
+        setContentView(root)
+        // targetSdk 35+ draws edge-to-edge: without insets the URL field sits
+        // under the status bar and can't be tapped
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(32 + bars.left, 48 + bars.top, 32 + bars.right, 32 + bars.bottom)
+            insets
+        }
 
         when (HealthConnectClient.getSdkStatus(this)) {
             HealthConnectClient.SDK_AVAILABLE -> append("Health Connect SDK: AVAILABLE")
@@ -156,7 +167,9 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             append(outcome.summary)
-            if (outcome.ok || outcome.retry) {
+            // a completed pass with rejected runs must still arm set-and-forget —
+            // only preflight failures (config/SDK/permissions) skip scheduling
+            if (outcome.ok || outcome.retry || outcome.completed) {
                 SyncWorker.schedule(applicationContext)
                 append("Background sync scheduled (every 6 h, on network).")
             }

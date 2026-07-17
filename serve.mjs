@@ -591,12 +591,19 @@ function triggerBuild() {
     settle();
     return;
   }
-  // Watchdog: kill a hung builder and settle regardless, so `building` can never
-  // stay latched forever (the store is the durable truth; a later build catches up).
+  // Watchdog: kill a hung builder. Settling waits for 'close' — the killed
+  // process must actually exit before a coalesced follow-up build may spawn,
+  // or two builders would contend for the same archive db. SIGKILL escalation
+  // guarantees 'close' fires even if the builder ignores the polite kill.
   const watchdog = setTimeout(() => {
     console.error(`build timed out after ${BUILD_TIMEOUT_S}s — killing builder`);
     try { child.kill(); } catch { /* already gone */ }
-    settle();
+    const force = setTimeout(() => {
+      console.error("builder ignored SIGTERM — sending SIGKILL");
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    }, 10000);
+    force.unref && force.unref();
+    child.once("close", () => clearTimeout(force));
   }, BUILD_TIMEOUT_S * 1000);
   watchdog.unref && watchdog.unref();
   child.on("error", (e) => { console.error("build error:", e && e.message); clearTimeout(watchdog); settle(); });

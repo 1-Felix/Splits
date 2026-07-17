@@ -611,13 +611,15 @@ def _metric_samples(streams: dict) -> list[tuple]:
             for t, d, h, v in zip(streams["t"], streams["d"], hr, streams["v"])]
 
 
-def _upsert_archive_row(conn, aid: int, run: dict) -> None:
+def _upsert_archive_row(conn, aid: int, run: dict) -> bool:
     """One archive row per banked run: promoted columns mapped from the banked
     payload, summary_json = that payload VERBATIM (design D4 — the banked run
     IS this pipeline's raw source payload; its sessionUid keeps the id mapping
     recoverable). name / avg_cadence / elevation_gain_m / detail_json stay NULL
     — honest absence, never fabrication. A row whose content is unchanged is
-    left untouched so updated_at only moves when something did (design D8)."""
+    left untouched so updated_at only moves when something did (design D8).
+    Returns True when the row was inserted or its content changed, so the
+    caller can recompute derived artifacts for a re-pushed run."""
     summary = json.dumps(run, ensure_ascii=False)
     avg_hr = run.get("avgHr")
     max_hr = run.get("maxHr")
@@ -631,12 +633,13 @@ def _upsert_archive_row(conn, aid: int, run: dict) -> None:
                   avg_hr, max_hr, summary_json
            FROM activities WHERE activity_id = ?""", (aid,)).fetchone()
     if prior is not None and tuple(prior) == vals:
-        return
+        return False
     now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     conn.execute(activity_archive._UPSERT_SQL, (
         aid, vals[0], vals[1], None, vals[2], vals[3], vals[4], vals[5],
         None, None, summary, now, now))
     conn.commit()
+    return True
 
 
 def build_archive(data_dir: Path, runs: list[dict], profile: dict,
@@ -644,8 +647,9 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
     """The archive build pass: upsert every usable banked run into
     activity-archive.db and bring its derived artifacts (columnar streams,
     distilled detail, run_metrics) to the current versions. Write-once in the
-    steady state — derived artifacts are recomputed only when missing or when
-    a version marker moved (design D8). Returns the number of archived runs."""
+    steady state — derived artifacts are recomputed only when missing, when a
+    version marker moved (design D8), or when the banked payload itself changed
+    (a re-pushed run). Returns the number of archived runs."""
     runs = sorted((r for r in runs if _usable(r) and r.get("sessionUid")),
                   key=lambda r: r["startTimeLocal"])
     if not runs:
@@ -660,23 +664,35 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                  != str(INGEST_DISTILL_VERSION))
         for run in runs:
             aid = _resolve_activity_id(conn, run["sessionUid"])
-            _upsert_archive_row(conn, aid, run)
+            # a re-pushed run whose content changed must refresh ALL derived
+            # artifacts, or /run/:id would chart the old samples while the
+            # cockpit (rebuilt from the store every build) shows the new ones
+            changed = _upsert_archive_row(conn, aid, run)
             missing = conn.execute(
                 """SELECT detail_streams_json IS NULL, detail_distilled_json IS NULL
                    FROM activities WHERE activity_id = ?""", (aid,)).fetchone()
             streams = None
-            if stale or missing[0]:
+            if stale or changed or missing[0]:
                 streams = synth_streams(run)
                 if streams:
                     activity_archive.write_streams(conn, aid, streams)
-            if stale or missing[1]:
+                elif changed and not missing[0]:
+                    # the new payload no longer yields streams — drop the stale ones
+                    conn.execute("UPDATE activities SET detail_streams_json = NULL"
+                                 " WHERE activity_id = ?", (aid,))
+                    conn.commit()
+            if stale or changed or missing[1]:
                 det = run_detail(run, max_hr, rhr)
                 if det:
                     activity_archive.write_distilled(conn, aid, det)
+                elif changed and not missing[1]:
+                    conn.execute("UPDATE activities SET detail_distilled_json = NULL"
+                                 " WHERE activity_id = ?", (aid,))
+                    conn.commit()
             has_metrics = conn.execute(
                 "SELECT 1 FROM run_metrics WHERE activity_id = ? AND metrics_version = ?",
                 (aid, insight_metrics.METRICS_VERSION)).fetchone()
-            if not has_metrics:
+            if changed or not has_metrics:
                 mrow = {
                     "activity_id": aid,
                     "metrics_version": insight_metrics.METRICS_VERSION,
@@ -708,7 +724,9 @@ def _plan_goal(data_dir: Path) -> str | None:
         text = (data_dir / "plan-data.js").read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"goalTime:\s*[\"']([^\"']+)[\"']", text)
+    # the key may be bare (hand-written plan) or quoted (max-plan-generator
+    # emits json.dumps output: "goalTime": "2:29:59") — accept both
+    m = re.search(r"[\"']?goalTime[\"']?\s*:\s*[\"']([^\"']+)[\"']", text)
     return m.group(1) if m else None
 
 

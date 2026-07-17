@@ -38,7 +38,11 @@ export function coachRead(run, weekPlan, maxHR) {
     return `Quality threshold work — ${z[3]} min in Z4.`;
   if (intentEasy && hrPct > 0 && hrPct <= 0.75)
     return "Properly easy — exactly the aerobic stimulus intended.";
-  return `${run.km} km at ${fmtPace(run.pace)}/km, avg HR ${run.hr}.`;
+  // an ingest-fed run can carry a detail without HR (speed-only samples) —
+  // never interpolate a null into user-facing copy
+  return run.hr != null
+    ? `${run.km} km at ${fmtPace(run.pace)}/km, avg HR ${run.hr}.`
+    : `${run.km} km at ${fmtPace(run.pace)}/km.`;
 }
 
 export default coachRead;

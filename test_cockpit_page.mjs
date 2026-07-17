@@ -178,20 +178,15 @@ try {
   step = "anchorless week inert";
   await page.goto(B + "/", { waitUntil: "domcontentloaded" });
   await cockpitReady();
+  // park the mouse first: it is still over the traj card from the drill click
+  // above, and a resting hover pre-seeds the keyboard index (by design — the
+  // arrows continue from the hovered point), which would shift both presses
+  await page.mouse.move(0, 0);
   await page.focus(TRAJ);
-  // steer to 2026-W21 (null Riegel). Rapid blind presses race the re-render —
-  // a press can under- or over-step depending on when state commits — so step
-  // one key at a time toward W21 and correct overshoot.
-  for (let tries = 0; tries < 12; tries++) {
-    const txt = await page.evaluate(() => {
-      const el = document.querySelector('[data-card="traj"]');
-      return el ? el.innerText : "";
-    });
-    if (txt.includes("W21")) break;
-    await page.focus(TRAJ);
-    await page.keyboard.press(/W2[23]/.test(txt) ? "ArrowLeft" : "ArrowRight");
-    await page.waitForTimeout(200);
-  }
+  // two consecutive presses must land exactly two weeks in — the handlers use
+  // functional setState, so rapid presses can't step from a stale index
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");           // 2026-W21: null Riegel
   await page.waitForFunction(() =>
     document.querySelector('[data-card="traj"]') &&
     document.querySelector('[data-card="traj"]').innerText.includes("W21"),

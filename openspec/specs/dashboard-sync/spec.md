@@ -15,7 +15,16 @@ The dashboard SHALL provide a "Sync now" control that triggers a Garmin sync via
 - **THEN** `POST /api/sync` returns a non-success status with an error reason, and the dashboard surfaces the failure while continuing to render the last available data
 
 ### Requirement: Sync status is observable
-The server SHALL expose `GET /api/status` returning at least the last successful sync timestamp and whether a sync is currently in progress. The dashboard SHALL use it to show a "last synced" indication and a spinner/in-progress state.
+The server SHALL expose `GET /api/status` returning at least the last
+successful sync timestamp, whether a sync is currently in progress, and the
+instance's shape: `ingestFed` (true when the instance is fed via the ingest
+API and has no Garmin sync to offer) and `archive` (true when an archive
+database is present and answerable). The dashboard SHALL use the sync fields
+to show a "last synced" indication and a spinner/in-progress state, and the
+shape flags to fit its chrome: an ingest-fed instance SHALL NOT offer the
+Garmin sync control, and an instance without an archive SHALL NOT offer
+archive navigation or archive drill links. Absent shape flags (an older
+server) SHALL leave the full chrome visible.
 
 #### Scenario: Status reflects an idle, previously-synced system
 - **WHEN** a client requests `GET /api/status` and no sync is running
@@ -24,6 +33,20 @@ The server SHALL expose `GET /api/status` returning at least the last successful
 #### Scenario: Status reflects an in-progress sync
 - **WHEN** a sync is running and a client requests `GET /api/status`
 - **THEN** the response reports the in-progress flag as true
+
+#### Scenario: An ingest-fed instance hides the Garmin sync control
+- **WHEN** `/api/status` reports `ingestFed: true` and a dashboard page loads
+- **THEN** the page renders no Garmin sync control
+
+#### Scenario: An instance without an archive hides archive chrome
+- **WHEN** `/api/status` reports `archive: false` and a dashboard page loads
+- **THEN** the page renders no archive navigation tab and no archive drill
+  links
+
+#### Scenario: The archive flag reflects provisioning, enabling auto-reveal
+- **WHEN** an archive database appears on an instance that previously had none
+- **THEN** subsequent `/api/status` responses report `archive: true` and pages
+  render the archive chrome again with no code change
 
 ### Requirement: Only one sync runs at a time
 The server SHALL ensure at most one sync executes concurrently. A trigger received while a sync is in progress SHALL NOT start a second sync.

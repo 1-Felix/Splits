@@ -72,13 +72,13 @@
 
 ## 5. Deploy + verify (NUC)
 
-- [ ] 5.1 Commit, push, CI image, pull + restart both instances; Felix's
+- [x] 5.1 Commit, push, CI image, pull + restart both instances; Felix's
       instance: `/api/status` unchanged (`archive: true`, `ingestFed: false`),
       spot-check a run page
-- [ ] 5.2 Max's instance: next build writes the archive → `/api/status`
+- [x] 5.2 Max's instance: next build writes the archive → `/api/status`
       `archive: true`; verify /archive lists his runs, a run page renders
       charts, heatmap day-drill navigates, progress drill panel returns rows
-- [ ] 5.3 Idempotency in production: trigger a second build (re-sync from the
+- [x] 5.3 Idempotency in production: trigger a second build (re-sync from the
       bridge), confirm no row churn (updated_at stable on untouched runs)
 
 ## 6. Documentation

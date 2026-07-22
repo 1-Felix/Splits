@@ -446,6 +446,53 @@ def _usable(run) -> bool:
         return False
 
 
+DUP_COVERAGE_MIN = 0.7  # a winner must cover ≥70% of its group's best distance
+
+
+def _run_span(run: dict) -> tuple:
+    start = dt.datetime.fromisoformat(run["startTimeLocal"])
+    return start, start + dt.timedelta(seconds=float(run["durationS"]))
+
+
+def dedupe_overlapping(runs: list[dict]) -> tuple[list[dict], list[tuple]]:
+    """Collapse one physical run recorded by several apps into one.
+
+    A Health Connect store is multi-writer. Max's phone carries Google Fit
+    auto-detection, Fitbit, Samsung Health (the watch) and Adidas Running, so a
+    single evening run landed three times and doubled his weekly volume. Runs
+    whose wall-clock spans intersect form one group; the winner is the run with
+    the most evidence — carrying HR first, then distance — but never one
+    covering less than DUP_COVERAGE_MIN of the group's best distance, so a
+    stray fragment can't displace the full run it sits inside.
+
+    Banking is untouched: the store stays the durable record of what every app
+    wrote, and this shapes only the derived view. Returns (kept, dropped) with
+    each dropped run paired to the winner that displaced it, for the log.
+    """
+    groups: list[list[dict]] = []
+    for run in sorted(runs, key=lambda r: r["startTimeLocal"]):
+        start, end = _run_span(run)
+        for group in groups:
+            if any(start < e and end > s for s, e in map(_run_span, group)):
+                group.append(run)
+                break
+        else:
+            groups.append([run])
+
+    kept, dropped = [], []
+    for group in groups:
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        best = max(r["distanceM"] for r in group)
+        eligible = [r for r in group if r["distanceM"] >= DUP_COVERAGE_MIN * best] or group
+        winner = max(eligible, key=lambda r: (bool(r.get("hrSamples")),
+                                              r["distanceM"], r["durationS"]))
+        kept.append(winner)
+        dropped.extend((r, winner) for r in group if r is not winner)
+    return sorted(kept, key=lambda r: r["startTimeLocal"]), dropped
+
+
 def _calibration(runs: list[dict], profile: dict, rhr_days: dict | None = None):
     """(max_hr, rhr) shared by the telemetry build and the archive pass — the
     zone bounds inside a run's distilled detail must come out identical on both
@@ -558,6 +605,23 @@ def _resolve_activity_id(conn, session_uid: str) -> int:
               file=sys.stderr, flush=True)
 
 
+def _find_archive_row(conn, session_uid: str):
+    """The archive id currently holding this run, or None — the read-only twin
+    of _resolve_activity_id (an empty slot means the run was never archived)."""
+    for salt in range(8):
+        aid = derive_activity_id(session_uid, salt)
+        row = conn.execute("SELECT summary_json FROM activities WHERE activity_id = ?",
+                           (aid,)).fetchone()
+        if row is None:
+            return None
+        try:
+            if (json.loads(row[0]) or {}).get("sessionUid") == session_uid:
+                return aid
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return None
+
+
 def synth_streams(run: dict):
     """detail_streams_json in the archive's columnar contract, synthesized from
     the banked samples (design D5): `t` = the union of HR/speed sample times,
@@ -662,7 +726,8 @@ def _upsert_archive_row(conn, aid: int, run: dict) -> bool:
 
 
 def build_archive(data_dir: Path, runs: list[dict], profile: dict,
-                  rhr_days: dict | None = None) -> int:
+                  rhr_days: dict | None = None,
+                  prune_uids: list[str] | None = None) -> int:
     """The archive build pass: upsert every usable banked run into
     activity-archive.db and bring its derived artifacts (columnar streams,
     distilled detail, run_metrics) to the current versions. Write-once in the
@@ -679,6 +744,16 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
     max_hr, rhr = _calibration(runs, profile, rhr_days)
     conn = activity_archive.open_archive(Path(data_dir))
     try:
+        # a run that lost a duplicate group must leave the archive too, or
+        # /archive and the cockpit disagree about the same day
+        for uid in (prune_uids or ()):
+            aid = _find_archive_row(conn, uid)
+            if aid is None:
+                continue
+            conn.execute("DELETE FROM run_metrics WHERE activity_id = ?", (aid,))
+            conn.execute("DELETE FROM activities WHERE activity_id = ?", (aid,))
+            conn.commit()
+            print(f"  – pruned archived duplicate {aid} ({uid})", flush=True)
         stale = (activity_archive.get_meta(conn, _DISTILL_MARKER)
                  != str(INGEST_DISTILL_VERSION))
         for run in runs:
@@ -784,6 +859,17 @@ def main() -> None:
         "maxHR": os.environ.get("ATHLETE_MAX_HR"),
     }
     profile = {k: v for k, v in profile.items() if v not in (None, "")}
+    # one physical run can be banked several times over (Google Fit, Fitbit,
+    # Samsung Health, Adidas Running all write into the same Health Connect):
+    # collapse them BEFORE both outputs so the cockpit and the archive agree
+    runs, duplicates = dedupe_overlapping([r for r in runs if _usable(r)])
+    for loser, winner in duplicates:
+        print(f"  – duplicate: {loser['startTimeLocal']} "
+              f"{loser['distanceM'] / 1000:.2f} km ({loser.get('source')}) "
+              f"overlaps {winner['startTimeLocal']} "
+              f"{winner['distanceM'] / 1000:.2f} km ({winner.get('source')}) — dropped",
+              flush=True)
+
     data = build_athlete_data(runs, profile, dt.date.today(), _plan_goal(data_dir),
                               rhr_days=rhr_days)
     tmp = data_dir / f".garmin-data.{os.getpid()}.tmp.js"
@@ -791,7 +877,8 @@ def main() -> None:
     tmp.replace(data_dir / "garmin-data.js")
     print(f"✓ built garmin-data.js from {len(runs)} ingested run(s)", flush=True)
     try:
-        n = build_archive(data_dir, runs, profile, rhr_days)
+        n = build_archive(data_dir, runs, profile, rhr_days,
+                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates])
         print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
     except Exception as e:  # noqa: BLE001 — the archive is a derived cache; a
         # failure here must never sink the telemetry build (task 3.7)

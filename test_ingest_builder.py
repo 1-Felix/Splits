@@ -489,6 +489,78 @@ def test_streams_synthesis_axis_normalization_and_omitted_keys():
         "no speed series → no streams (no honest distance axis exists)"
 
 
+def _spd(mps, dur, step=10):
+    return [{"tSec": t, "mps": mps} for t in range(0, dur + 1, step)]
+
+
+# Max's 2026-07-17 evening, as actually banked: ONE physical run recorded by
+# the watch (Samsung Health, carries HR) and by Adidas Running on the phone
+# (longer distance, no HR). Both were counted, doubling his weekly volume.
+WATCH_RUN = {"sessionUid": "w", "startTimeLocal": "2026-07-17T17:32:53",
+             "durationS": 903, "distanceM": 1707, "avgHr": 146,
+             "sportType": "running", "source": "com.sec.android.app.shealth",
+             "hrSamples": _hr(146, dur=900), "speedSamples": _spd(1.9, 900)}
+PHONE_RUN = {"sessionUid": "p", "startTimeLocal": "2026-07-17T17:29:05",
+             "durationS": 1083, "distanceM": 2174, "avgHr": None,
+             "sportType": "running", "source": "com.runtastic.android",
+             "hrSamples": [], "speedSamples": _spd(2.0, 1080)}
+
+
+def test_overlapping_sources_collapse_to_the_richest_run():
+    kept, dropped = ib.dedupe_overlapping([WATCH_RUN, PHONE_RUN, RUNS[0]])
+    assert {r["sessionUid"] for r in kept} == {"a", "w"}, \
+        "the HR-carrying watch run wins its group; the unrelated day is untouched"
+    assert [loser["sessionUid"] for loser, _ in dropped] == ["p"]
+    assert dropped[0][1]["sessionUid"] == "w", "a loser names its winner for the log"
+
+
+def test_a_fragment_never_displaces_the_run_it_overlaps():
+    # A 120 m warm-up blip that happens to carry HR must not beat the 10 km run
+    # it sits inside — evidence wins, but only among comparably complete runs.
+    frag = {"sessionUid": "frag", "startTimeLocal": "2026-07-17T18:00:00",
+            "durationS": 300, "distanceM": 120, "avgHr": 110,
+            "sportType": "running", "source": "shealth",
+            "hrSamples": _hr(110, dur=300), "speedSamples": _spd(0.4, 300)}
+    big = {"sessionUid": "big", "startTimeLocal": "2026-07-17T18:00:00",
+           "durationS": 3000, "distanceM": 10000, "avgHr": None,
+           "sportType": "running", "source": "runtastic",
+           "hrSamples": [], "speedSamples": _spd(3.3, 3000)}
+    kept, dropped = ib.dedupe_overlapping([frag, big])
+    assert [r["sessionUid"] for r in kept] == ["big"]
+    assert [loser["sessionUid"] for loser, _ in dropped] == ["frag"]
+
+
+def test_non_overlapping_runs_of_the_same_day_both_survive():
+    # Back-to-back sessions are not duplicates: the second starts after the
+    # first ends, so both are real training and both must be counted.
+    first = dict(WATCH_RUN, sessionUid="f", startTimeLocal="2026-07-17T17:00:00",
+                 durationS=600)
+    kept, _ = ib.dedupe_overlapping([first, WATCH_RUN])
+    assert {r["sessionUid"] for r in kept} == {"f", "w"}
+
+
+def test_archive_prunes_a_row_whose_run_lost_its_duplicate_group():
+    # The archive is a projection of the kept set: a run that loses a duplicate
+    # group must stop appearing on /archive, or the cockpit and the archive
+    # disagree about the same day.
+    tmp = _tmpdir()
+    ib.build_archive(tmp, [WATCH_RUN, PHONE_RUN], PROFILE)
+    conn = _db(tmp)
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 2
+    conn.close()
+
+    kept, dropped = ib.dedupe_overlapping([WATCH_RUN, PHONE_RUN])
+    ib.build_archive(tmp, kept, PROFILE,
+                     prune_uids=[loser["sessionUid"] for loser, _ in dropped])
+    conn = _db(tmp)
+    rows = conn.execute("SELECT activity_id, summary_json FROM activities").fetchall()
+    metrics = conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0]
+    conn.close()
+    assert len(rows) == 1, "the duplicate row is gone"
+    assert json.loads(rows[0][1])["sessionUid"] == "w"
+    assert metrics == 1, "the pruned run takes its metrics row with it"
+
+
 def test_streams_hold_last_reading_across_interleaved_series():
     # Real Samsung Health data (Max, 2026-07-17): HR and speed are written on
     # SEPARATE ~10 s clocks a few seconds apart — only 19 of 89 timestamps

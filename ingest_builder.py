@@ -520,7 +520,7 @@ def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
 # Bump when synth_streams or the distilled-detail derivation changes shape —
 # the marker in archive_meta makes the next build recompute every run's
 # derived artifacts (mirrors insight_metrics.METRICS_VERSION for metrics rows).
-INGEST_DISTILL_VERSION = 1
+INGEST_DISTILL_VERSION = 2  # 2: hr/v sample-and-hold (was: interleaved nulls)
 _DISTILL_MARKER = "ingest_distill_version"
 
 
@@ -561,8 +561,10 @@ def _resolve_activity_id(conn, session_uid: str) -> int:
 def synth_streams(run: dict):
     """detail_streams_json in the archive's columnar contract, synthesized from
     the banked samples (design D5): `t` = the union of HR/speed sample times,
-    `hr` / `v` aligned to it with nulls where a metric has no sample at that
-    instant, `d` = cumulative integration of the speed series (pause-capped like
+    `hr` / `v` aligned to it by sample-and-hold (Health Connect providers write
+    each metric on its own clock — Samsung Health's HR and speed run ~10 s apart,
+    so exact-match fill left every other point null and drew a dotted chart),
+    `d` = cumulative integration of the speed series (pause-capped like
     every other integration in this builder) normalized so its final value
     equals the banked distance. Metrics the source does not supply (cad, elev,
     gap, pwr, lat/lon, pc) are OMITTED keys — the run page's existing
@@ -591,11 +593,28 @@ def synth_streams(run: dict):
             last_v = v_at[axis[i]]
     scale = run["distanceM"] / cum if cum > 0 else 0.0
 
+    v_held = _hold(axis, v_at)
+    hr_held = _hold(axis, hr_at)
     out = {"t": [int(round(t)) for t in axis],
            "d": [int(round(v * scale)) for v in d_raw],
-           "v": [round(v_at[t], 2) if t in v_at else None for t in axis]}
+           "v": [round(v, 2) if v is not None else None for v in v_held]}
     if hrs:
-        out["hr"] = [int(round(hr_at[t])) if t in hr_at else None for t in axis]
+        out["hr"] = [int(round(h)) if h is not None else None for h in hr_held]
+    return out
+
+
+def _hold(axis: list, at: dict, cap: int = SAMPLE_GAP_CAP_S) -> list:
+    """Sample-and-hold along [axis]: every point carries the most recent real
+    reading, or None when none has been taken yet or the last one is staler
+    than [cap]. This is NOT interpolation — a held point repeats a measurement
+    that actually happened, and a gap longer than the cap (a sensor dropout,
+    a pause) still reads as honest absence."""
+    out = []
+    last_t = None
+    for t in axis:
+        if t in at:
+            last_t = t
+        out.append(at[last_t] if last_t is not None and t - last_t <= cap else None)
     return out
 
 
@@ -692,7 +711,9 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
             has_metrics = conn.execute(
                 "SELECT 1 FROM run_metrics WHERE activity_id = ? AND metrics_version = ?",
                 (aid, insight_metrics.METRICS_VERSION)).fetchone()
-            if changed or not has_metrics:
+            # metrics are derived FROM the synthesized streams, so a distill
+            # version bump has to invalidate them too, not just the streams
+            if stale or changed or not has_metrics:
                 mrow = {
                     "activity_id": aid,
                     "metrics_version": insight_metrics.METRICS_VERSION,

@@ -477,8 +477,8 @@ def test_streams_synthesis_axis_normalization_and_omitted_keys():
            "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(0, 101, 10)]}
     st = ib.synth_streams(run)
     assert st["t"] == list(range(0, 101, 5)), "union axis of HR + speed times"
-    assert st["v"][0] == 3.0 and st["v"][1] is None, \
-        "no speed sample at t=5 → null preserved, not interpolated"
+    assert st["v"][0] == 3.0 and st["v"][1] == 3.0, \
+        "t=5 carries no speed sample of its own — it holds the reading from t=0"
     assert st["hr"] == [150] * 21
     # raw integration reads 300 m; the device's own total (315) wins
     assert st["d"][-1] == 315 and st["d"][0] == 0
@@ -487,6 +487,46 @@ def test_streams_synthesis_axis_normalization_and_omitted_keys():
         "cad/elev/gap/pwr/lat/lon/pc are omitted keys, never fabricated"
     assert ib.synth_streams(RUNS[0]) is None, \
         "no speed series → no streams (no honest distance axis exists)"
+
+
+def test_streams_hold_last_reading_across_interleaved_series():
+    # Real Samsung Health data (Max, 2026-07-17): HR and speed are written on
+    # SEPARATE ~10 s clocks a few seconds apart — only 19 of 89 timestamps
+    # coincided. A union axis filled by exact match left every other point
+    # null: 70 of 159 in each series, which drew as a dotted chart and fed
+    # _metric_samples a half-empty series. Each axis point now carries the
+    # most recent real reading (sample-and-hold — never an invented value).
+    run = {"sessionUid": "off", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 100, "distanceM": 300, "avgHr": 150,
+           "sportType": "running", "source": "x",
+           "hrSamples": [{"tSec": t, "bpm": 140 + t // 10} for t in range(1, 100, 10)],
+           "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(7, 100, 10)]}
+    st = ib.synth_streams(run)
+    assert len(set(s["tSec"] for s in run["hrSamples"])
+               & set(s["tSec"] for s in run["speedSamples"])) == 0, "fixture is interleaved"
+    assert None not in st["hr"], f"HR is continuous across the axis: {st['hr']}"
+    # speed only starts at t=7 — points before the first reading stay honest
+    lead = st["t"].index(7)
+    assert st["v"][:lead] == [None] * lead, "nothing measured yet ≠ a value"
+    assert None not in st["v"][lead:], f"speed is continuous once measured: {st['v']}"
+    assert st["hr"][0] == 140 and st["hr"][st["t"].index(7)] == 140, \
+        "a held point repeats the last real reading, never an interpolated one"
+
+
+def test_streams_do_not_bridge_a_real_dropout():
+    # Holding is bounded: a gap longer than the pause cap is a real sensor
+    # dropout and must read as absence, not a flat line across the hole.
+    gap = ib.SAMPLE_GAP_CAP_S + 40
+    run = {"sessionUid": "drop", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 200, "distanceM": 600, "avgHr": 150,
+           "sportType": "running", "source": "x",
+           "hrSamples": [{"tSec": 0, "bpm": 150}, {"tSec": gap, "bpm": 152}],
+           "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(0, 201, 10)]}
+    st = ib.synth_streams(run)
+    held = st["t"].index(ib.SAMPLE_GAP_CAP_S) if ib.SAMPLE_GAP_CAP_S in st["t"] else None
+    assert held is not None and st["hr"][held] == 150, "held up to the cap"
+    beyond = [h for t, h in zip(st["t"], st["hr"]) if ib.SAMPLE_GAP_CAP_S < t < gap]
+    assert beyond and set(beyond) == {None}, f"dropout stays absent: {beyond}"
 
 
 def test_archived_distilled_equals_recent_runs_detail():

@@ -1,5 +1,6 @@
 package com.splits.healthspike
 
+import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
 import android.util.Log
@@ -42,6 +43,7 @@ class MainActivity : AppCompatActivity() {
         const val TAG = "SPLITS_BRIDGE"
         const val OUTPUT_FILE = "splits_spike_runs.json"
         const val DIAGNOSTIC_LOOKBACK_DAYS = 60L
+        const val CENSUS_LOOKBACK_DAYS = 400L
     }
 
     private lateinit var config: BridgeConfig
@@ -84,6 +86,8 @@ class MainActivity : AppCompatActivity() {
         }
         if (config.lastSyncSummary.isNotEmpty()) append("Last sync — ${config.lastSyncSummary}")
         if (!config.isConfigured()) append("Setup: fill in URL, token, backfill date, grant permissions, then Sync now.")
+
+        handleAdbTriggers(intent)
     }
 
     private fun buildUi(): ViewGroup {
@@ -111,6 +115,7 @@ class MainActivity : AppCompatActivity() {
         button("Grant Health Connect permissions") { onGrantClicked() }
         button("Sync now") { onSyncClicked() }
         button("Diagnostic dump (gate check)") { onDiagnosticClicked() }
+        button("Who writes to Health Connect? (census)") { onCensusClicked() }
         button("Reset delivery state") {
             config.resetSyncState()
             append("Delivery state cleared — next sync re-pushes the whole backfill window (server dedups by UID).")
@@ -140,6 +145,27 @@ class MainActivity : AppCompatActivity() {
             append("Config incomplete: need an http(s) URL, a token, and a YYYY-MM-DD backfill date.")
             false
         }
+    }
+
+    // A running instance gets the intent via onNewIntent, not onCreate — without
+    // this, a trigger silently does nothing until the app is force-stopped.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAdbTriggers(intent)
+    }
+
+    /**
+     * adb-triggerable actions — they run without touching the screen (the bridge
+     * holds background read permission), so a locked phone can be diagnosed:
+     *   adb shell am start -n com.splits.bridge/com.splits.healthspike.MainActivity --ez census true
+     * (also: --ez diagnostic true, --ez sync true)
+     */
+    private fun handleAdbTriggers(intent: Intent?) {
+        if (intent == null) return
+        if (intent.getBooleanExtra("census", false)) onCensusClicked()
+        if (intent.getBooleanExtra("diagnostic", false)) onDiagnosticClicked()
+        if (intent.getBooleanExtra("sync", false)) onSyncClicked()
     }
 
     private fun onGrantClicked() {
@@ -194,6 +220,39 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "diagnostic read failed", e)
                 append("ERROR: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Census: every record type × writing app in Health Connect. Answers the
+     * question the gate check can't — whether Samsung Health writes ANYTHING
+     * here, or nothing at all.
+     */
+    private fun onCensusClicked() {
+        lifecycleScope.launch {
+            val client = clientOrNull() ?: return@launch
+            append("Census: reading the last $CENSUS_LOOKBACK_DAYS days…")
+            try {
+                val now = Instant.now()
+                val rows = withContext(Dispatchers.IO) {
+                    RunReader(client).sourceCensus(now.minus(Duration.ofDays(CENSUS_LOOKBACK_DAYS)), now)
+                }
+                append("===== CENSUS BEGIN =====")
+                rows.forEach {
+                    append("CENSUS ${it.recordType} | ${it.pkg} | n=${it.count} | ${it.earliest} .. ${it.latest}" +
+                        if (it.pkg.startsWith(RunReader.SHEALTH_PKG)) "  <-- SAMSUNG HEALTH" else "")
+                }
+                val shealthTypes = rows.filter { it.pkg.startsWith(RunReader.SHEALTH_PKG) && it.count > 0 }
+                append(if (shealthTypes.isEmpty())
+                    "CENSUS VERDICT: Samsung Health has written NOTHING to Health Connect."
+                else
+                    "CENSUS VERDICT: Samsung Health writes ${shealthTypes.size} type(s): " +
+                        shealthTypes.joinToString { it.recordType })
+                append("===== CENSUS END =====")
+            } catch (e: Exception) {
+                Log.e(TAG, "census failed", e)
+                append("CENSUS ERROR: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }

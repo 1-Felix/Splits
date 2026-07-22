@@ -56,6 +56,15 @@ data class BridgeRun(
 
 data class RhrDay(val date: String, val bpm: Long)
 
+/** One (record type × writing app) tally from the Health Connect census. */
+data class CensusRow(
+    val recordType: String,
+    val pkg: String,
+    val count: Int,
+    val earliest: String,
+    val latest: String,
+)
+
 /**
  * All Health Connect reads for the bridge. Every per-session metric read is
  * filtered by the session's own dataOrigin (design D14, MANDATORY): multiple
@@ -152,6 +161,66 @@ class RunReader(private val client: HealthConnectClient) {
             byDate[r.time.atOffset(offset).toLocalDate().toString()] = r.beatsPerMinute
         }
         return byDate.map { (date, bpm) -> RhrDay(date, bpm) }
+    }
+
+    /**
+     * Which app has written what into Health Connect, per record type. The
+     * bridge only ever asks "is there a Samsung Health run?"; when the answer
+     * is no, this says whether Samsung Health has written ANYTHING at all —
+     * which separates "Samsung Health isn't talking to Health Connect" from
+     * "it talks, but writes no exercise". Reads every declared type; a type
+     * whose permission is missing reports as an ERROR row rather than
+     * sinking the whole census.
+     */
+    suspend fun sourceCensus(since: Instant, until: Instant): List<CensusRow> {
+        val range = TimeRangeFilter.between(since, until)
+        val types: List<Pair<String, KClass<out Record>>> = listOf(
+            "ExerciseSession" to ExerciseSessionRecord::class,
+            "HeartRate" to HeartRateRecord::class,
+            "RestingHeartRate" to RestingHeartRateRecord::class,
+            "Steps" to StepsRecord::class,
+            "Distance" to DistanceRecord::class,
+            "Speed" to SpeedRecord::class,
+            "TotalCalories" to TotalCaloriesBurnedRecord::class,
+            "ActiveCalories" to ActiveCaloriesBurnedRecord::class,
+            "ElevationGained" to ElevationGainedRecord::class,
+        )
+        val rows = mutableListOf<CensusRow>()
+        for ((label, kc) in types) {
+            try {
+                val byPkg = LinkedHashMap<String, MutableList<Instant>>()
+                for (r in readAll(kc, range)) {
+                    // IntervalRecord/InstantaneousRecord are internal to the
+                    // library, so the concrete types carry the timestamp
+                    val t = when (r) {
+                        is ExerciseSessionRecord -> r.startTime
+                        is HeartRateRecord -> r.startTime
+                        is RestingHeartRateRecord -> r.time
+                        is StepsRecord -> r.startTime
+                        is DistanceRecord -> r.startTime
+                        is SpeedRecord -> r.startTime
+                        is TotalCaloriesBurnedRecord -> r.startTime
+                        is ActiveCaloriesBurnedRecord -> r.startTime
+                        is ElevationGainedRecord -> r.startTime
+                        else -> Instant.EPOCH
+                    }
+                    // sessions are keyed by app AND exercise type: the gate only
+                    // counts types 56/57, so a mistyped run is invisible to it
+                    val key = if (r is ExerciseSessionRecord)
+                        "${r.metadata.dataOrigin.packageName} type=${r.exerciseType}"
+                    else r.metadata.dataOrigin.packageName
+                    byPkg.getOrPut(key) { mutableListOf() }.add(t)
+                }
+                if (byPkg.isEmpty()) rows.add(CensusRow(label, "(no data)", 0, "-", "-"))
+                byPkg.forEach { (pkg, times) ->
+                    rows.add(CensusRow(label, pkg, times.size,
+                        times.min().toString().take(19), times.max().toString().take(19)))
+                }
+            } catch (e: Exception) {
+                rows.add(CensusRow(label, "ERROR ${e.javaClass.simpleName}: ${e.message}", 0, "-", "-"))
+            }
+        }
+        return rows
     }
 
     /** Reads every page of [recordType] in [range] (default pageSize is 1000, so HR needs paging). */

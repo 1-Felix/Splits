@@ -390,6 +390,64 @@ track draws as a projected polyline (equirectangular, cos-latitude corrected,
 aspect preserved): the *shape* of the run, not a picture of a city. It works
 offline, prints, themes with the page, and costs ~9 KB.
 
+### The race course (`/course`)
+
+Everything else here looks backwards at what was run. `/course` looks forward at
+what the race will ask.
+
+**Pointing a race at a course.** Import the official route into Garmin Connect
+as a Course, then add its id to the plan:
+
+```js
+race: { name: "…", date: "2026-08-09", goalTime: "1:59:59",
+        courseId: 493447940 },     // ← the whole hook
+```
+
+That single optional field is the entire mechanism — no course registry, no
+import UI. A race without it leaves the feature completely dark: no fetch, no
+`courseLens` key in the contract, and no Course tab in the nav (which is opt-IN,
+the mirror of the Archive tab's opt-out). The next sync fetches the track
+through the credentials it already holds and derives everything below; the
+browser never contacts Garmin.
+
+**What the sync derives** (`course_lens.py`, schema v10 `courses` +
+`course_maps`, `map_tiles` reused unchanged):
+
+- **A smoothed profile.** Raw DEM elevation over ~18 m point spacing produces
+  ±20 % grades on flat ground, so every gradient here comes from a series
+  smoothed over a **distance** window (not a sample window — real point spacing
+  ranges 0.1–35 m). Both series are stored, so the pace model and the chart can
+  never disagree about the grade at a given kilometre.
+- **Decisive segments, detected.** Sustained climbs and descents fall out of the
+  algorithm; the page never hardcodes where a hill is, because the next race has
+  a different shape.
+- **A grade-cost model calibrated to you.** The Minetti (2002) energy-cost curve
+  supplies the shape — including the reversal that stops a steep descent being
+  priced as free speed — scaled by **one** damping scalar fitted from your own
+  archived `v`/`gap`/`elev` samples. On a 500-activity archive that is ~226,000
+  observations across ~61 grade bins. The fit residual is stored and displayed;
+  below a confidence threshold the model falls back to the uncalibrated curve
+  and says so rather than implying precision it hasn't earned.
+- **Parameters, not baked tables.** The document stores `perKm[].factor` and the
+  model constants, so a pace table for *any* target finish is arithmetic
+  (`course-plan.js` in the browser, `pace_table()` in Python — pinned to each
+  other by `test_course_page.mjs`). Adding a target costs no sync and no schema
+  change.
+
+**The cost of caution.** A runner declining descent benefit — for a healing
+tibia, say — doesn't get the flat-course time back: the climb is still paid for
+and the refund is waived. The page prices that choice at two thresholds
+(declining every descent vs only the steep ones) and renders the same target
+both ways, so an injury-driven pacing decision reads as a priced trade rather
+than an unexplained deviation from plan.
+
+**After the race**, the matching activity is aligned to the course in the
+**distance** domain — the two series share no clock, and the actual total is
+normalised to the course total first because GPS drifts by tens of metres over
+21 km. Time lost or gained is then attributed to climb, descent and flat, plus
+what happened in the kilometres *after* the descent, which is where a shin
+problem or spent quads announce themselves.
+
 ## How the AI coach fits in
 
 No live API runs in the page. The data layer **is** the interface:

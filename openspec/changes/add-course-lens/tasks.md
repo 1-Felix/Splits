@@ -49,13 +49,13 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 
 ## 6. Post-race overlay (useful from 2026-08-10)
 
-- [ ] 6.1 Activity matching: race date + run type + distance tolerance; no match → profile and pace plan only, silently
-- [ ] 6.2 Distance-domain alignment: normalise actual cumulative distance to the course total, then resample actual pace and HR onto the course grid
-- [ ] 6.3 Comparison metrics: per-km actual vs target delta, time attributed to climb / descent / flat, and pace behaviour in the 3 km AFTER the descent (the shin question)
-- [ ] 6.4 Overlay rendering on `/course`: elevation backdrop, actual pace and HR against target
-- [ ] 6.5 Tests: alignment with a deliberately drifted distance total, attribution arithmetic, unmatched-activity path
+- [x] 6.1 Activity matching: race date + run type + distance tolerance; no match → profile and pace plan only, silently
+- [x] 6.2 Distance-domain alignment: normalise actual cumulative distance to the course total, then resample actual pace and HR onto the course grid
+- [x] 6.3 Comparison metrics: per-km actual vs target delta, time attributed to climb / descent / flat, and pace behaviour in the 3 km AFTER the descent (the shin question)
+- [x] 6.4 Overlay rendering on `/course`: elevation backdrop, actual pace and HR against target
+- [x] 6.5 Tests: alignment with a deliberately drifted distance total, attribution arithmetic, unmatched-activity path
 
 ## 7. Close-out
 
-- [ ] 7.1 `README.md` / `CLAUDE_CODE_HANDOFF.md` note on the course hook and how to point a future race at its own `courseId`
-- [ ] 7.2 Full suite green (Python + `.mjs`), `openspec validate --strict`, NUC deploy verified against the live course
+- [x] 7.1 `README.md` / `CLAUDE_CODE_HANDOFF.md` note on the course hook and how to point a future race at its own `courseId`
+- [ ] 7.2 Full suite green (Python + `.mjs`) ✅ · `openspec validate --strict` ✅ · **NUC deploy still pending** — needs a push to main so CI builds `:latest`, then `docker compose pull && up -d` on the NUC; only then does the 08:00 sync produce a course document

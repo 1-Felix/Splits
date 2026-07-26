@@ -41,6 +41,7 @@ from garminconnect import Garmin
 import activity_archive
 import block_lens
 import coach_briefing
+import course_lens
 import insight_metrics
 import plan_compliance
 
@@ -1162,6 +1163,34 @@ def block_lens_step() -> None:
         conn.close()
 
 
+def course_lens_step(client) -> None:
+    """Acquire and derive the race course (add-course-lens design D1/D8).
+
+    Runs BEFORE build_data so `courseLens` can land in garmin-data.js, and only
+    ever inside safe(). Opt-in: a plan whose race carries no `courseId` makes
+    this a no-op, which is the normal state for most races."""
+    loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+    if not loaded:
+        return
+    race = (loaded[1] or {}).get("race") or {}
+    if not race.get("courseId"):
+        return
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        doc = course_lens.course_step(conn, client, race, log=log)
+        if doc:
+            model = doc.get("model") or {}
+            log(f"✓ course lens: {doc.get('courseName')} — "
+                f"{len(doc.get('perKm') or [])} km rows, "
+                f"{len(doc.get('segments') or [])} segments, model "
+                + (f"calibrated k={model.get('damping')} "
+                   f"(residual {model.get('residual')})"
+                   if model.get("calibrated") else
+                   f"UNCALIBRATED ({model.get('fallbackReason')})"))
+    finally:
+        conn.close()
+
+
 def briefing_step(data: dict) -> None:
     """Render coach-briefing.md into the data dir (coach-loop design D6).
     Runs strictly AFTER garmin-data.js is written and only ever inside
@@ -1467,6 +1496,13 @@ def verify_archive() -> int:
         log(f"  block lens : {bcov['blocks']} blocks ({bcov['complete']} complete)"
             + (f", latest race {bcov['latest_race']}" if bcov["latest_race"] else "")
             + (f", {bcov['stale']} stale-version rows" if bcov["stale"] else ""))
+
+        # Courses are opt-in (the plan's race names one or it does not), so an
+        # empty table is the normal state and never a failure.
+        krcov = activity_archive.course_coverage(conn, course_lens.COURSE_LENS_VERSION)
+        log(f"  course lens: {krcov['courses']} courses ({krcov['mapped']} with basemap)"
+            + (f", latest race {krcov['latest_race']}" if krcov["latest_race"] else "")
+            + (f", {krcov['stale']} stale-version rows" if krcov["stale"] else ""))
         try:
             ins = insight_metrics.assemble_insights(conn, TODAY)
             with_data = sum(1 for m in ins["efficiency"]["monthly"]
@@ -1599,6 +1635,7 @@ def main() -> None:
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")
     safe(block_lens_step, None, "block lens step")
+    safe(lambda: course_lens_step(client), None, "course lens step")
     sleep_raw: list = []
     data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)
     validate(data)

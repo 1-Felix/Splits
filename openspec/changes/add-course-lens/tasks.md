@@ -5,28 +5,28 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 
 ## 1. Schema + acquisition (Python)
 
-- [ ] 1.1 Schema v10 in `activity_archive.py`: additive `courses` and `course_maps` tables, idempotent guarded apply, `--verify-archive` aware of both
-- [ ] 1.2 `race.courseId` support in `plan-io.mjs` validation: optional integer, rejected when malformed, absent stays valid (extend `test_plan_validate.mjs`)
-- [ ] 1.3 New `course_lens.py` — acquisition: fetch `/course-service/course/{id}` via `connectapi`, skip when stored `update_date` is unchanged, no-op offline, fail-soft `_warn` so the sync never breaks
-- [ ] 1.4 Columnar point storage: `{d, lat, lon, elev}` rounded arrays following the `_STREAM_COLUMNS` precision convention; reject/flag a course whose points lack elevation beyond the degraded threshold
-- [ ] 1.5 Capture the real course (`493447940`, 1 196 points) into `fixtures/` as the test oracle
+- [x] 1.1 Schema v10 in `activity_archive.py`: additive `courses` and `course_maps` tables, idempotent guarded apply, `--verify-archive` aware of both
+- [x] 1.2 `race.courseId` support in `plan-io.mjs` validation: optional integer, rejected when malformed, absent stays valid (extend `test_plan_validate.mjs`)
+- [x] 1.3 New `course_lens.py` — acquisition: fetch `/course-service/course/{id}` via `connectapi`, skip when stored `update_date` is unchanged, no-op offline, fail-soft `_warn` so the sync never breaks
+- [x] 1.4 Columnar point storage: `{d, lat, lon, elev}` rounded arrays following the `_STREAM_COLUMNS` precision convention; reject/flag a course whose points lack elevation beyond the degraded threshold
+- [x] 1.5 Capture the real course (`493447940`, 1 196 points) into `fixtures/` as the test oracle
 
 ## 2. Profile derivation (Python)
 
-- [ ] 2.1 Distance-window elevation smoothing (window in metres, not samples — point spacing varies); store `elevSmooth` beside raw `elev`
-- [ ] 2.2 Per-kilometre grade table from the smoothed series; whole-km marks located by nearest stored distance
-- [ ] 2.3 Decisive-segment detection: sustained climbs and descents found by threshold over a distance window, not hand-listed — the km 12→13 wall and the km 14–15 drop must fall out of the algorithm on the fixture
-- [ ] 2.4 Totals: gain/loss from the smoothed series, reported beside Garmin's own figures with the source of each named (they disagree by ~40 %)
+- [x] 2.1 Distance-window elevation smoothing (window in metres, not samples — point spacing varies); store `elevSmooth` beside raw `elev`
+- [x] 2.2 Per-kilometre grade table from the smoothed series; whole-km marks located by nearest stored distance
+- [x] 2.3 Decisive-segment detection: sustained climbs and descents found by threshold over a distance window, not hand-listed — the km 12→13 wall and the km 14–15 drop must fall out of the algorithm on the fixture
+- [x] 2.4 Totals: gain/loss from the smoothed series, reported beside Garmin's own figures with the source of each named (they disagree by ~40 %)
 
 ## 3. Grade-cost calibration + pace model (Python)
 
-- [ ] 3.1 Analytic energy-cost curve, coefficients pinned against the published source in a comment; unit-tested at known gradients including the descent reversal
-- [ ] 3.2 Calibration: fit ONE damping scalar over archived `v`/`gap`/`elev` samples; grade binned, outliers and non-run activities excluded, minimum sample count enforced
-- [ ] 3.3 Report the fit residual; below a confidence threshold the model falls back to the uncalibrated curve and says so in the document
-- [ ] 3.4 Pace model output: stored curve identity + damping scalar + residual + flat-equivalent elevation cost — parameters, NOT baked per-target tables (design D5)
-- [ ] 3.5 `COURSE_LENS_VERSION`, recompute on bump, determinism test: same course + version → byte-identical document
-- [ ] 3.6 Wire into `sync_garmin.py` after the metrics engines; fail-soft
-- [ ] 3.7 Python tests (`test_course_lens.py`): smoothing, grade table, segment detection, curve values, calibration fit + residual, degraded-elevation path, determinism, fail-soft acquisition
+- [x] 3.1 Analytic energy-cost curve, coefficients pinned against the published source in a comment; unit-tested at known gradients including the descent reversal
+- [x] 3.2 Calibration: fit ONE damping scalar over archived `v`/`gap`/`elev` samples; grade binned, outliers and non-run activities excluded, minimum sample count enforced
+- [x] 3.3 Report the fit residual; below a confidence threshold the model falls back to the uncalibrated curve and says so in the document
+- [x] 3.4 Pace model output: stored curve identity + damping scalar + residual + flat-equivalent elevation cost — parameters, NOT baked per-target tables (design D5)
+- [x] 3.5 `COURSE_LENS_VERSION`, recompute on bump, determinism test: same course + version → byte-identical document
+- [x] 3.6 Wire into `sync_garmin.py` after the metrics engines; fail-soft
+- [x] 3.7 Python tests (`test_course_lens.py`): smoothing, grade table, segment detection, curve values, calibration fit + residual, degraded-elevation path, determinism, fail-soft acquisition
 
 ## 4. Data contract + archive API
 

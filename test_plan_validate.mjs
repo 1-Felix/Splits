@@ -71,6 +71,31 @@ r = await validatePlanText(`export const planData = { block: [ ${week("Wk 1", "n
 delete process.env.SPLITS_PLAN_VALIDATE_MS;
 assert.ok(!r.ok && /timed out/.test(r.error), "busy-loop plan times out: " + r.error);
 
+// race.courseId (add-course-lens) — optional, but malformed is rejected BEFORE a
+// write, so a coaching edit can never publish a plan the course engine can't read.
+const withRace = (race) =>
+  `export const planData = { race: ${race}, block: [ ${week("Wk 1", "null")} ] };`;
+
+r = await validatePlanText(withRace(`{ name:"R", date:"2026-08-09" }`));
+assert.ok(r.ok, "race without courseId stays valid: " + r.error);
+
+r = await validatePlanText(withRace(`{ name:"R", date:"2026-08-09", courseId: 493447940 }`));
+assert.ok(r.ok, "valid courseId accepted: " + r.error);
+
+r = await validatePlanText(withRace(`{ name:"R", date:"2026-08-09", courseId: null }`));
+assert.ok(r.ok, "explicit null courseId is 'absent', not malformed: " + r.error);
+
+for (const [label, val] of [["string", '"493447940"'], ["zero", "0"],
+                            ["float", "1.5"], ["negative", "-3"],
+                            ["boolean", "true"]]) {
+  r = await validatePlanText(withRace(`{ name:"R", date:"2026-08-09", courseId: ${val} }`));
+  assert.ok(!r.ok && /courseId/.test(r.error), `${label} courseId rejected`);
+}
+
+// a plan with no race at all must not trip the courseId check
+r = await validatePlanText(`export const planData = { block: [ ${week("Wk 1", "null")} ] };`);
+assert.ok(r.ok, "plan without a race object stays valid: " + r.error);
+
 // hashPlan: stable and content-sensitive
 assert.strictEqual(hashPlan("abc"), hashPlan("abc"), "hash is stable");
 assert.notStrictEqual(hashPlan("abc"), hashPlan("abd"), "hash differs on content change");

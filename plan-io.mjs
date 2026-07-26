@@ -25,6 +25,12 @@ try {
   const pd = m.planData;
   if (pd === undefined) throw new Error("missing a named 'export const planData' (the dashboard imports it by name)");
   if (!pd || !Array.isArray(pd.block) || pd.block.length === 0) throw new Error('planData.block must be a non-empty array');
+  // add-course-lens: the race may name its Garmin course. Optional — absent is
+  // valid and leaves the course feature dark — but a malformed id is rejected
+  // here so a coaching edit can never publish a plan the course engine cannot read.
+  const cid = pd.race && pd.race.courseId;
+  if (cid !== undefined && cid !== null && !(Number.isInteger(cid) && cid > 0))
+    throw new Error('race.courseId must be a positive integer when present');
   for (const w of pd.block) {
     for (const k of ['wk','label','mon','sun','phase','km','long','focus'])
       if (!(k in w)) throw new Error('block week ' + (w.wk || '?') + " missing '" + k + "'");

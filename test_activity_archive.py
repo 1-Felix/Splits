@@ -1087,11 +1087,18 @@ def test_schema_v8_adds_map_tables_additively():
     map_cols = {r[1] for r in conn.execute("PRAGMA table_info(activity_maps)")}
     assert {"activity_id", "z", "x0", "y0", "x1", "y1",
             "crop_x", "crop_y", "crop_size", "updated_at"} == map_cols
-    assert arch.get_meta(conn, "schema_version") == "9"
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
+    # v10 (add-course-lens) rides along additively: course tables appear, and
+    # every earlier table is untouched by their arrival.
+    assert {"courses", "course_maps"} <= tables
+    course_cols = {r[1] for r in conn.execute("PRAGMA table_info(courses)")}
+    assert {"course_id", "course_name", "race_date", "distance_m", "gain_m",
+            "loss_m", "bbox_json", "points_json", "lens_version", "lens_json",
+            "update_date", "fetched_at", "updated_at"} == course_cols
     # re-opening an already-current archive is a no-op, not an error
     conn.close()
     conn = arch.open_archive(d)
-    assert arch.get_meta(conn, "schema_version") == "9"
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     conn.close()
 
 
@@ -1106,7 +1113,7 @@ def test_schema_v9_adds_block_lens_additively():
     cols = {r[1] for r in conn.execute("PRAGMA table_info(block_lens)")}
     assert {"race_date", "race_name", "lens_version", "is_complete",
             "block_json", "updated_at"} == cols
-    assert arch.get_meta(conn, "schema_version") == "9"
+    assert arch.get_meta(conn, "schema_version") == str(arch.SCHEMA_VERSION)
     conn.close()
 
 

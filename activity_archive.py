@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -266,6 +266,50 @@ CREATE TABLE IF NOT EXISTS block_lens (
 """
 
 
+# Schema v10 (add-course-lens, design D2): the RACE COURSE — the planned route
+# the athlete will run, which is not an activity and does not come from Garmin's
+# activity feed. `courses` holds one row per Garmin course named by the plan's
+# `race.courseId`: `points_json` is the raw geo track reshaped to rounded
+# COLUMNS the way `detail_streams_json` holds a run's streams (d/lat/lon/elev
+# plus the derived elevSmooth), and `lens_json` is the derived document
+# (profile, decisive segments, calibrated pace model, race comparison) keyed by
+# COURSE_LENS_VERSION. Disposable-cache semantics like block_lens: points_json
+# is the source of truth, lens_json is always recomputable from it.
+# `course_maps` mirrors `activity_maps` for the route's basemap rect —
+# `map_tiles` is reused UNCHANGED, since it is already deduped globally by
+# (z, x, y), so a course's tiles simply join the shared pool.
+SCHEMA_V10_SQL = """
+CREATE TABLE IF NOT EXISTS courses (
+  course_id    INTEGER PRIMARY KEY,
+  course_name  TEXT NOT NULL,
+  race_date    TEXT,
+  distance_m   REAL NOT NULL,
+  gain_m       REAL,
+  loss_m       REAL,
+  bbox_json    TEXT NOT NULL,
+  points_json  TEXT NOT NULL,
+  lens_version INTEGER NOT NULL,
+  lens_json    TEXT NOT NULL,
+  update_date  TEXT,
+  fetched_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS course_maps (
+  course_id   INTEGER PRIMARY KEY REFERENCES courses(course_id),
+  z           INTEGER NOT NULL,
+  x0          INTEGER NOT NULL,
+  y0          INTEGER NOT NULL,
+  x1          INTEGER NOT NULL,
+  y1          INTEGER NOT NULL,
+  crop_x      REAL NOT NULL,
+  crop_y      REAL NOT NULL,
+  crop_size   REAL NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+"""
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -303,7 +347,8 @@ def _open(db: Path) -> sqlite3.Connection:
         _apply_schema_v7(conn)
         conn.executescript(SCHEMA_V8_SQL)
         conn.executescript(SCHEMA_V9_SQL)
-        # Forward-only migration: v1→…→v9 is purely additive (CREATE IF
+        conn.executescript(SCHEMA_V10_SQL)
+        # Forward-only migration: v1→…→v10 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -719,6 +764,108 @@ def block_lens_coverage(conn: sqlite3.Connection, version: int) -> dict:
         (version,)).fetchone()[0]
     return {"blocks": blocks, "complete": complete, "stale": stale,
             "latest_race": latest}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# race course (schema v10 — owned by the course-lens engine; see course_lens.py
+# for the acquisition and derivation that fill these tables)
+# ──────────────────────────────────────────────────────────────────────────────
+def upsert_course(conn: sqlite3.Connection, course_id: int, course_name: str,
+                  race_date: str | None, distance_m: float,
+                  gain_m: float | None, loss_m: float | None,
+                  bbox: dict, points: dict, lens_version: int, lens: dict,
+                  update_date: str | None, fetched_at: str | None = None) -> None:
+    """INSERT OR REPLACE keyed by course_id. `points` is the raw columnar track
+    (the source of truth) and `lens` the derived document (disposable, keyed by
+    lens_version) — they are written together so a stored course can never
+    carry a lens derived from different points. `fetched_at` is preserved by
+    the caller across a lens-only recompute, so it keeps meaning "when did we
+    last talk to Garmin about this course" rather than "when did we last
+    derive"."""
+    conn.execute(
+        "INSERT OR REPLACE INTO courses "
+        "(course_id, course_name, race_date, distance_m, gain_m, loss_m, "
+        " bbox_json, points_json, lens_version, lens_json, update_date, "
+        " fetched_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (course_id, course_name, race_date, distance_m, gain_m, loss_m,
+         json.dumps(bbox, ensure_ascii=False),
+         json.dumps(points, ensure_ascii=False),
+         lens_version, json.dumps(lens, ensure_ascii=False),
+         update_date, fetched_at or _now(), _now()))
+    conn.commit()
+
+
+def course_row(conn: sqlite3.Connection, course_id: int) -> tuple | None:
+    """(update_date, lens_version, fetched_at) — the acquisition driver's skip
+    check: an unchanged remote update stamp at the current lens version means
+    neither the fetch nor the derivation has anything to do."""
+    return conn.execute(
+        "SELECT update_date, lens_version, fetched_at "
+        "FROM courses WHERE course_id = ?", (course_id,)).fetchone()
+
+
+def course_points(conn: sqlite3.Connection, course_id: int) -> dict | None:
+    """The stored raw columnar track — what a lens recompute derives from."""
+    row = conn.execute("SELECT points_json FROM courses WHERE course_id = ?",
+                       (course_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def course_document(conn: sqlite3.Connection, course_id: int) -> dict | None:
+    """The stored lens document plus its promoted columns — what the archive
+    API serves verbatim and the data contract embeds."""
+    row = conn.execute(
+        "SELECT course_id, course_name, race_date, distance_m, gain_m, loss_m, "
+        "       bbox_json, lens_version, lens_json, update_date, updated_at "
+        "FROM courses WHERE course_id = ?", (course_id,)).fetchone()
+    if not row:
+        return None
+    doc = json.loads(row[8])
+    doc.update({"courseId": row[0], "courseName": row[1], "raceDate": row[2],
+                "distanceM": row[3], "gainM": row[4], "lossM": row[5],
+                "bbox": json.loads(row[6]), "lensVersion": row[7],
+                "updateDate": row[9], "updatedAt": row[10]})
+    return doc
+
+
+def course_coverage(conn: sqlite3.Connection, version: int) -> dict:
+    """The course section --verify-archive reports: stored courses, how many
+    carry a lens at the current version, and the newest race date."""
+    courses, latest = conn.execute(
+        "SELECT COUNT(*), MAX(race_date) FROM courses").fetchone()
+    stale = conn.execute(
+        "SELECT COUNT(*) FROM courses WHERE lens_version != ?",
+        (version,)).fetchone()[0]
+    mapped = conn.execute("SELECT COUNT(*) FROM course_maps").fetchone()[0]
+    return {"courses": courses, "stale": stale, "mapped": mapped,
+            "latest_race": latest}
+
+
+def upsert_course_map(conn: sqlite3.Connection, course_id: int, z: int,
+                      x0: int, y0: int, x1: int, y1: int,
+                      crop_x: float, crop_y: float, crop_size: float) -> None:
+    """Mirror of `upsert_activity_map` for a course's rect — written only once
+    the rect is COMPLETE in map_tiles, so a row's presence means the client can
+    draw the whole basemap (route-basemap design D6)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO course_maps "
+        "(course_id, z, x0, y0, x1, y1, crop_x, crop_y, crop_size, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (course_id, z, x0, y0, x1, y1, crop_x, crop_y, crop_size, _now()))
+    conn.commit()
+
+
+def course_map_row(conn: sqlite3.Connection, course_id: int) -> dict | None:
+    """The stored rect + crop for a course, or None when its tiles are not
+    complete — the page renders profile-only in that case."""
+    row = conn.execute(
+        "SELECT z, x0, y0, x1, y1, crop_x, crop_y, crop_size "
+        "FROM course_maps WHERE course_id = ?", (course_id,)).fetchone()
+    if not row:
+        return None
+    return {"z": row[0], "x0": row[1], "y0": row[2], "x1": row[3], "y1": row[4],
+            "cropX": row[5], "cropY": row[6], "cropSize": row[7]}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

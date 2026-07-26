@@ -184,6 +184,40 @@ class PaceTableTests(unittest.TestCase):
         table = cl.pace_table(self.lens, 7777)
         self.assertAlmostEqual(table[-1]["cumulativeSeconds"], 7777, delta=1.0)
 
+    def test_declining_the_descent_has_a_price(self):
+        """The cost of caution: refusing downhill speed does not refund the
+        climb, so the same target demands faster running everywhere else."""
+        optimal = cl.pace_table(self.lens, 7199)
+        declined = cl.pace_table(self.lens, 7199, decline_descents_steeper_than=-0.02)
+        self.assertAlmostEqual(declined[-1]["cumulativeSeconds"], 7199, delta=1.0)
+        by_km = {r["km"]: r for r in optimal}
+        dec_km = {r["km"]: r for r in declined}
+        # the -6.1 % kilometre is no longer run faster than level
+        self.assertLess(by_km[15]["paceSecPerKm"], dec_km[15]["paceSecPerKm"])
+        # ...and the flat kilometres must speed up to still hit the target
+        self.assertLess(dec_km[5]["paceSecPerKm"], by_km[5]["paceSecPerKm"])
+
+    def test_giveaway_is_reported_at_two_thresholds(self):
+        """Declining EVERY descent is not what an injured runner does — the
+        gently-downhill last 6 km are run normally. The steep figure is the
+        honest headline; the all-descents figure is strictly larger."""
+        steep = self.lens["steepDescentGiveawayFraction"]
+        every = self.lens["descentGiveawayFraction"]
+        self.assertIsNotNone(steep)
+        self.assertGreater(every, steep, "declining more descent must cost more")
+        # on this course: ~56 s steep, ~74 s if every descent is refused
+        self.assertAlmostEqual(steep * 7199, 56.0, delta=8.0)
+        self.assertAlmostEqual(every * 7199, 74.0, delta=10.0)
+        self.assertAlmostEqual(self.lens["steepDescentThreshold"], -0.02, places=6)
+
+    def test_a_flat_course_prices_caution_at_nothing(self):
+        flat = cl.build_lens(
+            {"d": [0, 1000, 2000], "lat": [0, 0, 0], "lon": [0, 0, 0],
+             "elev": [10, 10, 10], "elevSmooth": [10, 10, 10]},
+            {"damping": 0.33}, {})
+        self.assertAlmostEqual(flat["descentGiveawayFraction"], 0.0, places=6)
+        self.assertAlmostEqual(flat["steepDescentGiveawayFraction"], 0.0, places=6)
+
     def test_degenerate_targets_are_refused_not_divided_by(self):
         self.assertEqual(cl.pace_table(self.lens, 0), [])
         self.assertEqual(cl.pace_table(self.lens, -5), [])

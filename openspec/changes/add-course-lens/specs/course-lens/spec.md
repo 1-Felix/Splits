@@ -70,6 +70,21 @@ over that model, not separately precomputed tables.
 - **WHEN** a pace table is requested for a target finish that is not one of the presets
 - **THEN** it is computed from the stored parameters with no sync run and no schema change
 
+### Requirement: The cost of declining descent benefit is quantified
+The system SHALL express what the course costs when descent benefit is
+deliberately not taken, by clamping sub-unity pace factors to level running, and
+SHALL surface that alongside the model-optimal figure. The surface SHALL present
+both, so that a pacing decision made for injury reasons is shown as a priced
+trade rather than as an unexplained deviation from target.
+
+#### Scenario: Both readings are available for one target
+- **WHEN** a pace table is produced for a target finish
+- **THEN** the model-optimal and descent-declined variants are both computable, and their difference is reported
+
+#### Scenario: A flat course prices caution at nothing
+- **WHEN** no kilometre carries a pace factor below one
+- **THEN** the cost of declining descent benefit is zero
+
 ### Requirement: The derived document is deterministic and disposable
 The system SHALL produce a byte-identical document for the same stored course at
 the same engine version, and SHALL treat the document as a recomputable cache

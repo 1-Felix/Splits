@@ -24,6 +24,7 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 - [x] 3.2 Calibration: fit ONE damping scalar over archived `v`/`gap`/`elev` samples; grade binned, outliers and non-run activities excluded, minimum sample count enforced
 - [x] 3.3 Report the fit residual; below a confidence threshold the model falls back to the uncalibrated curve and says so in the document
 - [x] 3.4 Pace model output: stored curve identity + damping scalar + residual + flat-equivalent elevation cost — parameters, NOT baked per-target tables (design D5)
+- [x] 3.8 Descent-declined variant in the engine: `pace_table(..., decline_descent=True)` plus a target-independent `descentGiveawayFraction` in the document
 - [x] 3.5 `COURSE_LENS_VERSION`, recompute on bump, determinism test: same course + version → byte-identical document
 - [x] 3.6 Wire into `sync_garmin.py` after the metrics engines; fail-soft
 - [x] 3.7 Python tests (`test_course_lens.py`): smoothing, grade table, segment detection, curve values, calibration fit + residual, degraded-elevation path, determinism, fail-soft acquisition
@@ -43,6 +44,7 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 - [ ] 5.5 Sync-side tile acquisition for the course rect, reusing the `route-basemap` throttle and dedup policy
 - [ ] 5.6 Pace table: per-km grade, target pace, cumulative elapsed, decisive-km markers — computed in-page from the stored model parameters
 - [ ] 5.7 Target presets (goal / Garmin / Riegel) over the same model; the model's residual surfaced honestly rather than implying false precision
+- [ ] 5.9 **Cost of caution**: show the pace table both model-optimal and with descent benefit declined (factors clamped to 1.0), with the delta named — so an injury-driven pacing choice reads as a priced trade, not a deviation
 - [ ] 5.8 `test_course_page.mjs`: renders from the real fixture, chart and table present, degraded and no-course states, demo fallback asserted absent
 
 ## 6. Post-race overlay (useful from 2026-08-10)

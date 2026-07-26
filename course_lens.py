@@ -477,9 +477,23 @@ def build_lens(points: dict, model: dict, raw_totals: dict | None = None) -> dic
         total += row["lengthM"]
     cost_fraction = (weighted / total - 1.0) if total else None
 
+    # The cost of caution. A runner who declines descent benefit — for a healing
+    # tibia, say — does not get the flat-course time back: the climb is still
+    # paid for and the refund is waived. Target-independent, so it belongs to
+    # the COURSE, and it turns "I ran the downhill slowly" from an unexplained
+    # deviation into a number the athlete chose to spend.
+    #
+    # TWO figures, because they answer different questions. Declining EVERY
+    # descent is not what an injured runner actually does — a −0.5 % kilometre
+    # is run normally. `steep` therefore clamps only descents at or beyond the
+    # segment threshold, and it is the honest headline: on Sonthofen it is the
+    # km 14–15 drop and nothing else.
     coverage = elevation_coverage(points)
     return {
         "lensVersion": COURSE_LENS_VERSION,
+        "descentGiveawayFraction": _giveaway(per_km, weighted, 0.0),
+        "steepDescentGiveawayFraction": _giveaway(per_km, weighted, -SEGMENT_MIN_GRADE),
+        "steepDescentThreshold": -SEGMENT_MIN_GRADE,
         "degraded": coverage < MIN_ELEVATION_COVERAGE,
         "elevationCoverage": round(coverage, 4),
         "smoothHalfWindowM": SMOOTH_HALF_WINDOW_M,
@@ -493,16 +507,44 @@ def build_lens(points: dict, model: dict, raw_totals: dict | None = None) -> dic
     }
 
 
-def pace_table(lens: dict, target_seconds: float) -> list:
+def _giveaway(per_km: list, weighted: float, threshold: float):
+    """Fractional time cost of refusing descent benefit at or beyond `threshold`
+    (a negative grade; 0.0 means every descent). None when the profile carries
+    no usable factors."""
+    if not weighted:
+        return None
+    declined = 0.0
+    for row in per_km:
+        if row["factor"] is None:
+            continue
+        take = row["factor"]
+        if row["grade"] is not None and row["grade"] <= threshold:
+            take = max(take, 1.0)
+        declined += take * row["lengthM"]
+    return round((declined - weighted) / weighted, 5)
+
+
+def pace_table(lens: dict, target_seconds: float,
+               decline_descents_steeper_than: float | None = None) -> list:
     """Per-kilometre target paces for one finish time.
 
     Lives here so Python tests can assert it, but it is deliberately pure
     arithmetic over the stored document (design D5) — the page performs the
     identical computation client-side, which is what lets a target be any value
-    the athlete types rather than one of three baked presets."""
-    rows = [r for r in lens.get("perKm") or [] if r.get("factor")]
+    the athlete types rather than one of three baked presets.
+
+    `decline_descents_steeper_than` prices the cost of caution: on kilometres at
+    or beyond that (negative) grade, the factor is clamped to level running,
+    modelling a runner who refuses free speed where it would hurt. Pass 0.0 to
+    decline every descent. The target is still hit — the time simply has to come
+    from somewhere else, which is exactly the trade worth seeing."""
+    rows = [dict(r) for r in lens.get("perKm") or [] if r.get("factor")]
     if not rows or target_seconds <= 0:
         return []
+    if decline_descents_steeper_than is not None:
+        for r in rows:
+            if r["grade"] is not None and r["grade"] <= decline_descents_steeper_than:
+                r["factor"] = max(r["factor"], 1.0)
     weighted = sum(r["factor"] * r["lengthM"] for r in rows)
     base = target_seconds / weighted          # flat-equivalent seconds per metre
     out, elapsed = [], 0.0

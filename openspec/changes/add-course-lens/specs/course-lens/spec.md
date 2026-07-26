@@ -5,13 +5,14 @@
 ### Requirement: The race course is acquired at sync time, never by the browser
 The sync pipeline SHALL fetch the Garmin course named by `planData.race.courseId`
 through the credentials it already holds, and SHALL store its geo points as
-rounded columnar arrays. The browser SHALL NOT be the fetching party. The fetch
-SHALL be skipped when the stored copy's update stamp is unchanged, SHALL no-op
-when offline, and SHALL never break the sync on failure.
+rounded columnar arrays. The browser SHALL NOT be the fetching party. Re-derivation and
+re-storage SHALL be skipped when the stored copy's update stamp is unchanged at
+the current engine version, the step SHALL no-op when offline, and it SHALL
+never break the sync on failure.
 
-#### Scenario: A course is fetched once and then left alone
+#### Scenario: An unchanged course is not re-derived or rewritten
 - **WHEN** a sync runs and the stored course's update stamp matches the remote one
-- **THEN** no course request is made and the stored course and its derived document are retained
+- **THEN** the stored course and its derived document are retained unchanged, and neither the derivation nor the database write is repeated
 
 #### Scenario: A missing course id leaves the feature dark
 - **WHEN** the plan's race carries no `courseId`

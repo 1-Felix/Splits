@@ -29,8 +29,9 @@ record of how **this athlete** slows down on a grade.
 ## What Changes
 
 - **Course acquisition** in the deterministic sync: fetch the course named by
-  `race.courseId`, skip when the stored copy's `updateDate` is unchanged, no-op
-  offline. One HTTP call per sync, usually zero after the first.
+  `race.courseId` (one HTTP call per sync — the course service has no cheaper
+  metadata probe), then skip the derivation and the database write when the
+  returned `updateDate` matches what is stored. No-op offline.
 - **Course lens derivation** — a new engine step computing, per course:
   - *Profile* — smoothed elevation over distance, per-kilometre grade, and the
     decisive segments (sustained climbs and descents) detected rather than

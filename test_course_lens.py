@@ -218,10 +218,50 @@ class PaceTableTests(unittest.TestCase):
         self.assertAlmostEqual(flat["descentGiveawayFraction"], 0.0, places=6)
         self.assertAlmostEqual(flat["steepDescentGiveawayFraction"], 0.0, places=6)
 
+    def test_rows_carry_their_real_span_not_just_a_label(self):
+        """`km` is a LABEL. Marks snap to stored points, so km 1 ends at 991 m,
+        and the final row is a 113 m stub labelled 22 — reconstructing bounds
+        as km*1000 drifts by metres and puts the stub past the finish."""
+        table = cl.pace_table(self.lens, 7199)
+        for r in table:
+            self.assertIn("startM", r)
+            self.assertIn("endM", r)
+            self.assertAlmostEqual(r["endM"] - r["startM"], r["lengthM"], places=1)
+        self.assertAlmostEqual(table[0]["startM"], 0.0, places=1)
+        self.assertAlmostEqual(table[-1]["endM"], 21114.2, places=1)
+        self.assertTrue(table[-1]["partial"])
+        # the failure this guards: the label times 1000 is past the finish
+        self.assertGreater(table[-1]["km"] * 1000, table[-1]["endM"])
+
     def test_degenerate_targets_are_refused_not_divided_by(self):
         self.assertEqual(cl.pace_table(self.lens, 0), [])
         self.assertEqual(cl.pace_table(self.lens, -5), [])
         self.assertEqual(cl.pace_table({"perKm": []}, 7199), [])
+
+
+class ParityOracleTests(unittest.TestCase):
+    """The other half of the JS-mirrors-Python contract.
+
+    `course-plan.js` reimplements `pace_table()` so the browser can price any
+    target without a sync. test_course_parity.mjs asserts the JS matches
+    fixtures/course/sonthofen-pace-tables.json; this asserts PYTHON still does
+    too. Without both, the oracle could drift with one implementation and the
+    'pinned to each other' claim would quietly become false."""
+
+    def test_python_still_matches_the_shared_oracle(self):
+        oracle = json.loads(
+            (Path(__file__).parent / "fixtures" / "course" /
+             "sonthofen-pace-tables.json").read_text(encoding="utf-8"))
+        lens = json.loads(
+            (Path(__file__).parent / "fixtures" / "course" /
+             "sonthofen-lens.json").read_text(encoding="utf-8"))
+        for case in oracle["cases"]:
+            got = cl.pace_table(lens, case["target"], case["decline"])
+            self.assertEqual(len(got), len(case["rows"]),
+                             f"row count for target={case['target']}")
+            for i, (a, b) in enumerate(zip(got, case["rows"])):
+                self.assertEqual(a, b,
+                                 f"target={case['target']} decline={case['decline']} row {i}")
 
 
 class CalibrationTests(unittest.TestCase):
@@ -318,6 +358,49 @@ class AcquisitionTests(unittest.TestCase):
                                          {"courseId": 493447940}, log=lambda *_: None))
         conn.close()
 
+    def test_a_live_refetch_stamps_fetched_at_fresh(self):
+        """`fetched_at` means 'when did we last talk to Garmin'. Carrying the
+        stored value through a branch where a fetch DID happen freezes it at
+        the first-ever sync, so staleness checks report a course as unchecked
+        while it is in fact re-fetched nightly."""
+        conn = self._conn()
+        raw = load_raw()
+        cl.course_step(conn, self._Client(raw), {"courseId": 493447940}, log=lambda *_: None)
+        # backdate the stored row far enough that any fresh stamp differs
+        conn.execute("UPDATE courses SET fetched_at = ?, update_date = ? "
+                     "WHERE course_id = ?",
+                     ("2020-01-01T00:00:00+00:00", "old-stamp", 493447940))
+        conn.commit()
+        changed = dict(raw)
+        changed["updateDate"] = "2026-07-27T09:00:00.0"   # edited on Garmin
+        cl.course_step(conn, self._Client(changed), {"courseId": 493447940},
+                       log=lambda *_: None)
+        fetched_at = conn.execute(
+            "SELECT fetched_at FROM courses WHERE course_id = ?",
+            (493447940,)).fetchone()[0]
+        self.assertNotEqual(fetched_at, "2020-01-01T00:00:00+00:00",
+                            "a real fetch must move fetched_at")
+        conn.close()
+
+    def test_an_offline_rederive_preserves_fetched_at(self):
+        """The mirror of the above: no fetch happened, so the stamp must NOT
+        move — that is the branch the preservation logic exists for."""
+        conn = self._conn()
+        cl.course_step(conn, self._Client(load_raw()), {"courseId": 493447940},
+                       log=lambda *_: None)
+        conn.execute("UPDATE courses SET fetched_at = ?, lens_version = 0 "
+                     "WHERE course_id = ?",
+                     ("2020-01-01T00:00:00+00:00", 493447940))
+        conn.commit()
+        cl.course_step(conn, self._Client(boom=True), {"courseId": 493447940},
+                       log=lambda *_: None)
+        fetched_at = conn.execute(
+            "SELECT fetched_at FROM courses WHERE course_id = ?",
+            (493447940,)).fetchone()[0]
+        self.assertEqual(fetched_at, "2020-01-01T00:00:00+00:00",
+                         "an offline re-derive must not claim a fetch happened")
+        conn.close()
+
     def test_payload_without_geo_points_is_refused(self):
         conn = self._conn()
         self.assertIsNone(cl.course_step(conn, self._Client({"courseName": "x", "geoPoints": []}),
@@ -393,6 +476,111 @@ class CourseMapTests(unittest.TestCase):
         status = activity_archive.ensure_course_map(
             conn, 2, {"lat": [], "lon": []}, fetch=lambda *_: b"x", _sleep=lambda *_: None)
         self.assertEqual(status, "skipped")
+        conn.close()
+
+
+class RaceComparisonTests(unittest.TestCase):
+    """The comparison is DERIVED HERE, not in the browser — matching,
+    normalising and resampling establish what happened, which is the sync's
+    job (design D6)."""
+
+    @classmethod
+    def setUpClass(cls):
+        raw = load_raw()
+        cls.points = cl.distill_points(raw)
+        cls.lens = cl.build_lens(cls.points, {"damping": 0.33}, {})
+        cls.total = raw["distanceMeter"]
+
+    def _streams_on_plan(self, target=7199, penalty_km=None, penalty_s=0,
+                         drift_m=0):
+        """A synthetic race built FROM the plan, so any delta the comparison
+        reports is one this test deliberately introduced."""
+        plan = cl.pace_table(self.lens, target, -0.02)
+        actual_total = self.total + drift_m
+        scale = actual_total / self.total
+        d, t = [0.0], [0.0]
+        elapsed = 0.0
+        for r in plan:
+            elapsed += r["secondsForKm"] + (penalty_s if r["km"] == penalty_km else 0)
+            d.append(round(r["endM"] * scale, 1))
+            t.append(round(elapsed, 1))
+        return {"d": d, "t": t, "hr": [160] * len(d)}, plan
+
+    def test_alignment_recovers_the_plan_it_was_built_from(self):
+        streams, plan = self._streams_on_plan()
+        rows = cl.align_actual(self.lens["perKm"], streams, self.total)
+        self.assertEqual(len(rows), len(plan))
+        for r, p in zip(rows, plan):
+            self.assertAlmostEqual(r["actualSeconds"], p["secondsForKm"], delta=1.0,
+                                   msg=f"km {r['km']}")
+
+    def test_gps_drift_is_normalised_away(self):
+        """A 64 m error over 21 km must not walk the kilometre boundaries."""
+        streams, plan = self._streams_on_plan(drift_m=-64)
+        rows = cl.align_actual(self.lens["perKm"], streams, self.total)
+        for r, p in zip(rows, plan):
+            self.assertAlmostEqual(r["actualSeconds"], p["secondsForKm"], delta=1.5,
+                                   msg=f"km {r['km']} drifted")
+
+    def test_a_penalty_lands_on_the_kilometre_that_earned_it(self):
+        streams, _ = self._streams_on_plan(penalty_km=13, penalty_s=30)
+        rows = {r["km"]: r for r in cl.align_actual(self.lens["perKm"], streams, self.total)}
+        plan = {r["km"]: r for r in cl.pace_table(self.lens, 7199, -0.02)}
+        self.assertAlmostEqual(rows[13]["actualSeconds"] - plan[13]["secondsForKm"],
+                               30, delta=2)
+        self.assertAlmostEqual(rows[5]["actualSeconds"] - plan[5]["secondsForKm"],
+                               0, delta=2)
+
+    def test_the_finish_stub_is_included(self):
+        """The row whose label (22) times 1000 overshoots the course — the one
+        a km*1000 reconstruction silently drops."""
+        streams, _ = self._streams_on_plan()
+        rows = cl.align_actual(self.lens["perKm"], streams, self.total)
+        self.assertTrue(rows[-1]["partial"])
+        self.assertAlmostEqual(rows[-1]["endM"], self.total, places=1)
+        covered = rows[-1]["endM"] - rows[0]["startM"]
+        self.assertAlmostEqual(covered, self.total, delta=1.0,
+                               msg="the comparison must cover the whole course")
+
+    def test_a_short_recording_yields_no_row_it_cannot_support(self):
+        streams = {"d": [i * 100 for i in range(50)], "t": [i * 30 for i in range(50)]}
+        rows = cl.align_actual(self.lens["perKm"], streams, self.total)
+        # a 4.9 km recording normalised over a 21 km course still covers it,
+        # but a stream too short to interpolate at all yields nothing
+        self.assertTrue(rows is None or len(rows) <= len(self.lens["perKm"]))
+        self.assertIsNone(cl.align_actual(self.lens["perKm"], {"d": [0], "t": [0]}, self.total))
+
+    def test_the_shakeout_does_not_win_the_race(self):
+        conn = self._archive()
+        streams, _ = self._streams_on_plan()
+        ins = ("INSERT INTO activities (activity_id, start_time_local, type_key, name, "
+               "distance_m, duration_s, summary_json, detail_streams_json, "
+               "first_seen_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        conn.execute(ins, (1, "2026-08-09 07:00:00", "running", "Shakeout",
+                           2000, 700, "{}", json.dumps({"d": [0, 2000], "t": [0, 700]}), "x", "x"))
+        conn.execute(ins, (2, "2026-08-09 09:15:00", "running", "The Race",
+                           self.total - 60, streams["t"][-1], "{}", json.dumps(streams), "x", "x"))
+        conn.commit()
+        match = cl.find_race_activity(conn, "2026-08-09", self.total)
+        self.assertIsNotNone(match)
+        self.assertEqual(match[1], "The Race")
+        cmp = cl.build_comparison(conn, self.lens, "2026-08-09", self.total)
+        self.assertEqual(cmp["activityId"], 2)
+        self.assertEqual(len(cmp["perKm"]), len(self.lens["perKm"]))
+        conn.close()
+
+    def _archive(self):
+        """detail_streams_json arrives with the v6 migration, not the base
+        schema — an in-memory archive must apply it like a real one does."""
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(activity_archive.SCHEMA_SQL)
+        activity_archive._apply_schema_v6(conn)
+        return conn
+
+    def test_no_activity_means_no_comparison_not_an_error(self):
+        conn = self._archive()
+        self.assertIsNone(cl.build_comparison(conn, self.lens, "2026-08-09", self.total))
+        self.assertIsNone(cl.build_comparison(conn, self.lens, None, self.total))
         conn.close()
 
 

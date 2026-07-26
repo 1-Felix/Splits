@@ -43,12 +43,22 @@ export function paceTable(lens, targetSeconds, declineSteeperThan = null) {
     elapsed += secs;
     return {
       km: r.km,
+      // The row's REAL span, carried through. `km` is a label: kilometre marks
+      // snap to the nearest stored point, so km 1 can end at 991 m, and the
+      // final row is a stub whose label (22) times 1000 lands far past the
+      // finish. Anything reconstructing bounds from the label drifts by metres
+      // and drops the stub entirely.
+      startM: r.startM,
+      endM: r.endM,
       partial: !!r.partial,
       grade: r.grade,
       lengthM: r.lengthM,
-      paceSecPerKm: base * r.factor * 1000,
-      secondsForKm: secs,
-      cumulativeSeconds: elapsed,
+      // Rounded to 1 dp exactly as course_lens.pace_table() does. The mirror
+      // claim is only worth making if the two agree to the last digit, and
+      // test_course_parity.mjs holds both to a shared fixture.
+      paceSecPerKm: Math.round(base * r.factor * 1000 * 10) / 10,
+      secondsForKm: Math.round(secs * 10) / 10,
+      cumulativeSeconds: Math.round(elapsed * 10) / 10,
     };
   });
 }
@@ -56,26 +66,47 @@ export function paceTable(lens, targetSeconds, declineSteeperThan = null) {
 // The flat-equivalent base pace a target implies — the number the athlete
 // actually holds on level ground, which is NOT the average pace once the course
 // has taken its cut.
-export function basePaceSecPerKm(lens, targetSeconds) {
-  const t = paceTable(lens, targetSeconds);
-  if (!t.length) return null;
-  const flat = t.find((r) => r.grade != null && Math.abs(r.grade) < 0.002);
-  return flat ? flat.paceSecPerKm
-              : targetSeconds / ((lens.distanceM || 0) / 1000);
+//
+// Computed the way the pace table itself derives it: target ÷ the cost-weighted
+// profile. Picking a "near-flat" kilometre's pace instead would be off by
+// whatever grade that kilometre still carries (0.7 s/km on this course, enough
+// to flip the displayed 5:40 to 5:41), and falling back to distance-average
+// pace would return precisely the quantity this comment says it is not.
+export function basePaceSecPerKm(lens, targetSeconds, declineSteeperThan = null) {
+  const rows = ((lens && lens.perKm) || []).filter((r) => r && r.factor);
+  if (!rows.length || !(targetSeconds > 0)) return null;
+  let weighted = 0;
+  for (const r of rows) {
+    let f = r.factor;
+    if (declineSteeperThan != null && r.grade != null && r.grade <= declineSteeperThan) {
+      f = Math.max(f, 1);
+    }
+    weighted += f * r.lengthM;
+  }
+  if (!(weighted > 0)) return null;
+  return (targetSeconds / weighted) * 1000;
 }
 
-// What declining descent benefit costs against one target, in seconds. Returns
-// null when the course has no descent to decline.
+// What declining descent benefit costs against one target, in seconds.
+//
+// Both tables hit the same finish by construction, so the cost cannot be read
+// off their finish times. It is the extra time the DECLINED profile would take
+// if it held the optimal plan's base pace — i.e. the ratio of the two weighted
+// profiles. Computed from `perKm` at the threshold actually passed, rather than
+// read off the course-level fraction, which is baked at one fixed threshold and
+// would return the same answer for every argument.
 export function cautionCostSeconds(lens, targetSeconds, declineSteeperThan = -0.02) {
-  const optimal = paceTable(lens, targetSeconds);
-  if (!optimal.length) return null;
-  const declined = paceTable(lens, targetSeconds, declineSteeperThan);
-  if (!declined.length) return null;
-  // Both tables hit the same finish, so the cost is expressed as the extra time
-  // the DECLINED plan would take if it kept the optimal plan's base pace.
-  const frac = lens.steepDescentGiveawayFraction;
-  if (frac == null) return null;
-  return frac * targetSeconds;
+  const rows = ((lens && lens.perKm) || []).filter((r) => r && r.factor);
+  if (!rows.length || !(targetSeconds > 0)) return null;
+  let optimal = 0, declined = 0;
+  for (const r of rows) {
+    optimal += r.factor * r.lengthM;
+    const take = (r.grade != null && r.grade <= declineSteeperThan)
+      ? Math.max(r.factor, 1) : r.factor;
+    declined += take * r.lengthM;
+  }
+  if (!(optimal > 0)) return null;
+  return targetSeconds * (declined / optimal - 1);
 }
 
 // mm:ss for a pace or a duration under an hour; h:mm:ss beyond.

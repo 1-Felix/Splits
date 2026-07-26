@@ -285,7 +285,8 @@ class Component extends DCLogic {
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
-    const nav = this.tb() ? this.tb().navModel('archive', { archive: this.state.archiveAvail !== false }) : [];
+    const nav = this.tb() ? this.tb().navModel('archive', { archive: this.state.archiveAvail !== false,
+      course: !!(this.state.data && this.state.data.courseLens) }) : [];
 
     // sync pill — only when the static data file is present to anchor
     // freshness, and never on an ingest-fed instance (no Garmin to sync)

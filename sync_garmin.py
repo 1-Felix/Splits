@@ -1651,10 +1651,11 @@ def main() -> None:
         run_wellness_backfill(client, since=args.since)
         return
 
-    # Order per insight-metrics design D8 + coach-loop design D6: archive,
-    # metrics, compliance and the block lens run BEFORE build_data so insights
-    # include today's run and the compliance + blockLens blocks land in the
-    # contract; the briefing renders strictly AFTER the write. Every step is
+    # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens
+    # D8): archive, metrics, compliance, the block lens and the course lens all
+    # run BEFORE build_data so insights include today's run and the compliance,
+    # blockLens and courseLens blocks land in the contract; the briefing renders
+    # strictly AFTER the write. Every step is
     # safe()-wrapped, so garmin-data.js is written with every existing key
     # even if all of them fail.
     acts = load_activities(client)

@@ -160,7 +160,7 @@ part the principle exists to protect.
 HR is deliberately **not** modelled (see Non-Goals): a computed cap would be
 wrong exactly where it matters.
 
-### D6 — The overlay aligns on distance, not time
+### D6 — The overlay aligns on distance, not time — and aligns in the SYNC
 
 Course and activity both carry cumulative distance, so the actual run resamples
 onto the course's distance grid. Actual distance is **normalised** first — scaled
@@ -170,6 +170,21 @@ kilometres.
 
 *Why not time:* the two series share no time base at all. Distance is the only
 axis on which "km 13" means the same thing in both.
+
+*Where it runs:* in Python, at sync time, stored on the document. Matching an
+activity, normalising its axis and resampling it establish **what happened** —
+that is derivation, and the ROADMAP puts derivation in the deterministic sync.
+The D5 carve-out that lets the browser evaluate a stored cost curve is scoped to
+the profile, the calibration and the residual; it does not stretch to cover
+this. What is stored is deliberately target-independent — the seconds actually
+spent on each kilometre — so deltas against a chosen target stay arithmetic the
+page performs, and switching target still costs no sync.
+
+*Boundaries come from the row, never from its label.* Kilometre marks snap to
+the nearest stored point (km 1 ends at 991 m on this course) and the final row
+is a 113 m stub labelled "km 22". Reconstructing bounds as `km × 1000` drifts by
+metres and puts the stub past the finish, dropping the closing stretch from
+every attribution — so `startM`/`endM` are carried through the pace table.
 
 ### D7 — Activity matching is automatic and silent when it fails
 

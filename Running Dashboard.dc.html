@@ -745,7 +745,9 @@ class Component extends DCLogic {
     for (const k in tv) rootStyle['--' + k] = tv[k];
     Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
-    const nav = this.tb() ? this.tb().navModel('cockpit', { archive: this.state.archiveAvail !== false }) : [];
+    const nav = this.tb() ? this.tb().navModel('cockpit', { archive: this.state.archiveAvail !== false,
+      // the Course tab is opt-IN: offer it only when this instance has a course
+      course: !!(this.state.data && this.state.data.courseLens) }) : [];
 
     // race countdown — driven by the live local date (displayToday), not the
     // baked telemetry date, so it stays correct between syncs.

@@ -1,19 +1,20 @@
 // test_course_overlay.mjs — the post-race overlay on /course (add-course-lens 6.5).
 //
-// Builds a synthetic race from the plan ITSELF plus a known perturbation — the
-// runner executes every kilometre exactly on target except the climb, which
-// costs a deliberate +30 s — then asserts the page attributes that time to the
-// climb and not to the flat or the descent. The actual run's total distance is
-// deliberately WRONG by 64 m so the distance-domain normalisation (design D6)
-// is exercised rather than assumed: without it, every kilometre boundary would
-// drift and the climb's cost would smear across two rows.
+// Builds a synthetic race from the plan ITSELF plus two known perturbations —
+// +30 s on the climb and +12 s on the final partial kilometre — then asserts
+// the page attributes each to the right terrain. The finish penalty is the
+// load-bearing one: it only shows up if the 113 m stub row survives, which a
+// km*1000 boundary rebuild silently drops.
+//
+// Matching, distance normalisation and resampling are NOT tested here — they
+// moved into the sync (design D6) and are covered by test_course_lens.py's
+// RaceComparisonTests. What is left for the page is deltas and attribution.
 import assert from "node:assert";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 import { chromium } from "playwright";
 import { paceTable } from "./course-plan.js";
 
@@ -27,59 +28,36 @@ const LENS = JSON.parse(await readFile(join(ROOT, "fixtures/course/sonthofen-len
 const RACE_DATE = "2026-07-20";
 const TARGET = 7199;                 // 1:59:59
 const CLIMB_PENALTY_S = 30;
+const FINISH_PENALTY_S = 12;   // on the partial stub — the row a km*1000 rebuild drops
 const ACTUAL_TOTAL_M = 21050;        // GPS drift vs the course's 21114.2
 
-// ── synthesise the run ───────────────────────────────────────────────────────
-// Per-kilometre durations = the declined-descent plan, plus the penalty on the
-// steepest climb kilometre. Sampled every 100 m, interpolating inside each km.
-function buildStreams() {
+// ── synthesise the race, as the SYNC would have stored it ───────────────────
+// The comparison now lives on the document (design D6): matching, normalising
+// and resampling happen in Python at sync time and are covered by
+// test_course_lens.py. What is left for the page — and what this file tests —
+// is turning per-kilometre actuals into deltas against a chosen target and
+// attributing them to terrain.
+function buildComparison() {
   const plan = paceTable(LENS, TARGET, LENS.steepDescentThreshold ?? -0.02);
   const climbKm = plan.reduce((a, r) => ((r.grade ?? 0) > (a.grade ?? 0) ? r : a));
-  const edges = [{ courseM: 0, t: 0 }];
-  let t = 0;
-  for (const r of plan) {
-    t += r.secondsForKm + (r.km === climbKm.km ? CLIMB_PENALTY_S : 0);
-    edges.push({ courseM: r.km * 1000 <= LENS.distanceM ? r.km * 1000 : LENS.distanceM, t });
-  }
-  const scale = ACTUAL_TOTAL_M / LENS.distanceM;   // the run's own, drifted axis
-  const d = [], time = [];
-  for (let m = 0; m <= LENS.distanceM; m += 100) {
-    let i = 1;
-    while (i < edges.length - 1 && edges[i].courseM < m) i++;
-    const a = edges[i - 1], b = edges[i];
-    const frac = b.courseM === a.courseM ? 0 : (m - a.courseM) / (b.courseM - a.courseM);
-    d.push(Math.round(m * scale));
-    time.push(Math.round(a.t + (b.t - a.t) * frac));
-  }
-  d.push(ACTUAL_TOTAL_M);
-  time.push(Math.round(edges[edges.length - 1].t));
-  return { d, t: time, hr: d.map(() => 165), climbKm: climbKm.km };
+  const finishKm = plan[plan.length - 1];
+  let total = 0;
+  const perKm = plan.map((r) => {
+    const penalty = (r.km === climbKm.km ? CLIMB_PENALTY_S : 0)
+                  + (r.km === finishKm.km ? FINISH_PENALTY_S : 0);
+    const actual = r.secondsForKm + penalty;
+    total += actual;
+    return { km: r.km, startM: r.startM, endM: r.endM, grade: r.grade,
+             partial: r.partial, actualSeconds: Math.round(actual * 10) / 10, hr: 165 };
+  });
+  return { comparison: { activityId: 777, name: "Allgäu Panorama Halbmarathon",
+                         activityDistanceM: ACTUAL_TOTAL_M,
+                         normalisedBy: LENS.distanceM / ACTUAL_TOTAL_M,
+                         totalSeconds: Math.round(total * 10) / 10, perKm },
+           climbKm: climbKm.km, finishKm: finishKm.km };
 }
 
-const S = buildStreams();
-
-function makeArchive(dir) {
-  const db = new DatabaseSync(join(dir, "activity-archive.db"));
-  db.exec(`CREATE TABLE activities (
-    activity_id INTEGER PRIMARY KEY, start_time_local TEXT NOT NULL, type_key TEXT,
-    name TEXT, distance_m REAL, duration_s REAL, avg_hr INTEGER, max_hr INTEGER,
-    avg_cadence REAL, elevation_gain_m REAL, summary_json TEXT NOT NULL,
-    detail_json TEXT, detail_distilled_json TEXT, detail_streams_json TEXT)`);
-  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
-      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
-      summary_json, detail_streams_json)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    777, RACE_DATE + " 09:15:00", "running", "Allgäu Panorama Halbmarathon",
-    ACTUAL_TOTAL_M, S.t[S.t.length - 1], 168, 182, 162, 197, "{}",
-    JSON.stringify({ d: S.d, t: S.t, hr: S.hr }));
-  // a decoy on the same day: a short run that must NOT be picked as the race
-  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
-      distance_m, duration_s, summary_json, detail_streams_json)
-    VALUES (?,?,?,?,?,?,?,?)`).run(
-    778, RACE_DATE + " 07:00:00", "running", "Shakeout", 2000, 700, "{}",
-    JSON.stringify({ d: [0, 1000, 2000], t: [0, 350, 700] }));
-  db.close();
-}
+const BUILT = buildComparison();
 
 const garminData = () => {
   const d = {
@@ -88,7 +66,7 @@ const garminData = () => {
     predictions: { halfNow: "2:01:48", halfGoal: "1:59:59" },
     personalBests: { tenK: "1:00:57", half: "2:19:07" },
     recentRuns: [], history: { monthly: [], weekly: [] }, heatmapKm: {},
-    courseLens: LENS,
+    courseLens: { ...LENS, comparison: BUILT.comparison },
   };
   return `export const garminData = ${JSON.stringify(d)};\nexport default garminData;\n`;
 };
@@ -125,7 +103,6 @@ async function waitReady(errRef) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-courseovl-"));
 await writeFile(join(dataDir, "garmin-data.js"), garminData());
 await writeFile(join(dataDir, "plan-data.js"), planData);
-makeArchive(dataDir);
 const server = startServer(dataDir);
 
 let browser;
@@ -160,14 +137,19 @@ try {
   assert.ok(Math.abs(climb - CLIMB_PENALTY_S) <= 6,
     `the climb carries the ${CLIMB_PENALTY_S}s penalty, got ${climb}`);
   assert.ok(Math.abs(desc) <= 6, `the descents are ~neutral, got ${desc}`);
-  assert.ok(Math.abs(flat) <= 8, `the flat is ~neutral, got ${flat}`);
-  assert.ok(Math.abs(overall - CLIMB_PENALTY_S) <= 10,
-    `overall ≈ the penalty, got ${overall}`);
+  // the finish stub is flat terrain, so its penalty lands in the flat bucket —
+  // and its presence there is exactly what proves the stub was not dropped
+  assert.ok(Math.abs(flat - FINISH_PENALTY_S) <= 8,
+    `the flat bucket carries the finish penalty, got ${flat}`);
+  assert.ok(Math.abs(overall - (CLIMB_PENALTY_S + FINISH_PENALTY_S)) <= 10,
+    `overall ≈ both penalties (${CLIMB_PENALTY_S}+${FINISH_PENALTY_S}), got ${overall} — ` +
+    `a dropped finish stub would read ~${CLIMB_PENALTY_S}`);
 
-  // ── the right activity was matched ───────────────────────────────────────
+  // ── the stored comparison identifies its run ─────────────────────────────
+  // (picking the RIGHT run out of a race-day shakeout is the sync's job and is
+  // asserted in test_course_lens.py — asserting it here would be vacuous.)
   step = "matching";
   assert.ok(/Allgäu Panorama Halbmarathon/.test(text), "the race run is named");
-  assert.ok(!/Shakeout/.test(text), "the 2 km decoy on the same day is not the race");
 
   // ── the aftermath readout (the shin question) ────────────────────────────
   step = "aftermath";

@@ -272,7 +272,8 @@ CREATE TABLE IF NOT EXISTS block_lens (
 # `race.courseId`: `points_json` is the raw geo track reshaped to rounded
 # COLUMNS the way `detail_streams_json` holds a run's streams (d/lat/lon/elev
 # plus the derived elevSmooth), and `lens_json` is the derived document
-# (profile, decisive segments, calibrated pace model, race comparison) keyed by
+# (profile, decisive segments, calibrated pace model, and — once the race has
+# been run — the target-INDEPENDENT race comparison) keyed by
 # COURSE_LENS_VERSION. Disposable-cache semantics like block_lens: points_json
 # is the source of truth, lens_json is always recomputable from it.
 # `course_maps` mirrors `activity_maps` for the route's basemap rect —

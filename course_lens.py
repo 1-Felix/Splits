@@ -508,6 +508,137 @@ def build_lens(points: dict, model: dict, raw_totals: dict | None = None) -> dic
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# race comparison (design D6/D7) — derived HERE, at sync time
+# ──────────────────────────────────────────────────────────────────────────────
+# Matching an activity to a course, normalising its distance axis and resampling
+# it onto the course grid is DERIVATION, not rendering: it establishes what
+# happened. The ROADMAP's rule puts that in the deterministic sync, and the D5
+# carve-out that lets the browser evaluate a stored cost curve does not stretch
+# to cover it.
+#
+# What is stored is deliberately TARGET-INDEPENDENT — the seconds the athlete
+# actually spent on each kilometre of the course. Deltas against a chosen target
+# stay arithmetic the page performs, exactly like the pace table, so switching
+# target still costs no sync.
+RACE_MATCH_DISTANCE_TOL = 0.08          # ±8 % of the course distance
+# Slack at the finish boundary, in metres — absorbs the centimetre-scale
+# disagreement between a course's reported length and its own last point.
+END_TOLERANCE_M = 5.0
+
+
+def find_race_activity(conn, race_date: str, course_distance_m: float) -> tuple | None:
+    """(activity_id, name, distance_m, streams) for the run that IS the race, or
+    None. A shakeout on race morning must not win, so candidates are filtered by
+    distance tolerance first and the closest match takes it."""
+    if not race_date or not course_distance_m:
+        return None
+    rows = conn.execute(
+        "SELECT activity_id, name, distance_m, detail_streams_json "
+        "FROM activities "
+        "WHERE substr(start_time_local, 1, 10) = ? AND type_key = 'running' "
+        "  AND distance_m IS NOT NULL AND detail_streams_json IS NOT NULL",
+        (race_date,)).fetchall()
+    best = None
+    for aid, name, dist, raw in rows:
+        if abs(dist - course_distance_m) / course_distance_m > RACE_MATCH_DISTANCE_TOL:
+            continue
+        gap = abs(dist - course_distance_m)
+        if best is None or gap < best[0]:
+            best = (gap, aid, name, dist, raw)
+    if not best:
+        return None
+    try:
+        streams = json.loads(best[4])
+    except Exception:  # noqa: BLE001 — a corrupt stream means "no comparison"
+        return None
+    return (best[1], best[2], best[3], streams)
+
+
+def align_actual(per_km: list, streams: dict, course_distance_m: float) -> list | None:
+    """Resample a run onto the course's kilometre grid.
+
+    Pure over its inputs. The run's own distance axis is NORMALISED to the
+    course total first: GPS drifts by tens of metres over 21 km, and without
+    that scaling every kilometre boundary walks and a decisive kilometre's cost
+    smears across two rows.
+
+    Each row uses its OWN startM/endM — never km*1000 — because kilometre marks
+    snap to stored points and the final row is a stub."""
+    d, t = streams.get("d") or [], streams.get("t") or []
+    n = min(len(d), len(t))
+    if n < 10 or not course_distance_m:
+        return None
+    total = d[n - 1]
+    if not total:
+        return None
+    scale = course_distance_m / total
+    hr = streams.get("hr") or []
+
+    def at(course_m):
+        want = course_m / scale
+        if want <= d[0]:
+            return t[0], (hr[0] if hr else None)
+        if want > d[n - 1]:
+            # Sub-metre overshoot at the finish is arithmetic, not a short
+            # recording: Garmin's `distanceMeter` (21114.19) and the last stored
+            # point (21114.20) disagree by a centimetre on the real course, and
+            # without this tolerance the normalisation pushes the final row one
+            # hundredth of a metre past the axis and the finish stretch vanishes
+            # from the comparison. A genuinely short run still fails the check.
+            if want - d[n - 1] <= END_TOLERANCE_M:
+                return t[n - 1], (hr[n - 1] if len(hr) > n - 1 else None)
+            return None, None
+        lo, hi = 0, n - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if d[mid] < want:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo == 0:
+            return t[0], (hr[0] if hr else None)
+        d0, d1, t0, t1 = d[lo - 1], d[lo], t[lo - 1], t[lo]
+        frac = 0.0 if d1 == d0 else (want - d0) / (d1 - d0)
+        return t0 + (t1 - t0) * frac, (hr[lo] if lo < len(hr) else None)
+
+    out = []
+    for r in per_km:
+        a0, _ = at(r["startM"])
+        a1, hr1 = at(r["endM"])
+        if a0 is None or a1 is None:
+            continue
+        out.append({"km": r["km"], "startM": r["startM"], "endM": r["endM"],
+                    "grade": r["grade"], "partial": r.get("partial", False),
+                    "actualSeconds": round(a1 - a0, 1),
+                    "hr": hr1})
+    return out or None
+
+
+def build_comparison(conn, lens: dict, race_date: str | None,
+                     course_distance_m: float) -> dict | None:
+    """The stored race comparison: what the athlete actually spent per kilometre
+    of the course. Target-independent by design — the page turns it into deltas
+    against whichever target is selected."""
+    if not race_date:
+        return None
+    match = find_race_activity(conn, race_date, course_distance_m)
+    if not match:
+        return None
+    activity_id, name, distance_m, streams = match
+    rows = align_actual(lens.get("perKm") or [], streams, course_distance_m)
+    if not rows:
+        return None
+    return {
+        "activityId": activity_id,
+        "name": name,
+        "activityDistanceM": round(distance_m, 1),
+        "normalisedBy": round(course_distance_m / distance_m, 6),
+        "totalSeconds": round(sum(r["actualSeconds"] for r in rows), 1),
+        "perKm": rows,
+    }
+
+
 TRACK_MAX_POINTS = 320
 
 
@@ -562,13 +693,18 @@ def pace_table(lens: dict, target_seconds: float,
     decline every descent. The target is still hit — the time simply has to come
     from somewhere else, which is exactly the trade worth seeing."""
     rows = [dict(r) for r in lens.get("perKm") or [] if r.get("factor")]
-    if not rows or target_seconds <= 0:
+    # `not (x > 0)` rather than `x <= 0`: NaN compares False to everything, so
+    # `nan <= 0` is False and a NaN target would otherwise produce a full table
+    # of NaN paces. This matches course-plan.js, which guards the same way.
+    if not rows or not (target_seconds > 0):
         return []
     if decline_descents_steeper_than is not None:
         for r in rows:
             if r["grade"] is not None and r["grade"] <= decline_descents_steeper_than:
                 r["factor"] = max(r["factor"], 1.0)
     weighted = sum(r["factor"] * r["lengthM"] for r in rows)
+    if not (weighted > 0):
+        return []                             # a degenerate profile, not a crash
     base = target_seconds / weighted          # flat-equivalent seconds per metre
     out, elapsed = [], 0.0
     for r in rows:
@@ -576,6 +712,14 @@ def pace_table(lens: dict, target_seconds: float,
         elapsed += secs
         out.append({
             "km": r["km"],
+            # The row's REAL span, carried through. `km` is a label: kilometre
+            # marks snap to the nearest stored point, so km 1 can end at 991 m,
+            # and the final row is a stub whose label (22) times 1000 is far
+            # past the finish. Anything reconstructing bounds from the label
+            # drifts by metres and drops the stub entirely.
+            "startM": r["startM"],
+            "endM": r["endM"],
+            "partial": r.get("partial", False),
             "grade": r["grade"],
             "lengthM": r["lengthM"],
             "paceSecPerKm": round(base * r["factor"] * 1000.0, 1),
@@ -612,7 +756,8 @@ def course_step(conn, client, race: dict | None, log=print) -> dict | None:
         if not points:
             return None
         log("  course     : offline — re-deriving stored points at the new version")
-        return _derive_and_store(conn, course_id, None, points, stored[2])
+        return _derive_and_store(conn, course_id, None, points, stored[2],
+                                 (race or {}).get("date"))
 
     remote_update = raw.get("updateDate")
     if stored and stored[0] == remote_update and stored[1] == COURSE_LENS_VERSION:
@@ -622,12 +767,18 @@ def course_step(conn, client, race: dict | None, log=print) -> dict | None:
     if not points["d"]:
         log("  course     : payload carried no usable geo points — skipped")
         return None
-    return _derive_and_store(conn, course_id, raw, points,
-                             stored[2] if stored else None)
+    # `fetched_at` means "when did we last talk to Garmin about this course".
+    # We just did — so it must be stamped fresh. Carrying the stored value
+    # forward here (as the offline branch legitimately does, where no fetch
+    # happened) would freeze the column at the first-ever sync and make any
+    # staleness check report a course as unchecked while it is re-fetched
+    # nightly.
+    return _derive_and_store(conn, course_id, raw, points, None,
+                             (race or {}).get("date"))
 
 
 def _derive_and_store(conn, course_id: int, raw: dict | None, points: dict,
-                      fetched_at: str | None) -> dict:
+                      fetched_at: str | None, race_date: str | None = None) -> dict:
     model = build_model(conn)
     raw_totals = {}
     if raw:
@@ -635,6 +786,16 @@ def _derive_and_store(conn, course_id: int, raw: dict | None, points: dict,
                       "lossM": raw.get("elevationLossMeter"),
                       "source": "garmin"}
     lens = build_lens(points, model, raw_totals)
+    # The comparison is derived HERE, not in the browser (design D6): matching,
+    # normalising and resampling establish what happened, which is the sync's
+    # job. It stays target-independent so switching target needs no re-derive.
+    try:
+        lens["comparison"] = build_comparison(
+            conn, lens, race_date,
+            float(raw.get("distanceMeter") or 0) if raw
+            else float(points["d"][-1] if points.get("d") else 0))
+    except Exception:  # noqa: BLE001 — no comparison is a normal state
+        lens["comparison"] = None
 
     if raw:
         name = raw.get("courseName") or f"course {course_id}"
@@ -650,8 +811,16 @@ def _derive_and_store(conn, course_id: int, raw: dict | None, points: dict,
         update_date = prev.get("updateDate")
         gain, loss = prev.get("gainM"), prev.get("lossM")
 
+    # race_date is what `course_coverage()` reports as "latest race" and what
+    # the archive API promotes to `raceDate`; sourcing it from the plan's race
+    # mirrors how block_lens keys its rows. Preserved on an offline re-derive so
+    # a lens-only recompute never blanks it.
+    if race_date is None:
+        prev_row = conn.execute("SELECT race_date FROM courses WHERE course_id = ?",
+                                (course_id,)).fetchone()
+        race_date = prev_row[0] if prev_row else None
     activity_archive.upsert_course(
-        conn, course_id, name, None, distance, gain, loss, bbox, points,
+        conn, course_id, name, race_date, distance, gain, loss, bbox, points,
         COURSE_LENS_VERSION, lens, update_date, fetched_at)
     return activity_archive.course_document(conn, course_id)
 

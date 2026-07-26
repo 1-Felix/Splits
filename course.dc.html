@@ -204,7 +204,7 @@ class Component extends DCLogic {
   // which only exist after race day (design: deep views may talk to the API).
   state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
             data: null, target: 'goal', customTarget: '', decline: true,
-            cross: null, actual: null, actualStatus: 'idle', now: new Date() };
+            cross: null, now: new Date() };
 
   tb() { return window.SplitsTopbar; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
@@ -217,37 +217,17 @@ class Component extends DCLogic {
     mod('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
     mod('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
     mod('./course-plan.js').then((m) => { this._cp = m; this.setState({}); }).catch(() => {});
+    // the countdown is date-derived, so it has to survive a rollover in a tab
+    // left open overnight — same reason the cockpit ticks its own clock
+    this._clock = setInterval(() => this.setState({ now: new Date() }), 60000);
+  }
+
+  componentWillUnmount() {
+    if (this._clock) clearInterval(this._clock);
   }
 
   lens() { const d = this.state.data; return (d && d.courseLens) || null; }
   race() { const d = this.state.data; return (d && d.race) || {}; }
-
-  // Once the course is known AND the race has been run, pull the matching
-  // activity's streams for the overlay. Silent when there is no match — before
-  // race day that is simply the normal state (design D7).
-  maybeLoadActual() {
-    if (this.state.actualStatus !== 'idle') return;
-    const lens = this.lens();
-    const race = this.race();
-    if (!lens || !race.date) return;
-    if (this.todayISO() < race.date) return;         // the race has not happened
-    this.setState({ actualStatus: 'loading' });
-    fetch('./api/archive/activities?from=' + race.date + '&to=' + race.date)
-      .then((r) => { if (!r.ok) throw new Error('archive'); return r.json(); })
-      .then((page) => {
-        const km = (lens.distanceM || 0) / 1000;
-        const cand = (page.activities || page.rows || []).filter((a) =>
-          a.type === 'running' && a.distanceM &&
-          Math.abs(a.distanceM / 1000 - km) / km <= 0.08);   // 8 % distance tolerance
-        if (!cand.length) { this.setState({ actualStatus: 'nomatch' }); return; }
-        const best = cand.sort((a, b) =>
-          Math.abs(a.distanceM - lens.distanceM) - Math.abs(b.distanceM - lens.distanceM))[0];
-        return fetch('./api/archive/activities/' + best.activityId + '/streams')
-          .then((r) => { if (!r.ok) throw new Error('streams'); return r.json(); })
-          .then((s) => this.setState({ actual: { run: best, streams: s }, actualStatus: 'ready' }));
-      })
-      .catch(() => this.setState({ actualStatus: 'nomatch' }));
-  }
 
   todayISO() {
     const d = this.state.now;
@@ -307,10 +287,17 @@ class Component extends DCLogic {
     if (c && c.i !== this.state.cross) this.setState({ cross: c.i });
   };
   leaveCross = () => this.setState({ cross: null });
-  crossKey = (dir) => {
+  // chart-view.js hands the raw KeyboardEvent to onKey — matching run.dc.html
+  // and compare.dc.html. Taking a numeric step here instead would coerce the
+  // event to a string and land the crosshair on NaN, silently breaking the
+  // keyboard navigation the chart's own aria-label promises.
+  crossKey = (e) => {
     if (!this._xs) return;
-    const i = Math.max(0, Math.min(this._xs.length - 1, (this.state.cross == null ? 0 : this.state.cross) + dir));
-    this.setState({ cross: i });
+    const n = this._xs.length;
+    const cur = this.state.cross == null ? 0 : this.state.cross;
+    if (e.key === 'ArrowRight') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.min(n - 1, cur + 1) }); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault && e.preventDefault(); this.setState({ cross: Math.max(0, cur - 1) }); }
+    else if (e.key === 'Escape') { this.setState({ cross: null }); }
   };
 
   renderVals() {
@@ -339,8 +326,6 @@ class Component extends DCLogic {
       return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
     }
 
-    this.maybeLoadActual();
-
     // ---- header ------------------------------------------------------------
     const days = this.daysToRace();
     const totals = lens.totals || {};
@@ -357,7 +342,9 @@ class Component extends DCLogic {
       stats: [
         { k: 'DISTANCE', v: ((lens.distanceM || 0) / 1000).toFixed(2) + ' km' },
         { k: 'CLIMBING', v: gainLine },
-        { k: 'HIGH / LOW', v: Math.round(totals.maxElevM || 0) + ' / ' + Math.round(totals.minElevM || 0) + ' m' },
+        { k: 'HIGH / LOW', v: (totals.maxElevM != null && totals.minElevM != null)
+            ? Math.round(totals.maxElevM) + ' / ' + Math.round(totals.minElevM) + ' m'
+            : '—' },
         { k: 'ELEV COST', v: lens.elevationCostFraction != null
             ? (lens.elevationCostFraction >= 0 ? '+' : '') + (lens.elevationCostFraction * 100).toFixed(2) + '%' : '—' },
       ],
@@ -445,7 +432,9 @@ class Component extends DCLogic {
       const rows = cp.paceTable(lens, active.secs, decline ? threshold : null);
       const flatBase = cp.basePaceSecPerKm(lens, active.secs);
       const decisive = cp.decisiveKm(lens);
-      const cautionSecs = (lens.steepDescentGiveawayFraction || 0) * active.secs;
+      // computed at the threshold actually in use, not read off the
+      // course-level fraction (which is baked at one fixed threshold)
+      const cautionSecs = cp.cautionCostSeconds(lens, active.secs, threshold) || 0;
 
       plan = [{
         sub: 'Computed from the stored model — any target, no pipeline change',
@@ -489,8 +478,11 @@ class Component extends DCLogic {
     }
 
     // ---- post-race overlay -------------------------------------------------
-    if (this.state.actualStatus === 'ready' && this.state.actual && cp && active) {
-      const cmp = this.compare(lens, this.state.actual, active);
+    // The comparison is DERIVED BY THE SYNC and stored on the document — the
+    // page only turns per-kilometre actuals into deltas against the selected
+    // target, which is the same arithmetic the pace table does.
+    if (cp && active && lens.comparison) {
+      const cmp = this.compare(lens, lens.comparison, active);
       if (cmp) overlay = [cmp];
     }
 
@@ -502,24 +494,19 @@ class Component extends DCLogic {
   // clock — and the actual total is normalised first, since GPS drifts by tens
   // of metres over 21 km and an unnormalised join would smear the wall across
   // two kilometres.
-  compare(lens, actual, target) {
+  compare(lens, comparison, target) {
     const cp = this._cp, cc = this._cc, cv = this._cv;
     const R = (typeof React !== 'undefined') ? React : null;
-    const S = actual.streams || {};
-    if (!S.d || !S.t || S.d.length < 10) return null;
-    const courseTotal = lens.distanceM || 0;
-    const actualTotal = S.d[S.d.length - 1];
-    if (!(courseTotal > 0) || !(actualTotal > 0)) return null;
-    const scale = courseTotal / actualTotal;
+    const actualByKm = new Map(
+      (comparison.perKm || []).map((r) => [r.km, r.actualSeconds]));
+    if (!actualByKm.size) return null;
 
     const plan = cp.paceTable(lens, target.secs,
       this.state.decline ? (lens.steepDescentThreshold != null ? lens.steepDescentThreshold : -0.02) : null);
     const rows = [];
     for (const r of plan) {
-      const a0 = this.timeAtDistance(S, r.km * 1000 - r.lengthM, scale);
-      const a1 = this.timeAtDistance(S, r.km * 1000, scale);
-      if (a0 == null || a1 == null) continue;
-      const actualSecs = a1 - a0;
+      const actualSecs = actualByKm.get(r.km);
+      if (actualSecs == null) continue;
       rows.push({ km: r.km, grade: r.grade, planned: r.secondsForKm, actual: actualSecs,
                   delta: actualSecs - r.secondsForKm });
     }
@@ -556,7 +543,7 @@ class Component extends DCLogic {
     const col = (v) => (v > 2 ? 'var(--warn)' : v < -2 ? 'var(--accent2)' : 'var(--fg)');
     return {
       title: 'How it actually went',
-      sub: (actual.run && actual.run.name ? actual.run.name + ' · ' : '') +
+      sub: (comparison.name ? comparison.name + ' · ' : '') +
            'aligned on distance against the ' + target.label + ' plan',
       chart,
       stats: [
@@ -572,21 +559,6 @@ class Component extends DCLogic {
     };
   }
 
-  // Elapsed time at a course distance, reading the actual run's own distance
-  // axis scaled onto the course. Linear interpolation between samples; null
-  // outside the run's range so a short or long recording never fabricates a km.
-  timeAtDistance(S, courseMetres, scale) {
-    if (courseMetres <= 0) return S.t[0];
-    const want = courseMetres / scale;
-    const d = S.d;
-    if (want > d[d.length - 1]) return null;
-    let lo = 0, hi = d.length - 1;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (d[mid] < want) lo = mid + 1; else hi = mid; }
-    if (lo === 0) return S.t[0];
-    const d0 = d[lo - 1], d1 = d[lo], t0 = S.t[lo - 1], t1 = S.t[lo];
-    if (d1 === d0) return t1;
-    return t0 + (t1 - t0) * ((want - d0) / (d1 - d0));
-  }
 }
 </script>
 </body>

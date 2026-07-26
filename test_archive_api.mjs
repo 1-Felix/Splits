@@ -176,8 +176,45 @@ function makeArchive(dir) {
   bins.run("2025-04-12", "Spring Half", 1, 1, BLOCK_DOC_SPRING, "2026-07-17T04:00:00");
   bins.run("2026-08-09", "Sonthofen Half", 1, 0, BLOCK_DOC_CURRENT, "2026-07-17T04:00:00");
   bins.run("2024-10-01", "Autumn 10K", 1, 1, BLOCK_DOC_AUTUMN, "2026-07-17T04:00:00");
+
+  // course rows (schema v10, add-course-lens) — one course with a stored map
+  db.exec(`CREATE TABLE courses (
+    course_id    INTEGER PRIMARY KEY,
+    course_name  TEXT NOT NULL,
+    race_date    TEXT,
+    distance_m   REAL NOT NULL,
+    gain_m       REAL,
+    loss_m       REAL,
+    bbox_json    TEXT NOT NULL,
+    points_json  TEXT NOT NULL,
+    lens_version INTEGER NOT NULL,
+    lens_json    TEXT NOT NULL,
+    update_date  TEXT,
+    fetched_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE course_maps (
+    course_id INTEGER PRIMARY KEY, z INTEGER NOT NULL,
+    x0 INTEGER NOT NULL, y0 INTEGER NOT NULL, x1 INTEGER NOT NULL, y1 INTEGER NOT NULL,
+    crop_x REAL NOT NULL, crop_y REAL NOT NULL, crop_size REAL NOT NULL,
+    updated_at TEXT NOT NULL)`);
+  db.prepare("INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+    493447940, "Allgau Panorama Halbmarathon", "2026-08-09", 21114.2, 197.43, 200.03,
+    COURSE_BBOX, '{"d":[0,1000],"lat":[47.5,47.51],"lon":[10.27,10.28],"elev":[741,742]}',
+    1, COURSE_LENS_DOC, "2026-07-26T10:00:00", "2026-07-26T22:00:00", "2026-07-26T22:00:00");
+  db.prepare("INSERT INTO course_maps VALUES (?,?,?,?,?,?,?,?,?,?)").run(
+    493447940, 13, 4300, 2860, 4302, 2862, 12.5, 8.25, 700.0, "2026-07-26T22:00:00");
   db.close();
 }
+
+const COURSE_BBOX = JSON.stringify({ lowerLeft: { latitude: 47.43, longitude: 10.26 },
+                                    upperRight: { latitude: 47.52, longitude: 10.29 } });
+const COURSE_LENS_DOC = JSON.stringify({
+  lensVersion: 1, degraded: false, elevationCoverage: 1,
+  perKm: [{ km: 1, endM: 1000, lengthM: 1000, grade: 0.004, factor: 1.02, elevEnd: 742 }],
+  segments: [{ kind: "climb", startKm: 11.84, endKm: 13.38, changeM: 102.2, grade: 0.0663 }],
+  model: { curve: "minetti-2002", calibrated: true, damping: 0.3323, residual: 0.007 },
+  elevationCostFraction: 0.00229, steepDescentGiveawayFraction: 0.0075,
+});
 
 function startServer(port, env) {
   const child = spawn(process.execPath, ["serve.mjs"], {
@@ -486,6 +523,39 @@ try {
     405, "POST blocks → 405");
   assert.strictEqual((await fetch(B + "/api/archive/blocks/2026-08-09", { method: "PUT", body: "x" })).status,
     405, "PUT block → 405");
+
+  // ── course endpoint (add-course-lens) ───────────────────────────────────
+  const course = await fetch(B + "/api/archive/course/493447940");
+  assert.strictEqual(course.status, 200);
+  const cdoc = await course.json();
+  assert.strictEqual(cdoc.courseId, 493447940);
+  assert.strictEqual(cdoc.courseName, "Allgau Panorama Halbmarathon");
+  assert.strictEqual(cdoc.distanceM, 21114.2);
+  assert.strictEqual(cdoc.lensVersion, 1);
+  assert.ok(cdoc.bbox && cdoc.bbox.lowerLeft, "bbox is parsed, not a JSON string");
+  // the derived document is passed through intact — the API derives nothing
+  assert.strictEqual(cdoc.model.damping, 0.3323, "the stored model rides through verbatim");
+  assert.strictEqual(cdoc.segments[0].kind, "climb");
+  assert.strictEqual(cdoc.perKm[0].factor, 1.02);
+  assert.deepStrictEqual(cdoc.map,
+    { z: 13, x0: 4300, y0: 2860, x1: 4302, y1: 2862, cropX: 12.5, cropY: 8.25, cropSize: 700 },
+    "the stored basemap rect is attached");
+  // the raw points_json is NOT shipped — the document carries a downsampled track
+  assert.ok(!("points_json" in cdoc) && !("pointsJson" in cdoc),
+    "the full point track stays in the database");
+
+  assert.strictEqual((await fetch(B + "/api/archive/course/999")).status, 404,
+    "unknown course id → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/course/not-a-number")).status, 404,
+    "malformed course id → 404");
+  assert.strictEqual((await fetch(B + "/api/archive/course/493447940",
+    { method: "POST", body: "x" })).status, 405, "POST course → 405");
+  assert.strictEqual((await fetch(Bbare + "/api/archive/course/493447940")).status, 404,
+    "pre-v10 archive: no courses table → 404, not a 503");
+  assert.strictEqual((await fetch(Bmissing + "/api/archive/course/493447940")).status, 404,
+    "missing archive → 404");
+  assert.strictEqual((await fetch(Bbroken + "/api/archive/course/493447940")).status, 503,
+    "corrupt archive → 503 fail-soft, and the server keeps serving");
 
   // a pre-v9 archive (no block_lens table): empty list with 200 on the
   // listing, 404 by date — "no lens yet", never an outage

@@ -85,6 +85,22 @@ assert.doesNotThrow(() => persistTheme("volt", { setItem: () => { throw new Erro
     ["Cockpit", "Progress", "Archive"], "archive:true keeps the tab");
   assert.deepStrictEqual(navModel("cockpit", {}).map((n) => n.label),
     ["Cockpit", "Progress", "Archive"], "unknown availability keeps the tab");
+
+  // course is opt-IN (the mirror of archive): a race names a course or it does
+  // not, so an unknown/absent course must NOT advertise an empty page.
+  assert.deepStrictEqual(navModel("cockpit", { course: true }).map((n) => n.label),
+    ["Cockpit", "Progress", "Archive", "Course"], "course:true adds the tab");
+  assert.deepStrictEqual(navModel("cockpit", { course: false }).map((n) => n.label),
+    ["Cockpit", "Progress", "Archive"], "course:false hides it");
+  assert.deepStrictEqual(navModel("cockpit").map((n) => n.label),
+    ["Cockpit", "Progress", "Archive"], "unknown course availability hides it");
+  const onCourse = navModel("course", { course: true });
+  assert.deepStrictEqual(onCourse.map((n) => n.current), [false, false, false, true],
+    "course marked current");
+  assert.strictEqual(onCourse[3].href, "./course");
+  // both filters compose
+  assert.deepStrictEqual(navModel("cockpit", { archive: false, course: true }).map((n) => n.label),
+    ["Cockpit", "Progress", "Course"], "archive:false and course:true compose");
 }
 
 // ── greeting ──────────────────────────────────────────────────────────────────

@@ -325,6 +325,77 @@ class AcquisitionTests(unittest.TestCase):
         conn.close()
 
 
+class TrackTests(unittest.TestCase):
+    def test_track_is_downsampled_but_keeps_its_endpoints(self):
+        points = cl.distill_points(load_raw())
+        track = cl.downsample_track(points)
+        self.assertLessEqual(len(track["lat"]), cl.TRACK_MAX_POINTS + 2)
+        self.assertGreater(len(track["lat"]), 100)
+        self.assertEqual(track["lat"][0], points["lat"][0])
+        self.assertEqual(track["lat"][-1], points["lat"][-1])
+        self.assertEqual(len(track["lat"]), len(track["lon"]))
+
+    def test_a_short_track_is_returned_whole(self):
+        pts = {"lat": [1.0, 2.0], "lon": [3.0, 4.0]}
+        self.assertEqual(cl.downsample_track(pts), {"lat": [1.0, 2.0], "lon": [3.0, 4.0]})
+
+    def test_an_empty_track_is_empty_not_an_error(self):
+        self.assertEqual(cl.downsample_track({"lat": [], "lon": []}), {})
+
+    def test_the_document_stays_small_enough_to_ship_statically(self):
+        """It rides inside garmin-data.js, which the cockpit loads every time."""
+        points = cl.distill_points(load_raw())
+        lens = cl.build_lens(points, {"damping": 0.33}, {})
+        self.assertLess(len(json.dumps(lens)) / 1024, 40.0)
+
+
+class CourseMapTests(unittest.TestCase):
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        for s in (activity_archive.SCHEMA_SQL, activity_archive.SCHEMA_V8_SQL,
+                  activity_archive.SCHEMA_V10_SQL):
+            conn.executescript(s)
+        return conn
+
+    def test_tiles_are_fetched_once_and_the_row_lands_complete(self):
+        conn = self._conn()
+        points = cl.distill_points(load_raw())
+        calls = []
+
+        def fake_fetch(z, x, y):
+            calls.append((z, x, y))
+            return b"PNG" + bytes([z, x % 256, y % 256])
+
+        status = activity_archive.ensure_course_map(
+            conn, 493447940, points, fetch=fake_fetch, _sleep=lambda *_: None)
+        self.assertEqual(status, "done")
+        self.assertTrue(calls)
+        row = activity_archive.course_map_row(conn, 493447940)
+        self.assertIsNotNone(row)
+        self.assertIn("cropSize", row)
+        # a second pass is a no-op: the rect already exists
+        again = activity_archive.ensure_course_map(
+            conn, 493447940, points, fetch=fake_fetch, _sleep=lambda *_: None)
+        self.assertEqual(again, "exists")
+        conn.close()
+
+    def test_a_failed_tile_writes_no_row(self):
+        conn = self._conn()
+        points = cl.distill_points(load_raw())
+        status = activity_archive.ensure_course_map(
+            conn, 1, points, fetch=lambda *_: None, _sleep=lambda *_: None)
+        self.assertEqual(status, "failed")
+        self.assertIsNone(activity_archive.course_map_row(conn, 1))
+        conn.close()
+
+    def test_a_course_without_gps_is_skipped(self):
+        conn = self._conn()
+        status = activity_archive.ensure_course_map(
+            conn, 2, {"lat": [], "lon": []}, fetch=lambda *_: b"x", _sleep=lambda *_: None)
+        self.assertEqual(status, "skipped")
+        conn.close()
+
+
 class DegradedElevationTests(unittest.TestCase):
     def test_sparse_elevation_marks_the_profile_degraded(self):
         raw = load_raw()

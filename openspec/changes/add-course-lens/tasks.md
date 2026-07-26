@@ -31,21 +31,21 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 
 ## 4. Data contract + archive API
 
-- [ ] 4.1 Additive `courseLens` in `garmin-data.js`: the upcoming race's course document; absent when the race carries no `courseId`
-- [ ] 4.2 `GET /api/archive/course/:courseId` in `serve.mjs` — stored document verbatim, 404 unknown id, fail-soft 503; added to the existing archive allowlist block
-- [ ] 4.3 Extend `test_archive_api.mjs`: verbatim document, 404, 503, and no request-time derivation
+- [x] 4.1 Additive `courseLens` in `garmin-data.js`: the upcoming race's course document; absent when the race carries no `courseId`
+- [x] 4.2 `GET /api/archive/course/:courseId` in `serve.mjs` — stored document verbatim, 404 unknown id, fail-soft 503; added to the existing archive allowlist block
+- [x] 4.3 Extend `test_archive_api.mjs`: verbatim document, 404, 503, and no request-time derivation
 
 ## 5. `/course` page — profile, map, pace table
 
-- [ ] 5.1 `course.dc.html` + route in `serve.mjs`'s page table; topbar entry in `topbar.js`
-- [ ] 5.2 Elevation profile over DISTANCE via `sharedXScale` + `multiTrackSpec`, mirroring the ELEVATION track in `run.dc.html`; decisive segments annotated from the stored document, never hardcoded
-- [ ] 5.3 Crosshair readout (`chart-hover.js`): km, elevation, grade
-- [ ] 5.4 Route on the basemap: `course_maps` rect via `projectTrackMercator` + `tileLayout`, tiles from the existing `/api/archive/tiles/` endpoint; profile renders fine when tiles are unavailable
-- [ ] 5.5 Sync-side tile acquisition for the course rect, reusing the `route-basemap` throttle and dedup policy
-- [ ] 5.6 Pace table: per-km grade, target pace, cumulative elapsed, decisive-km markers — computed in-page from the stored model parameters
-- [ ] 5.7 Target presets (goal / Garmin / Riegel) over the same model; the model's residual surfaced honestly rather than implying false precision
-- [ ] 5.9 **Cost of caution**: show the pace table both model-optimal and with descent benefit declined (factors clamped to 1.0), with the delta named — so an injury-driven pacing choice reads as a priced trade, not a deviation
-- [ ] 5.8 `test_course_page.mjs`: renders from the real fixture, chart and table present, degraded and no-course states, demo fallback asserted absent
+- [x] 5.1 `course.dc.html` + route in `serve.mjs`'s page table; topbar entry in `topbar.js`
+- [x] 5.2 Elevation profile over DISTANCE via `sharedXScale` + `multiTrackSpec`, mirroring the ELEVATION track in `run.dc.html`; decisive segments annotated from the stored document, never hardcoded
+- [x] 5.3 Crosshair readout (`chart-hover.js`): km, elevation, grade
+- [x] 5.4 Route on the basemap: `course_maps` rect via `projectTrackMercator` + `tileLayout`, tiles from the existing `/api/archive/tiles/` endpoint; profile renders fine when tiles are unavailable
+- [x] 5.5 Sync-side tile acquisition for the course rect, reusing the `route-basemap` throttle and dedup policy
+- [x] 5.6 Pace table: per-km grade, target pace, cumulative elapsed, decisive-km markers — computed in-page from the stored model parameters
+- [x] 5.7 Target presets (goal / Garmin / Riegel) over the same model; the model's residual surfaced honestly rather than implying false precision
+- [x] 5.9 **Cost of caution**: show the pace table both model-optimal and with descent benefit declined (factors clamped to 1.0), with the delta named — so an injury-driven pacing choice reads as a priced trade, not a deviation
+- [x] 5.8 `test_course_page.mjs`: renders from the real fixture, chart and table present, degraded and no-course states, demo fallback asserted absent
 
 ## 6. Post-race overlay (useful from 2026-08-10)
 

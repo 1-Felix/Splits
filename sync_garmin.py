@@ -973,6 +973,29 @@ def fetch_block_lens() -> dict | None:
     return safe(assemble, None, "block lens assembly")
 
 
+def fetch_course_lens() -> dict | None:
+    """The stored course document for the plan's race, or None (key omitted
+    entirely — a race without a `courseId` has no course, which is the normal
+    state). An independent fail domain like insights, compliance and the block
+    lens (add-course-lens design D8)."""
+    def assemble():
+        loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+        if not loaded:
+            return None
+        course_id = ((loaded[1] or {}).get("race") or {}).get("courseId")
+        if not course_id:
+            return None
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            doc = activity_archive.course_document(conn, course_id)
+            if doc:
+                doc["map"] = activity_archive.course_map_row(conn, course_id)
+            return doc
+        finally:
+            conn.close()
+    return safe(assemble, None, "course lens assembly")
+
+
 def build_data(client, acts: list[dict], pred_doc: dict | None = None,
                sleep_raw_out: list | None = None) -> dict:
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
@@ -998,6 +1021,7 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         log(f"✓ compliance assembled ({len(compliance['days'])} days, "
             f"{len(compliance['weeks'])} weeks)")
     lens = fetch_block_lens()
+    course = fetch_course_lens()
     if lens:
         log(f"✓ block lens assembled ("
             + ("current + " if lens.get("current") else "")
@@ -1030,6 +1054,8 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         data["compliance"] = compliance
     if lens:
         data["blockLens"] = lens
+    if course:
+        data["courseLens"] = course
     return data
 
 
@@ -1179,6 +1205,8 @@ def course_lens_step(client) -> None:
     try:
         doc = course_lens.course_step(conn, client, race, log=log)
         if doc:
+            safe(lambda: course_lens.course_map_step(conn, race["courseId"], log=log),
+                 None, "course basemap")
             model = doc.get("model") or {}
             log(f"✓ course lens: {doc.get('courseName')} — "
                 f"{len(doc.get('perKm') or [])} km rows, "

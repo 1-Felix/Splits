@@ -35,6 +35,7 @@ const PAGES = {
   "/progress": "/progress.dc.html",
   "/archive": "/archive.dc.html",
   "/compare": "/compare.dc.html",   // compared runs come from ?ids=… (archive-browser D1)
+  "/course": "/course.dc.html",     // the race course profile + pace plan (add-course-lens)
 };
 
 // Where personal data lives. The container sets SPLITS_DATA_DIR=/data (the
@@ -512,6 +513,42 @@ async function handleArchive(req, res, pathname, url) {
       }, Buffer.from(row.block_json, "utf8"), "application/json; charset=utf-8");
       return;
     }
+    // /api/archive/course/:courseId — the stored course document, verbatim
+    // (add-course-lens). SELECT and shape only: the profile, the calibrated
+    // model and the pace factors were all derived at sync time. A pre-v10
+    // archive has no courses table — that is "unknown course", not an outage.
+    if (pathname.startsWith("/api/archive/course/")) {
+      const cm = /^\/api\/archive\/course\/(\d+)$/.exec(pathname);
+      let row;
+      try {
+        row = cm ? db.prepare(
+          "SELECT course_id, course_name, race_date, distance_m, gain_m, loss_m, " +
+          "       bbox_json, lens_version, lens_json, update_date, updated_at " +
+          "FROM courses WHERE course_id = ?").get(Number(cm[1])) : undefined;
+      } catch (e) {
+        if (!/no such table/i.test(String(e && e.message))) throw e;
+        row = undefined;
+      }
+      if (!row) { json(req, res, 404, { ok: false, error: "unknown course" }); return; }
+      let map = null;
+      try {
+        map = db.prepare(
+          "SELECT z, x0, y0, x1, y1, crop_x AS cropX, crop_y AS cropY, " +
+          "       crop_size AS cropSize FROM course_maps WHERE course_id = ?")
+          .get(Number(cm[1])) || null;
+      } catch (e) {
+        if (!/no such table/i.test(String(e && e.message))) throw e;
+      }
+      const doc = Object.assign(JSON.parse(row.lens_json), {
+        courseId: row.course_id, courseName: row.course_name,
+        raceDate: row.race_date, distanceM: row.distance_m,
+        gainM: row.gain_m, lossM: row.loss_m,
+        bbox: JSON.parse(row.bbox_json), lensVersion: row.lens_version,
+        updateDate: row.update_date, updatedAt: row.updated_at, map,
+      });
+      json(req, res, 200, doc);
+      return;
+    }
     // /api/archive/tiles/:z/:x/:y.png — stored OSM tile blobs, verbatim
     // (route-basemap). Immutable by construction (the fetch step never
     // replaces a stored tile), hence the year-long cache. A pre-v8 archive
@@ -742,7 +779,8 @@ const server = createServer(async (req, res) => {
     }
     if (pathname === "/api/archive/activities" || pathname.startsWith("/api/archive/activities/")
         || pathname === "/api/archive/run-metrics" || pathname.startsWith("/api/archive/tiles/")
-        || pathname === "/api/archive/blocks" || pathname.startsWith("/api/archive/blocks/")) {
+        || pathname === "/api/archive/blocks" || pathname.startsWith("/api/archive/blocks/")
+        || pathname.startsWith("/api/archive/course/")) {
       await handleArchive(req, res, pathname, url);
       return;
     }

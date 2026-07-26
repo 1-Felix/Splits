@@ -856,6 +856,45 @@ def upsert_course_map(conn: sqlite3.Connection, course_id: int, z: int,
     conn.commit()
 
 
+def ensure_course_map(conn: sqlite3.Connection, course_id: int, points: dict,
+                      fetch=None, pace_s: float = 1.0, _sleep=None) -> str:
+    """`ensure_activity_map` for a COURSE. Identical policy — probe the deduped
+    store, fetch only the gap at the same throttle, write the row only once the
+    rect is complete — because a course's tiles are ordinary OSM tiles that any
+    run through the same neighbourhood can reuse."""
+    if conn.execute("SELECT 1 FROM course_maps WHERE course_id = ?",
+                    (course_id,)).fetchone():
+        return "exists"
+    rect = compute_tile_rect((points or {}).get("lat"), (points or {}).get("lon"))
+    if rect is None:
+        return "skipped"
+    fetch = fetch or fetch_tile
+    sleep = _sleep if _sleep is not None else time.sleep
+    missing = [
+        (rect["z"], x, y)
+        for x in range(rect["x0"], rect["x1"] + 1)
+        for y in range(rect["y0"], rect["y1"] + 1)
+        if conn.execute("SELECT 1 FROM map_tiles WHERE z = ? AND x = ? AND y = ?",
+                        (rect["z"], x, y)).fetchone() is None
+    ]
+    for i, (z, x, y) in enumerate(missing):
+        if i:
+            sleep(pace_s)
+        try:
+            png = fetch(z, x, y)
+        except Exception:  # noqa: BLE001 — a dead tile server is not a sync failure
+            png = None
+        if not png:
+            return "failed"
+        conn.execute("INSERT OR IGNORE INTO map_tiles (z, x, y, png, fetched_at) "
+                     "VALUES (?, ?, ?, ?, ?)", (z, x, y, png, _now()))
+        conn.commit()
+    upsert_course_map(conn, course_id, rect["z"], rect["x0"], rect["y0"],
+                      rect["x1"], rect["y1"], rect["crop_x"], rect["crop_y"],
+                      rect["crop_size"])
+    return "done"
+
+
 def course_map_row(conn: sqlite3.Connection, course_id: int) -> dict | None:
     """The stored rect + crop for a course, or None when its tiles are not
     complete — the page renders profile-only in that case."""

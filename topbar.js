@@ -81,13 +81,21 @@ const NAV_PAGES = [
   { key: "cockpit", label: "Cockpit", href: "./" },
   { key: "progress", label: "Progress", href: "./progress" },
   { key: "archive", label: "Archive", href: "./archive" },
+  { key: "course", label: "Course", href: "./course" },
 ];
 
 // opts.archive === false drops the Archive tab — an instance without an
 // archive db (ingest-fed) has no archive pages to offer. Default keeps it:
 // unknown (static file, status not yet fetched) must not hide navigation.
+//
+// Course is the MIRROR of that rule: opt-IN. A race names a course or it does
+// not, and most do not, so the tab appears only when opts.course === true —
+// otherwise an instance with no race (or no courseId) would advertise a page
+// with nothing on it. Unknown availability therefore hides it, which is the
+// opposite default to Archive and deliberately so.
 export function navModel(currentPage, opts = {}) {
-  const pages = opts.archive === false ? NAV_PAGES.filter((p) => p.key !== "archive") : NAV_PAGES;
+  let pages = opts.course === true ? NAV_PAGES : NAV_PAGES.filter((p) => p.key !== "course");
+  if (opts.archive === false) pages = pages.filter((p) => p.key !== "archive");
   return pages.map((p) => {
     const current = p.key === currentPage;
     return {

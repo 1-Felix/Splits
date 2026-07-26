@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
+     before the dc runtime like every other SPLITS page. -->
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./support.js"></script>
+<!-- shared topbar behavior (module = deferred): window.SplitsTopbar is set
+     before the dc runtime mounts. -->
+<script type="module" src="./topbar.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="./dashboard.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0E0F12}
+  ::-webkit-scrollbar{height:9px;width:9px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
+  .crs-tbl{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+  .crs-tbl th{text-align:right;font-size:var(--fs-2xs);letter-spacing:.14em;color:var(--sub);font-weight:700;padding:var(--sp-2);border-bottom:1px solid var(--line)}
+  .crs-tbl th:first-child{text-align:left}
+  .crs-tbl td{text-align:right;padding:var(--sp-2);border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  .crs-tbl td:first-child{text-align:left;font-weight:700}
+  .crs-wrap{overflow-x:auto}
+</style>
+</helmet>
+
+<div style="{{ rootStyle }}">
+<div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
+<div style="max-width:1100px;margin:0 auto">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:var(--sp-3)">
+      <div style="width:34px;height:34px;border-radius:var(--r-md);background:var(--accent);display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <div style="width:14px;height:3px;background:#0E0F12;transform:skewX(-22deg);box-shadow:0 6px 0 #0E0F12,0 -6px 0 #0E0F12"></div>
+      </div>
+      <div style="line-height:1">
+        <div style="font-weight:900;font-size:var(--fs-xl);letter-spacing:-.04em">SPLITS</div>
+        <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
+      </div>
+      <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
+      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">Course</div>
+    </div>
+    <div class="topbar-actions">
+      <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="4">
+          <a href="{{ n.href }}" aria-current="{{ n.aria }}" style="{{ n.style }}">{{ n.label }}</a>
+        </sc-for>
+      </nav>
+      <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
+        <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+        </sc-for>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== NO COURSE ===== -->
+  <sc-for list="{{ noCourse }}" as="n" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-title">No course for this race</div>
+      <div class="card-sub" style="margin-top:var(--sp-2)">{{ n.body }}</div>
+    </div>
+  </sc-for>
+
+  <!-- ===== HEADER ===== -->
+  <sc-for list="{{ head }}" as="h" hint-placeholder-count="1">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">{{ h.name }}</div>
+          <div class="card-sub">{{ h.sub }}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:var(--fs-2xl);font-weight:900;letter-spacing:-.03em">{{ h.countdown }}</div>
+          <div style="font-size:var(--fs-2xs);letter-spacing:.18em;color:var(--sub);font-weight:700">{{ h.countdownLabel }}</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-4);margin-top:var(--sp-3)">
+        <sc-for list="{{ h.stats }}" as="s" hint-placeholder-count="4">
+          <div>
+            <div style="font-size:var(--fs-lg);font-weight:800;font-variant-numeric:tabular-nums">{{ s.v }}</div>
+            <div style="font-size:var(--fs-2xs);letter-spacing:.16em;color:var(--sub);font-weight:700">{{ s.k }}</div>
+          </div>
+        </sc-for>
+      </div>
+      <sc-for list="{{ h.degraded }}" as="d" hint-placeholder-count="0">
+        <div style="margin-top:var(--sp-3);padding:var(--sp-2) var(--sp-3);border:1px solid var(--warn);border-radius:var(--r-md);color:var(--warn);font-size:var(--fs-sm)">{{ d.t }}</div>
+      </sc-for>
+    </div>
+  </sc-for>
+
+  <!-- ===== PROFILE ===== -->
+  <sc-for list="{{ profile }}" as="p" hint-placeholder-count="1">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">The profile</div>
+          <div class="card-sub">{{ p.sub }}</div>
+        </div>
+      </div>
+      <div style="margin-top:var(--sp-3)">{{ p.chart }}</div>
+      <sc-for list="{{ p.readout }}" as="r" hint-placeholder-count="0">
+        <div style="display:flex;gap:var(--sp-4);flex-wrap:wrap;margin-top:var(--sp-2);font-size:var(--fs-sm);font-variant-numeric:tabular-nums">
+          <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="3">
+            <div><span style="color:var(--sub);font-size:var(--fs-2xs);letter-spacing:.14em;font-weight:700">{{ c.k }}</span> {{ c.v }}</div>
+          </sc-for>
+        </div>
+      </sc-for>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)">
+        <sc-for list="{{ p.segments }}" as="s" hint-placeholder-count="2">
+          <div style="{{ s.style }}">{{ s.label }}</div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+
+  <!-- ===== ROUTE ===== -->
+  <sc-for list="{{ trace }}" as="t" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">{{ t.title }}</div>
+          <div class="card-sub">{{ t.sub }}</div>
+        </div>
+      </div>
+      <div style="margin-top:var(--sp-3)">{{ t.chart }}</div>
+    </div>
+  </sc-for>
+
+  <!-- ===== PACE PLAN ===== -->
+  <sc-for list="{{ plan }}" as="pl" hint-placeholder-count="1">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">What each kilometre should cost</div>
+          <div class="card-sub">{{ pl.sub }}</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center;margin-top:var(--sp-3)">
+        <sc-for list="{{ pl.targets }}" as="t" hint-placeholder-count="3">
+          <button class="scope-chip" aria-pressed="{{ t.on }}" onClick="{{ t.pick }}">{{ t.label }}</button>
+        </sc-for>
+        <span style="width:1px;height:18px;background:var(--line)"></span>
+        <sc-for list="{{ pl.caution }}" as="c" hint-placeholder-count="1">
+          <button class="scope-chip" aria-pressed="{{ c.on }}" onClick="{{ c.pick }}" title="{{ c.title }}">{{ c.label }}</button>
+        </sc-for>
+      </div>
+      <div style="margin-top:var(--sp-3);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--sub)">{{ pl.note }}</div>
+      <div class="crs-wrap" style="margin-top:var(--sp-3)">
+        <table class="crs-tbl">
+          <thead>
+            <tr><th>KM</th><th>GRADE</th><th>TARGET</th><th>Δ vs FLAT</th><th>ELAPSED</th></tr>
+          </thead>
+          <tbody>
+            <sc-for list="{{ pl.rows }}" as="r" hint-placeholder-count="21">
+              <tr style="{{ r.style }}">
+                <td>{{ r.km }}</td><td>{{ r.grade }}</td><td>{{ r.pace }}</td><td>{{ r.delta }}</td><td>{{ r.elapsed }}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:var(--sp-3);font-size:var(--fs-2xs);color:var(--sub)">{{ pl.model }}</div>
+    </div>
+  </sc-for>
+
+  <!-- ===== POST-RACE OVERLAY ===== -->
+  <sc-for list="{{ overlay }}" as="o" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">{{ o.title }}</div>
+          <div class="card-sub">{{ o.sub }}</div>
+        </div>
+      </div>
+      <div style="margin-top:var(--sp-3)">{{ o.chart }}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-4);margin-top:var(--sp-3)">
+        <sc-for list="{{ o.stats }}" as="s" hint-placeholder-count="4">
+          <div>
+            <div style="font-size:var(--fs-lg);font-weight:800;font-variant-numeric:tabular-nums;color:{{ s.color }}">{{ s.v }}</div>
+            <div style="font-size:var(--fs-2xs);letter-spacing:.16em;color:var(--sub);font-weight:700">{{ s.k }}</div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="margin-top:var(--sp-3);font-size:var(--fs-sm);color:var(--sub)">{{ o.verdict }}</div>
+    </div>
+  </sc-for>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:1600}}">
+class Component extends DCLogic {
+  // The course comes from the STATIC data contract (garmin-data.js →
+  // athleteData.courseLens), so the page renders complete without a fetch. The
+  // archive API is used for exactly one thing: the race activity's streams,
+  // which only exist after race day (design: deep views may talk to the API).
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
+            data: null, target: 'goal', customTarget: '', decline: true,
+            cross: null, actual: null, actualStatus: 'idle', now: new Date() };
+
+  tb() { return window.SplitsTopbar; }
+  setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
+
+  componentDidMount() {
+    // Resolve modules against document.baseURI — the dc runtime's compiled
+    // script can otherwise carry a stale base after a same-site navigation.
+    const mod = (p) => import(new URL(p, document.baseURI).href);
+    mod('./running-data.js').then((m) => this.setState({ data: m.athleteData })).catch(() => this.setState({ data: false }));
+    mod('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
+    mod('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
+    mod('./course-plan.js').then((m) => { this._cp = m; this.setState({}); }).catch(() => {});
+  }
+
+  lens() { const d = this.state.data; return (d && d.courseLens) || null; }
+  race() { const d = this.state.data; return (d && d.race) || {}; }
+
+  // Once the course is known AND the race has been run, pull the matching
+  // activity's streams for the overlay. Silent when there is no match — before
+  // race day that is simply the normal state (design D7).
+  maybeLoadActual() {
+    if (this.state.actualStatus !== 'idle') return;
+    const lens = this.lens();
+    const race = this.race();
+    if (!lens || !race.date) return;
+    if (this.todayISO() < race.date) return;         // the race has not happened
+    this.setState({ actualStatus: 'loading' });
+    fetch('./api/archive/activities?from=' + race.date + '&to=' + race.date)
+      .then((r) => { if (!r.ok) throw new Error('archive'); return r.json(); })
+      .then((page) => {
+        const km = (lens.distanceM || 0) / 1000;
+        const cand = (page.activities || page.rows || []).filter((a) =>
+          a.type === 'running' && a.distanceM &&
+          Math.abs(a.distanceM / 1000 - km) / km <= 0.08);   // 8 % distance tolerance
+        if (!cand.length) { this.setState({ actualStatus: 'nomatch' }); return; }
+        const best = cand.sort((a, b) =>
+          Math.abs(a.distanceM - lens.distanceM) - Math.abs(b.distanceM - lens.distanceM))[0];
+        return fetch('./api/archive/activities/' + best.activityId + '/streams')
+          .then((r) => { if (!r.ok) throw new Error('streams'); return r.json(); })
+          .then((s) => this.setState({ actual: { run: best, streams: s }, actualStatus: 'ready' }));
+      })
+      .catch(() => this.setState({ actualStatus: 'nomatch' }));
+  }
+
+  todayISO() {
+    const d = this.state.now;
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  daysToRace() {
+    const race = this.race();
+    if (!race.date) return null;
+    const ms = new Date(race.date + 'T00:00:00').getTime() - new Date(this.todayISO() + 'T00:00:00').getTime();
+    return Math.round(ms / 86400000);
+  }
+
+  // ---- targets -------------------------------------------------------------
+  // Presets over the stored MODEL, not three precomputed tables (design D5) —
+  // which is why a typed custom target costs nothing extra.
+  targetOptions() {
+    const d = this.state.data || {};
+    const race = this.race();
+    const preds = d.predictions || {};
+    const cp = this._cp;
+    const out = [];
+    if (race.goalTime) out.push({ key: 'goal', label: 'Goal ' + race.goalTime, secs: cp && cp.parseTarget(race.goalTime) });
+    if (preds.halfNow) out.push({ key: 'garmin', label: 'Garmin ' + preds.halfNow, secs: cp && cp.parseTarget(preds.halfNow) });
+    const riegel = this.riegelHalf();
+    if (riegel) out.push({ key: 'riegel', label: 'Honest ' + riegel, secs: cp && cp.parseTarget(riegel) });
+    return out.filter((t) => t.secs);
+  }
+
+  // Riegel from the best stored 10k, the same "honest" projection the briefing
+  // quotes — read from personalBests so the page never invents a number.
+  riegelHalf() {
+    const pb = (this.state.data && this.state.data.personalBests) || {};
+    const cp = this._cp;
+    if (!cp || !pb.tenK) return null;
+    const tenK = cp.parseTarget(pb.tenK);
+    if (!tenK) return null;
+    const secs = tenK * Math.pow(21.0975 / 10, 1.06);
+    return cp.fmtDuration(secs);
+  }
+
+  activeTarget() {
+    const opts = this.targetOptions();
+    const cp = this._cp;
+    if (this.state.target === 'custom') {
+      const s = cp && cp.parseTarget(this.state.customTarget);
+      if (s) return { key: 'custom', label: this.state.customTarget, secs: s };
+    }
+    return opts.find((o) => o.key === this.state.target) || opts[0] || null;
+  }
+
+  moveCross = (vbX) => {
+    const cc = this._cc;
+    if (!cc || !this._xs) return;
+    const c = cc.crosshairAt(this._xScale, this._xs, vbX);
+    if (c && c.i !== this.state.cross) this.setState({ cross: c.i });
+  };
+  leaveCross = () => this.setState({ cross: null });
+  crossKey = (dir) => {
+    if (!this._xs) return;
+    const i = Math.max(0, Math.min(this._xs.length - 1, (this.state.cross == null ? 0 : this.state.cross) + dir));
+    this.setState({ cross: i });
+  };
+
+  renderVals() {
+    // theme vars -> inline custom properties, the same way every other page
+    // builds its root style (there is no rootStyle() helper on SplitsTopbar).
+    const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {};
+    const rootStyle = {};
+    for (const k in tv) rootStyle['--' + k] = tv[k];
+    Object.assign(rootStyle, { minHeight: '100vh', background: 'var(--bg)', color: 'var(--ink)',
+      fontFamily: "'Archivo', system-ui, sans-serif", padding: '22px clamp(16px,4vw,40px) 64px' });
+    const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
+    const lens = this.lens();
+    const nav = this.tb() ? this.tb().navModel('course', { course: !!lens }) : [];
+    const cc = this._cc, cv = this._cv, cp = this._cp;
+    const R = (typeof React !== 'undefined') ? React : null;
+
+    let noCourse = [], head = [], profile = [], trace = [], plan = [], overlay = [];
+    let liveText = '';
+
+    if (this.state.data === null) {
+      noCourse = [{ body: 'Loading…' }];
+      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+    }
+    if (!lens) {
+      noCourse = [{ body: 'This race has no course attached. Import the official route into Garmin Connect, then set race.courseId in the plan — the next sync fetches the track and this page fills in.' }];
+      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+    }
+
+    this.maybeLoadActual();
+
+    // ---- header ------------------------------------------------------------
+    const days = this.daysToRace();
+    const totals = lens.totals || {};
+    const reported = lens.reportedTotals || {};
+    const gainLine = reported.gainM != null
+      ? Math.round(totals.gainM) + '–' + Math.round(reported.gainM) + ' m'
+      : Math.round(totals.gainM || 0) + ' m';
+    head = [{
+      name: lens.courseName || 'The course',
+      sub: 'From the Garmin course, ' + ((lens.perKm || []).length) + ' kilometre rows over ' +
+           ((lens.distanceM || 0) / 1000).toFixed(2) + ' km',
+      countdown: days == null ? '—' : (days > 0 ? String(days) : days === 0 ? 'TODAY' : '—'),
+      countdownLabel: days === 0 ? 'RACE DAY' : days > 0 ? 'DAYS TO GO' : 'RUN',
+      stats: [
+        { k: 'DISTANCE', v: ((lens.distanceM || 0) / 1000).toFixed(2) + ' km' },
+        { k: 'CLIMBING', v: gainLine },
+        { k: 'HIGH / LOW', v: Math.round(totals.maxElevM || 0) + ' / ' + Math.round(totals.minElevM || 0) + ' m' },
+        { k: 'ELEV COST', v: lens.elevationCostFraction != null
+            ? (lens.elevationCostFraction >= 0 ? '+' : '') + (lens.elevationCostFraction * 100).toFixed(2) + '%' : '—' },
+      ],
+      // Two sources disagree by ~40 % on this course; the page says so rather
+      // than silently picking one.
+      degraded: lens.degraded
+        ? [{ t: 'This course is missing elevation on ' +
+             Math.round((1 - (lens.elevationCoverage || 0)) * 100) + '% of its points — the profile below is indicative, not measured.' }]
+        : [],
+    }];
+
+    // ---- profile chart -----------------------------------------------------
+    const pts = lens.perKm || [];
+    if (cc && cv && R && pts.length) {
+      // x is DISTANCE in metres; one point per km row edge so the crosshair
+      // lands on a kilometre the table also shows.
+      const xs = pts.map((r) => r.endM);
+      const elev = pts.map((r) => r.elevEnd);
+      this._xs = xs;
+      this._xScale = cc.sharedXScale(xs);
+      const ci = this.state.cross;
+      const defs = [{
+        id: 'crs-elev', label: 'ELEVATION BY DISTANCE', h: 150, height: '150px',
+        ariaLabel: 'Course elevation by distance. Arrow keys to move the crosshair.',
+        policy: { minSpan: 40, tickCount: 4, fmt: cc.fmt.int }, unit: 'm',
+        series: [{ key: 'elev', name: 'Elevation', color: 'var(--series4)', values: elev, width: 1.6 }],
+        hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey },
+      }];
+      const specs = cc.multiTrackSpec(defs, {
+        values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km',
+        cross: ci != null ? { i: ci } : null,
+      });
+      const readout = [];
+      if (ci != null && pts[ci]) {
+        const r = pts[ci];
+        readout.push({ cells: [
+          { k: 'AT', v: (r.endM / 1000).toFixed(2) + ' km' },
+          { k: 'ELEV', v: (r.elevEnd == null ? '—' : Math.round(r.elevEnd) + ' m') },
+          { k: 'GRADE', v: cp ? cp.fmtGrade(r.grade) : '—' },
+        ] });
+        liveText = 'km ' + r.km + ', ' + Math.round(r.elevEnd) + ' m, grade ' + (cp ? cp.fmtGrade(r.grade) : '');
+      }
+      // Segment chips come from the DOCUMENT — the page never hardcodes where
+      // the wall is, because the next race has a different shape.
+      const segs = (lens.segments || []).slice(0, 4).map((s) => {
+        const up = s.kind === 'climb';
+        return {
+          label: (up ? '▲ ' : '▼ ') + 'km ' + s.startKm.toFixed(1) + '–' + s.endKm.toFixed(1) +
+                 ' · ' + (s.changeM >= 0 ? '+' : '') + Math.round(s.changeM) + ' m · ' +
+                 (cp ? cp.fmtGrade(s.grade) : ''),
+          style: 'padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;' +
+                 'border:1px solid ' + (up ? 'var(--warn)' : 'var(--accent2)') + ';color:' + (up ? 'var(--warn)' : 'var(--accent2)'),
+        };
+      });
+      profile = [{
+        sub: 'Smoothed over a ' + (lens.smoothHalfWindowM || 0) * 2 + ' m window — raw GPS elevation is too noisy to take a gradient from',
+        chart: cv.renderChart(specs[0], R),
+        readout, segments: segs,
+      }];
+    }
+
+    // ---- route on the basemap ---------------------------------------------
+    // Only with a stored rect: no rect means the tiles were never fetched, and
+    // the profile above is the substance anyway.
+    if (cc && cv && R && lens.map && lens.track && lens.track.lat) {
+      const proj = cc.projectTrackMercator(lens.track.lat, lens.track.lon, lens.map);
+      if (proj) {
+        const size = proj.size || 300;
+        const tiles = cc.tileLayout(lens.map).map((t) => ({
+          href: 'api/archive/tiles/' + t.z + '/' + t.x + '/' + t.y + '.png', px: t.px, py: t.py,
+        }));
+        trace = [{
+          title: 'The route',
+          sub: 'Basemap © OpenStreetMap contributors — tiles served from this archive',
+          chart: cv.renderTrace(proj, R, { w: size, h: size, tiles, ariaLabel: 'Course route' }),
+        }];
+      }
+    }
+
+    // ---- pace plan ---------------------------------------------------------
+    const active = this.activeTarget();
+    if (cp && active) {
+      const decline = this.state.decline;
+      const threshold = lens.steepDescentThreshold != null ? lens.steepDescentThreshold : -0.02;
+      const rows = cp.paceTable(lens, active.secs, decline ? threshold : null);
+      const flatBase = cp.basePaceSecPerKm(lens, active.secs);
+      const decisive = cp.decisiveKm(lens);
+      const cautionSecs = (lens.steepDescentGiveawayFraction || 0) * active.secs;
+
+      plan = [{
+        sub: 'Computed from the stored model — any target, no pipeline change',
+        targets: [...this.targetOptions().map((t) => ({
+          label: t.label, on: String(active.key === t.key),
+          pick: () => this.setState({ target: t.key }),
+        }))],
+        caution: [{
+          label: decline ? 'Descent declined' : 'Model-optimal',
+          on: String(decline),
+          title: 'Toggle whether the steep descent’s free speed is taken',
+          pick: () => this.setState({ decline: !decline }),
+        }],
+        note: decline
+          ? 'Descent benefit refused below ' + cp.fmtGrade(threshold) + ' — the shin protocol. That choice costs about ' +
+            Math.round(cautionSecs) + ' s, which has to come from the rest of the course. It is a price, not a mistake.'
+          : 'Every descent taken at its full modelled benefit. On this course that is worth about ' +
+            Math.round(cautionSecs) + ' s against the cautious plan — most of it in the two kilometres after the climb.',
+        rows: rows.map((r) => {
+          const kind = decisive.get(r.km);
+          const delta = flatBase == null ? null : r.paceSecPerKm - flatBase;
+          return {
+            km: r.partial ? ((lens.distanceM || 0) / 1000).toFixed(1) : String(r.km),
+            grade: cp.fmtGrade(r.grade),
+            pace: cp.fmtPace(r.paceSecPerKm),
+            delta: delta == null ? '—' : (delta >= 0 ? '+' : '−') + Math.abs(Math.round(delta)) + ' s',
+            elapsed: cp.fmtDuration(r.cumulativeSeconds),
+            style: kind === 'climb' ? 'background:color-mix(in srgb, var(--warn) 12%, transparent)'
+                 : kind === 'descent' ? 'background:color-mix(in srgb, var(--accent2) 12%, transparent)' : '',
+          };
+        }),
+        model: (lens.model && lens.model.calibrated)
+          ? 'Grade cost: ' + lens.model.curve + ' scaled by ' + lens.model.damping +
+            ', fitted to ' + (lens.model.samples || 0).toLocaleString() + ' samples of your own running across ' +
+            (lens.model.bins || 0) + ' grade bins (residual ' + lens.model.residual + '). Flat-equivalent base ' +
+            cp.fmtPace(flatBase) + '.'
+          : 'Grade cost: ' + ((lens.model && lens.model.curve) || 'uncalibrated') +
+            ' — NOT calibrated to your running (' + ((lens.model && lens.model.fallbackReason) || 'no fit') +
+            '), so treat these targets as indicative.',
+      }];
+    }
+
+    // ---- post-race overlay -------------------------------------------------
+    if (this.state.actualStatus === 'ready' && this.state.actual && cp && active) {
+      const cmp = this.compare(lens, this.state.actual, active);
+      if (cmp) overlay = [cmp];
+    }
+
+    return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+  }
+
+  // Align the actual run onto the course's distance grid and attribute the
+  // difference (design D6): distance, not time, because the two series share no
+  // clock — and the actual total is normalised first, since GPS drifts by tens
+  // of metres over 21 km and an unnormalised join would smear the wall across
+  // two kilometres.
+  compare(lens, actual, target) {
+    const cp = this._cp, cc = this._cc, cv = this._cv;
+    const R = (typeof React !== 'undefined') ? React : null;
+    const S = actual.streams || {};
+    if (!S.d || !S.t || S.d.length < 10) return null;
+    const courseTotal = lens.distanceM || 0;
+    const actualTotal = S.d[S.d.length - 1];
+    if (!(courseTotal > 0) || !(actualTotal > 0)) return null;
+    const scale = courseTotal / actualTotal;
+
+    const plan = cp.paceTable(lens, target.secs,
+      this.state.decline ? (lens.steepDescentThreshold != null ? lens.steepDescentThreshold : -0.02) : null);
+    const rows = [];
+    for (const r of plan) {
+      const a0 = this.timeAtDistance(S, r.km * 1000 - r.lengthM, scale);
+      const a1 = this.timeAtDistance(S, r.km * 1000, scale);
+      if (a0 == null || a1 == null) continue;
+      const actualSecs = a1 - a0;
+      rows.push({ km: r.km, grade: r.grade, planned: r.secondsForKm, actual: actualSecs,
+                  delta: actualSecs - r.secondsForKm });
+    }
+    if (!rows.length) return null;
+
+    const bucket = (pred) => rows.filter(pred).reduce((a, r) => a + r.delta, 0);
+    const climbDelta = bucket((r) => r.grade != null && r.grade > 0.02);
+    const descDelta = bucket((r) => r.grade != null && r.grade < -0.02);
+    const flatDelta = bucket((r) => r.grade == null || Math.abs(r.grade) <= 0.02);
+    const totalDelta = climbDelta + descDelta + flatDelta;
+
+    // The question that matters after this particular race: what happened in
+    // the kilometres AFTER the steep descent — where a shin problem or trashed
+    // quads would announce themselves.
+    const descents = (lens.segments || []).filter((s) => s.kind === 'descent');
+    const lastDescentKm = descents.length ? Math.ceil(Math.max(...descents.map((s) => s.endKm))) : null;
+    const after = lastDescentKm == null ? [] : rows.filter((r) => r.km > lastDescentKm && r.km <= lastDescentKm + 3);
+    const afterDelta = after.reduce((a, r) => a + r.delta, 0);
+
+    let chart = null;
+    if (cc && cv && R) {
+      const xs = rows.map((r) => r.km * 1000);
+      const defs = [{
+        id: 'crs-cmp', label: 'SECONDS LOST (+) OR GAINED (−) PER KILOMETRE', h: 130, height: '130px',
+        ariaLabel: 'Actual versus target pace per kilometre.',
+        policy: { minSpan: 20, tickCount: 4, fmt: cc.fmt.int }, unit: 's',
+        series: [{ key: 'delta', name: 'vs target', color: 'var(--series1)', values: rows.map((r) => r.delta), width: 1.6 }],
+      }];
+      const specs = cc.multiTrackSpec(defs, { values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km', cross: null });
+      chart = cv.renderChart(specs[0], R);
+    }
+
+    const sign = (v) => (v >= 0 ? '+' : '−') + Math.abs(Math.round(v)) + ' s';
+    const col = (v) => (v > 2 ? 'var(--warn)' : v < -2 ? 'var(--accent2)' : 'var(--fg)');
+    return {
+      title: 'How it actually went',
+      sub: (actual.run && actual.run.name ? actual.run.name + ' · ' : '') +
+           'aligned on distance against the ' + target.label + ' plan',
+      chart,
+      stats: [
+        { k: 'ON THE CLIMBS', v: sign(climbDelta), color: col(climbDelta) },
+        { k: 'ON THE DESCENTS', v: sign(descDelta), color: col(descDelta) },
+        { k: 'ON THE FLAT', v: sign(flatDelta), color: col(flatDelta) },
+        { k: 'OVERALL', v: sign(totalDelta), color: col(totalDelta) },
+      ],
+      verdict: lastDescentKm == null || !after.length
+        ? 'No descent to read the aftermath of.'
+        : 'In the ' + after.length + ' km after the descent you were ' + sign(afterDelta) +
+          ' against target — that stretch is where a shin problem or spent quads would show first.',
+    };
+  }
+
+  // Elapsed time at a course distance, reading the actual run's own distance
+  // axis scaled onto the course. Linear interpolation between samples; null
+  // outside the run's range so a short or long recording never fabricates a km.
+  timeAtDistance(S, courseMetres, scale) {
+    if (courseMetres <= 0) return S.t[0];
+    const want = courseMetres / scale;
+    const d = S.d;
+    if (want > d[d.length - 1]) return null;
+    let lo = 0, hi = d.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (d[mid] < want) lo = mid + 1; else hi = mid; }
+    if (lo === 0) return S.t[0];
+    const d0 = d[lo - 1], d1 = d[lo], t0 = S.t[lo - 1], t1 = S.t[lo];
+    if (d1 === d0) return t1;
+    return t0 + (t1 - t0) * ((want - d0) / (d1 - d0));
+  }
+}
+</script>
+</body>
+</html>

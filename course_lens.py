@@ -491,6 +491,7 @@ def build_lens(points: dict, model: dict, raw_totals: dict | None = None) -> dic
     coverage = elevation_coverage(points)
     return {
         "lensVersion": COURSE_LENS_VERSION,
+        "track": downsample_track(points),
         "descentGiveawayFraction": _giveaway(per_km, weighted, 0.0),
         "steepDescentGiveawayFraction": _giveaway(per_km, weighted, -SEGMENT_MIN_GRADE),
         "steepDescentThreshold": -SEGMENT_MIN_GRADE,
@@ -505,6 +506,28 @@ def build_lens(points: dict, model: dict, raw_totals: dict | None = None) -> dic
         "elevationCostFraction": None if cost_fraction is None else round(cost_fraction, 5),
         "comparison": None,          # filled once a matching activity exists
     }
+
+
+TRACK_MAX_POINTS = 320
+
+
+def downsample_track(points: dict, limit: int = TRACK_MAX_POINTS) -> dict:
+    """The route reduced to a drawable polyline.
+
+    The document rides inside `garmin-data.js`, which the cockpit loads on every
+    page, so shipping all 1 196 lat/lon pairs to draw a 300 px map would be rent
+    nobody collects. Evenly spaced sampling keeps the shape (the endpoints are
+    always retained) at a twentieth of the bytes. The FULL track stays in
+    `points_json` for anything that needs it."""
+    lat, lon = points.get("lat") or [], points.get("lon") or []
+    n = min(len(lat), len(lon))
+    if n == 0:
+        return {}
+    if n <= limit:
+        return {"lat": lat[:n], "lon": lon[:n]}
+    step = (n - 1) / (limit - 1)
+    idx = sorted({int(round(i * step)) for i in range(limit)} | {0, n - 1})
+    return {"lat": [lat[i] for i in idx], "lon": [lon[i] for i in idx]}
 
 
 def _giveaway(per_km: list, weighted: float, threshold: float):
@@ -631,3 +654,23 @@ def _derive_and_store(conn, course_id: int, raw: dict | None, points: dict,
         conn, course_id, name, None, distance, gain, loss, bbox, points,
         COURSE_LENS_VERSION, lens, update_date, fetched_at)
     return activity_archive.course_document(conn, course_id)
+
+
+def course_map_step(conn, course_id: int, log=print) -> str:
+    """Fetch the course's basemap tiles, reusing route-basemap's policy and
+    throttle wholesale. Separated from derivation so a tile-server outage costs
+    the map and nothing else — the profile and the pace plan never depend on
+    it (design D8)."""
+    points = activity_archive.course_points(conn, course_id)
+    if not points:
+        return "skipped"
+    try:
+        status = activity_archive.ensure_course_map(conn, course_id, points)
+    except Exception as ex:  # noqa: BLE001 — the map is the least of the page
+        log(f"  course map : failed ({type(ex).__name__})")
+        return "failed"
+    if status == "done":
+        log("  course map : basemap tiles complete")
+    elif status == "failed":
+        log("  course map : tile fetch incomplete — the profile renders without it")
+    return status

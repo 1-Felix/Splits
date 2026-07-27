@@ -104,10 +104,28 @@ its three real reps measure 5:52 / 6:21 / 6:06 and only two clear it.
 Fix: a **trailing/windowed baseline** — price each run against the athlete you
 were within, say, ±6 months of it. Highest-value follow-up in this file.
 
-Worth knowing before you build it: that run is one of the 7
-`hasIntensityIntervals` runs, so once its laps land it takes the lap path and
-the calibration boundary stops mattering *for it*. The windowed baseline may
-matter less than it looks. Measure before building.
+**UPDATE 2026-07-28, measured in production — this is now much lower priority.**
+The whole-branch reviewer predicted that once this run's laps landed it would
+take the lap path and the calibration boundary would stop mattering for it.
+That is exactly what happened. After the lap backfill and the rescore it reads:
+
+```
+5×1 km   Tempo: 5x 1km (Pace 6:00-6:10)   [1000, 1000, 1000, 1000, 926]   source=laps, conf 1.00
+```
+
+So the one piece of hard evidence motivating a windowed baseline has evaporated.
+Every genuinely-structured workout the athlete has run carries Garmin lap data
+and now takes the device path, where the calibration floor is not consulted at
+all. The all-time baseline only governs runs the watch did *not* record as
+structured — where a false positive matters more than a false negative anyway.
+
+**Do not build this without new evidence.** Measure first: find a run you know
+was a workout, that has no usable lap structure, and that reads `steady`. If you
+cannot find one, the windowed baseline is solving a problem you no longer have.
+
+(The skip in `test_interval_truth.py` is now stale in its *reasoning* — the run
+still reads `steady` against a local archive with no laps banked, so the test is
+correct as written, but the recorded cause no longer applies in production.)
 
 ### P2.4 No distill version marker on the Garmin side
 

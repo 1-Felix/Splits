@@ -38,6 +38,13 @@ PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 ROUND_DIST_TOLERANCE = 0.12   # relative error within which a rep snaps to a named distance
 AUTOLAP_TOLERANCE = 0.05      # laps all within ±5 % of 1 km / 1 mile = auto-lap
 AUTOLAP_UNITS = (1000.0, 1609.34)
+CONFIDENCE_ASSERT_MIN = 0.5   # below this the UI says "possible", never asserts
+# Zone boundary fractions — the values ingest_builder has always used, moved
+# here as THE definition (Task 11 rewrites ingest_builder._zone_bounds to
+# delegate here), so the two producers cannot drift on what "Z4" means. Six
+# entries: _zone_of reads bounds[1:5] as the 60/70/80/90 % cut points and the
+# trailing 1.00 closes the top.
+ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)
 
 # Garmin intensityType → our role vocabulary. Anything unrecognised is work:
 # an unlabelled lap inside a structured workout is far more likely a rep than
@@ -378,3 +385,192 @@ def segments_from_laps(laps: list[dict]) -> list[dict]:
         t0 += dur
         d0 += dist
     return segs
+
+
+def _segments_from_bouts(bouts, series, dist_at, hr, total_s) -> list[dict]:
+    """Bouts → the full segment list, with the gaps between them named. The
+    first gap is a warmup and the last a cooldown; everything between is a
+    recovery, because that is what it was."""
+    edges = []
+    cursor = 0
+    for i, (a, b) in enumerate(bouts):
+        if a > cursor:
+            role = "warmup" if i == 0 else "recovery"
+            edges.append((cursor, a, role))
+        edges.append((a, b, "work"))
+        cursor = b
+    if cursor < total_s:
+        edges.append((cursor, total_s, "cooldown" if bouts else "steady"))
+
+    segs, rep = [], 0
+    for idx, (a, b, role) in enumerate(edges):
+        if b - a < 1:
+            continue
+        if role == "work":
+            rep += 1
+        mps = _mean(series[a:b])
+        seg = {
+            "idx": idx + 1, "role": role,
+            "t0": a, "t1": b,
+            "d0": int(round(dist_at(a))), "d1": int(round(dist_at(b))),
+            "durS": b - a, "distM": int(round(dist_at(b) - dist_at(a))),
+            "paceS": _pace_s_per_km(mps or 0),
+            "gapS": None,
+            "hr": int(round(_mean(hr[a:b]))) if hr and _mean(hr[a:b]) else None,
+            "cad": None,
+        }
+        if role == "work":
+            seg["rep"] = rep
+        segs.append(seg)
+    return segs
+
+
+def _confidence(separation: float, bouts, series, cv) -> float:
+    """Three factors, multiplied and clamped (spec): how far apart the two pace
+    classes sit, how crisp the boundaries are, and — for a set — how regular
+    the reps were. Lap-sourced documents skip this entirely at 1.0."""
+    sep_factor = min(1.0, max(0.0, (separation - SEPARATION_MIN) / 0.25 + 0.4))
+    crisp = 1.0
+    if bouts:
+        widths = [b - a for a, b in bouts]
+        shortest = min(widths)
+        crisp = min(1.0, shortest / (2.0 * WORK_MIN_S))
+    regular = 1.0 if cv is None else min(1.0, max(0.3, 1.0 - cv / 15.0))
+    return round(min(1.0, max(0.0, sep_factor * crisp * regular)), 2)
+
+
+def zone_bounds(max_hr: int, rhr=None) -> list[int]:
+    """The six zone boundaries — Karvonen HR-reserve when resting HR is known,
+    plain %max otherwise. THE single definition: `ingest_builder._zone_bounds`
+    is rewritten in Task 11 to delegate here, so the two producers cannot drift
+    apart on what "Z4" means and the formula exists exactly once."""
+    if rhr and 0 < rhr < max_hr:
+        return [round(rhr + f * (max_hr - rhr)) for f in ZONE_FRACTIONS]
+    return [round(max_hr * f) for f in ZONE_FRACTIONS]
+
+
+def _zone_of(bpm: float, bounds: list[int]) -> int:
+    z = 1 + sum(1 for c in bounds[1:5] if bpm >= c)
+    return max(1, min(5, z))
+
+
+def _quality(segments: list[dict], bounds: list[int] | None) -> dict:
+    """What the coaching layer consumes (Change 2): how much genuinely hard
+    running this session contained. Consumers depend on this and on `set` —
+    never on `segments`.
+
+    `zone` is the TIME-WEIGHTED modal zone across the work segments: a 4 km rep
+    must not be outvoted by two 400 m ones. Null without HR or without bounds —
+    a guessed zone is worse than no zone."""
+    work = [s for s in segments if s["role"] == "work"]
+    zone = None
+    if bounds:
+        weight: dict[int, float] = {}
+        for s in work:
+            if s.get("hr"):
+                z = _zone_of(s["hr"], bounds)
+                weight[z] = weight.get(z, 0) + s["durS"]
+        if weight:
+            zone = "Z" + str(max(weight, key=lambda k: weight[k]))
+    return {
+        "workDistM": sum(s["distM"] for s in work),
+        "workDurS": sum(s["durS"] for s in work),
+        "zone": zone,
+    }
+
+
+def build_document(streams: dict | None, summary: dict | None = None,
+                   laps: list[dict] | None = None,
+                   prior: dict | None = None,
+                   bounds: list[int] | None = None) -> dict | None:
+    """The ONE entry point both producers call. Returns the interval document,
+    or None when the run carries no usable speed signal at all.
+
+    Order of authority (design D1/D8): structured device laps win outright;
+    otherwise the stream decides, optionally sharpened by a plan prior. In this
+    change `prior` is always None — the parameter exists so Change 2 can fill
+    it without reshaping the contract."""
+    summary = summary or {}
+    series_raw = speed_series(streams or {})
+    if not series_raw:
+        return None
+
+    base = {"version": INTERVAL_VERSION, "guidedBy": None}
+
+    if laps and laps_are_structured(summary, laps):
+        segments = segments_from_laps(laps)
+        work = [s for s in segments if s["role"] == "work"]
+        paces = [s["paceS"] for s in work if s["paceS"]]
+        mean_pace = _mean(paces)
+        cv = None
+        if mean_pace and len(paces) > 1:
+            var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
+            cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
+        shape = "reps" if len(work) >= 2 else ("block" if work else "steady")
+        dists = sorted(s["distM"] for s in work)
+        nominal = dists[len(dists) // 2] if dists else 0
+        varied = bool(nominal) and (dists[-1] - dists[0]) / nominal > VARIED_TOLERANCE
+        return {
+            **base,
+            "shape": shape, "source": "laps", "confidence": 1.0,
+            "label": (f"{len(work)}×{_round_dist(nominal)}"
+                      if shape == "reps" and not varied else None),
+            "segments": segments,
+            "set": None if shape != "reps" else {
+                "found": len(work), "prescribed": None,
+                "nominalDistM": None if varied else (nominal or None),
+                "varied": varied,
+                "paceS": int(round(mean_pace)) if mean_pace else None,
+                "paceCvPct": cv, "fadePct":
+                    round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+                    if len(paces) > 1 and paces[0] else None,
+                "recoveryS": None, "recoveryHrDrop": None,
+                "reps": [{"durS": s["durS"], "distM": s["distM"],
+                          "paceS": s["paceS"], "hr": s["hr"]} for s in work],
+            },
+            "quality": _quality(segments, bounds),
+        }
+
+    series = smooth(series_raw)
+    dist_at = distance_fn(streams or {})
+    hr = _hr_grid(streams or {}, len(series))
+    classes = split_classes(series)
+    bouts = find_bouts(series, dist_at, classes[0], classes[1]) if classes else []
+    expect = (prior or {}).get("count")
+    shape = classify(bouts, series, dist_at, expect)
+    if shape in ("steady", "progression"):
+        bouts = []
+    stats = set_stats(bouts, series, dist_at, hr) if shape == "reps" else None
+    segments = (_segments_from_bouts(bouts, series, dist_at, hr, len(series))
+                if shape != "steady" else [])
+    return {
+        **base,
+        "shape": shape, "source": "stream",
+        "confidence": _confidence(classes[2] if classes else 0.0, bouts, series,
+                                  stats["paceCvPct"] if stats else None),
+        "label": label_for(shape, bouts, dist_at),
+        "segments": segments,
+        "set": stats,
+        "quality": _quality(segments, bounds),
+    }
+
+
+def _hr_grid(streams: dict, length: int) -> list:
+    """HR on the same 1 Hz grid as the speed series, last-value-held."""
+    t = streams.get("t") or []
+    hr = streams.get("hr") or []
+    if len(t) < 2 or len(hr) != len(t):
+        return []
+    t0 = int(t[0])
+    grid: list = [None] * length
+    for i, ts in enumerate(t):
+        k = int(ts) - t0
+        if 0 <= k < length and hr[i] is not None:
+            grid[k] = float(hr[i])
+    held = None
+    for k in range(length):
+        if grid[k] is None:
+            grid[k] = held
+        else:
+            held = grid[k]
+    return grid

@@ -475,3 +475,119 @@ def test_unrecognised_intensity_defaults_to_work():
     laps = [_lap(1000, 330, "SPRINT")]
     segs = il.segments_from_laps(laps)
     assert segs[0]["role"] == "work"
+
+
+# ── build_document — the one entry point ─────────────────────────────────────
+
+def test_document_shape_for_a_rep_session():
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    doc = il.build_document(s)
+    assert doc["version"] == il.INTERVAL_VERSION
+    assert doc["shape"] == "reps"
+    assert doc["source"] == "stream"
+    assert doc["label"] == "5×1 km"
+    assert doc["guidedBy"] is None            # blind in Change 1 (design D8)
+    assert doc["set"]["found"] == 5
+    assert doc["quality"]["workDistM"] > 4500
+
+
+def test_steady_run_still_gets_a_document():
+    """'Looked, found nothing' must never look like 'never looked'."""
+    doc = il.build_document(make_streams([(2400, 3.0)]))
+    assert doc["shape"] == "steady"
+    assert doc["segments"] == []
+    assert doc["set"] is None
+
+
+def test_no_streams_means_no_document():
+    """Some of Max's runs carry no SpeedRecord at all."""
+    assert il.build_document(None) is None
+    assert il.build_document({"t": [], "d": []}) is None
+
+
+def test_structured_laps_win_over_the_stream():
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 250, "ACTIVE"),
+            _lap(150, 60, "REST"), _lap(1000, 250, "ACTIVE"),
+            _lap(1000, 360, "COOLDOWN")]
+    doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
+    assert doc["source"] == "laps"
+    assert doc["confidence"] == 1.0
+    assert doc["set"]["found"] == 2        # the laps say 2, and the laps win
+
+
+def test_autolap_falls_through_to_the_stream():
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    laps = [_lap(1000, 330) for _ in range(8)]
+    doc = il.build_document(s, {"workoutId": 9}, laps)
+    assert doc["source"] == "stream"
+    assert doc["set"]["found"] == 5
+
+
+def test_segments_cover_warmup_reps_and_cooldown():
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 3 + [(300, 2.6)])
+    roles = [seg["role"] for seg in il.build_document(s)["segments"]]
+    assert roles[0] == "warmup"
+    assert roles[-1] == "cooldown"
+    assert roles.count("work") == 3
+    assert roles.count("recovery") == 2
+
+
+def test_quality_zone_is_time_weighted():
+    """A 4 km rep must not be outvoted by two 400 m ones.
+
+    FIXTURE FIX: the brief's original fixture applied a single uniform HR
+    (175) across the WHOLE stream via make_streams' one hr= argument, so
+    every segment — work, recovery, warmup, cooldown alike — read the same
+    HR. That can't distinguish time-weighting from a naive per-segment vote
+    (there was only ever one candidate zone), and worse, its expected answer
+    was arithmetically wrong: zone_bounds(195) == [98, 117, 136, 156, 176,
+    195] (verified directly — round(195*0.90) is 176 under Python's actual
+    float rounding, not 175), so hr=175 sits ONE beat under the Z4/Z5 cut at
+    176 and lands in Z4, never Z5.
+
+    Rebuilt so the property is real: one long rep (600 s) at a Z5 heart rate
+    outweighs two short reps (60 s each) at a Z3 heart rate. A segment-count
+    vote would read Z3 (2 segments beat 1); the time-weighted vote must read
+    Z5 (600 s beats 120 s) — which is also the brief's original expected
+    value, so only the fixture changed, not the assertion.
+    """
+    spans = [(300, 2.6), (600, 4.0), (60, 2.2), (60, 4.0), (60, 2.2), (60, 4.0), (300, 2.6)]
+    s = make_streams(spans)
+    bounds = il.zone_bounds(195)
+    edges, cursor = [], 0
+    for dur, _ in spans:
+        edges.append((cursor, cursor + dur))
+        cursor += dur
+    (_, _), (w1a, w1b), (_, _), (w2a, w2b), (_, _), (w3a, w3b), (_, _) = edges
+    for i in range(w1a, w1b):
+        s["hr"][i] = 185                       # Z5 — the dominant-duration rep
+    for i in range(w2a, w2b):
+        s["hr"][i] = 145                       # Z3 — short
+    for i in range(w3a, w3b):
+        s["hr"][i] = 145                       # Z3 — short
+    doc = il.build_document(s, bounds=bounds)
+    assert doc["set"]["found"] == 3
+    assert doc["quality"]["zone"] == "Z5"
+
+
+def test_quality_zone_is_null_without_bounds():
+    """A guessed zone is worse than no zone."""
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    assert il.build_document(s)["quality"]["zone"] is None
+
+
+def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
+    """Karvonen when rhr is known, plain %max otherwise — the beginner-honest
+    model. (ingest_builder delegates here, so this is the only definition.)"""
+    assert il.zone_bounds(190) == [95, 114, 133, 152, 171, 190]
+    assert il.zone_bounds(190, 48) == [119, 133, 147, 162, 176, 190]
+
+
+def test_confidence_is_higher_for_a_crisp_set():
+    crisp = il.build_document(
+        make_streams([(600, 2.6)] + [(250, 4.2), (60, 2.2)] * 5 + [(300, 2.6)]))
+    ragged = il.build_document(
+        make_streams([(600, 2.8)] + [(250, 3.3), (60, 2.6)] * 5 + [(300, 2.8)]))
+    assert crisp["confidence"] > ragged["confidence"]
+    assert 0.0 <= ragged["confidence"] <= 1.0

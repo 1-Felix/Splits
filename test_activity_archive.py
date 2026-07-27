@@ -1296,6 +1296,42 @@ def test_schema_v11_tables_exist():
     conn.close()
 
 
+def test_v11_migration_recovers_from_interrupted_alter():
+    """Each `sqlite3` ALTER is its own implicit-autocommit DDL statement, so a
+    process death between the two v11 ALTERs is a real possibility: laps_json
+    lands, laps_fetched_at never does. A later reopen must still add the
+    missing column — a single guard keyed only on laps_json would see it
+    present and skip the whole block, permanently losing laps_fetched_at on
+    an archive that cannot be rebuilt from this branch."""
+    import sqlite3
+    d = _tmp()
+    conn = sqlite3.connect(arch.archive_path(d))
+    conn.executescript(arch.SCHEMA_SQL)
+    conn.executescript(arch.SCHEMA_V2_SQL)
+    conn.executescript(arch.SCHEMA_V3_SQL)
+    arch._apply_schema_v4(conn)
+    arch._apply_schema_v5(conn)
+    arch._apply_schema_v6(conn)
+    arch._apply_schema_v7(conn)
+    conn.executescript(arch.SCHEMA_V8_SQL)
+    conn.executescript(arch.SCHEMA_V9_SQL)
+    conn.executescript(arch.SCHEMA_V10_SQL)
+    # simulate a v11 migration interrupted right after its first ALTER
+    conn.execute("ALTER TABLE activities ADD COLUMN laps_json TEXT")
+    conn.execute("INSERT INTO archive_meta (key, value) VALUES ('schema_version', '10')")
+    conn.commit()
+    conn.close()
+
+    reopened = arch.open_archive(d)  # must heal the gap, not skip it
+    cols = {row[1] for row in reopened.execute("PRAGMA table_info(activities)")}
+    assert "laps_json" in cols
+    assert "laps_fetched_at" in cols, \
+        "each v11 column must be guarded independently (like v5/v7), or a " \
+        "mid-migration crash permanently loses laps_fetched_at"
+    assert arch.get_meta(reopened, "schema_version") == "11"
+    reopened.close()
+
+
 def test_laps_are_write_once():
     conn = _seeded()
     assert arch.write_laps(conn, 1, [{"distance": 1000}]) is True

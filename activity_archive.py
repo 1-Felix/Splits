@@ -339,11 +339,17 @@ CREATE INDEX IF NOT EXISTS idx_run_intervals_shape ON run_intervals(shape);
 """
 
 
+_ACTIVITIES_V11_COLUMNS = (
+    ("laps_json", "TEXT"),
+    ("laps_fetched_at", "TEXT"),
+)
+
+
 def _apply_schema_v11(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(activities)")}
-    if "laps_json" not in cols:
-        conn.execute("ALTER TABLE activities ADD COLUMN laps_json TEXT")
-        conn.execute("ALTER TABLE activities ADD COLUMN laps_fetched_at TEXT")
+    for name, decl in _ACTIVITIES_V11_COLUMNS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE activities ADD COLUMN {name} {decl}")
 
 
 def _now() -> str:

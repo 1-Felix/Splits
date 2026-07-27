@@ -1263,6 +1263,84 @@ def test_sync_maps_pass_maps_gps_runs_and_ignores_treadmills():
     conn.close()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# schema v11 (add-interval-lens): run_intervals + write-once laps_json
+# ──────────────────────────────────────────────────────────────────────────────
+def _seeded():
+    """An archive with one archived, streamed run — the precondition every
+    interval test shares."""
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1, start="2026-07-10 06:00:00")])
+    arch.write_streams(conn, 1, {"t": [0, 1, 2], "d": [0, 3, 6], "v": [3.0, 3.0, 3.0]})
+    return conn
+
+
+def _interval_row(**over):
+    row = {"activity_id": 1, "lens_version": 1,
+           "start_time_local": "2026-07-10 06:00:00", "shape": "reps",
+           "label": "5×1 km", "confidence": 0.8, "source": "stream",
+           "work_dist_m": 5000, "work_dur_s": 1250,
+           "doc_json": '{"shape":"reps","label":"5×1 km"}'}
+    row.update(over)
+    return row
+
+
+def test_schema_v11_tables_exist():
+    conn = arch.open_archive(_tmp())
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "run_intervals" in names
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
+    assert "laps_json" in cols
+    assert arch.get_meta(conn, "schema_version") == "11"
+    conn.close()
+
+
+def test_laps_are_write_once():
+    conn = _seeded()
+    assert arch.write_laps(conn, 1, [{"distance": 1000}]) is True
+    assert arch.write_laps(conn, 1, [{"distance": 5}]) is False
+    assert arch.laps_payload(conn, 1)[0]["distance"] == 1000
+    conn.close()
+
+
+def test_empty_laps_are_refused():
+    conn = _seeded()
+    assert arch.write_laps(conn, 1, []) is False
+    assert arch.laps_payload(conn, 1) is None
+    conn.close()
+
+
+def test_stale_interval_rows_count_as_missing():
+    """A version bump must self-heal without a migration."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    assert arch.runs_missing_intervals(conn, 1) == []
+    assert len(arch.runs_missing_intervals(conn, 2)) == 1
+    conn.close()
+
+
+def test_interval_document_round_trips():
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row(
+        shape="block", label="20 min block",
+        doc_json='{"shape":"block","label":"20 min block"}'))
+    assert arch.interval_document(conn, 1)["label"] == "20 min block"
+    conn.close()
+
+
+def test_single_lap_runs_are_never_queued_for_lap_fetch():
+    """The archive's 42 single-lap runs must never cost a Garmin request."""
+    conn = arch.open_archive(_tmp())
+    solo = _act(1, start="2026-07-10 06:00:00")
+    solo["lapCount"] = 1
+    many = _act(2, start="2026-07-11 06:00:00")
+    many["lapCount"] = 13
+    arch.upsert_activities(conn, [solo, many])
+    assert arch.runs_missing_laps(conn) == [2]
+    conn.close()
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

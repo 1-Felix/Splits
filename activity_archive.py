@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -311,6 +311,41 @@ CREATE TABLE IF NOT EXISTS course_maps (
 """
 
 
+# Schema v11 (add-interval-lens, design D6): the run's STRUCTURE — which parts
+# of it were work. `run_intervals` is one row per run holding the full document
+# (`doc_json`); the promoted columns are the index over it, exactly as
+# `block_lens.block_json` and `course_lens.lens_json` work. Disposable-cache
+# semantics like run_metrics: always recomputable from streams + laps, keyed by
+# the engine's INTERVAL_VERSION, so a threshold change is a version bump and
+# never a migration. `activities.laps_json` is the raw Garmin lap payload,
+# write-once like detail_json — Health Connect never produces one.
+SCHEMA_V11_SQL = """
+CREATE TABLE IF NOT EXISTS run_intervals (
+  activity_id      INTEGER PRIMARY KEY REFERENCES activities(activity_id),
+  lens_version     INTEGER NOT NULL,
+  start_time_local TEXT NOT NULL,
+  shape            TEXT NOT NULL,
+  label            TEXT,
+  confidence       REAL,
+  source           TEXT NOT NULL,
+  work_dist_m      REAL,
+  work_dur_s       REAL,
+  doc_json         TEXT NOT NULL,
+  computed_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_intervals_start
+  ON run_intervals(start_time_local);
+CREATE INDEX IF NOT EXISTS idx_run_intervals_shape ON run_intervals(shape);
+"""
+
+
+def _apply_schema_v11(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(activities)")}
+    if "laps_json" not in cols:
+        conn.execute("ALTER TABLE activities ADD COLUMN laps_json TEXT")
+        conn.execute("ALTER TABLE activities ADD COLUMN laps_fetched_at TEXT")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -349,7 +384,9 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V8_SQL)
         conn.executescript(SCHEMA_V9_SQL)
         conn.executescript(SCHEMA_V10_SQL)
-        # Forward-only migration: v1→…→v10 is purely additive (CREATE IF
+        conn.executescript(SCHEMA_V11_SQL)
+        _apply_schema_v11(conn)
+        # Forward-only migration: v1→…→v11 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -560,6 +597,102 @@ def runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
             ORDER BY a.start_time_local""",
         (version,),
     ).fetchall()
+
+
+_RUN_INTERVALS_COLS = (
+    "activity_id", "lens_version", "start_time_local", "shape", "label",
+    "confidence", "source", "work_dist_m", "work_dur_s", "doc_json",
+)
+
+
+def write_laps(conn: sqlite3.Connection, activity_id, payload) -> bool:
+    """Store the RAW lap DTO list, write-once — same rule as write_detail: an
+    empty or failed fetch is refused, and existing laps are never overwritten.
+    Commits per call so an interrupted backfill keeps its completed work."""
+    if not payload:
+        return False
+    cur = conn.execute(
+        "UPDATE activities SET laps_json = ?, laps_fetched_at = ? "
+        "WHERE activity_id = ? AND laps_json IS NULL",
+        (json.dumps(payload, ensure_ascii=False), _now(), activity_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def laps_payload(conn: sqlite3.Connection, activity_id):
+    row = conn.execute(
+        "SELECT laps_json FROM activities WHERE activity_id = ?",
+        (activity_id,)).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def runs_missing_laps(conn: sqlite3.Connection, limit: int | None = None) -> list:
+    """Runs whose summary claims more than one lap but whose laps we have never
+    fetched. A one-lap run has nothing to fetch, which is why the archive's 42
+    single-lap runs never cost a request."""
+    sql = f"""SELECT a.activity_id FROM activities a
+              WHERE a.laps_json IS NULL AND {_RUN_TYPE_SQL}
+                AND json_extract(a.summary_json, '$.lapCount') > 1
+              ORDER BY a.start_time_local DESC"""
+    rows = (conn.execute(sql + " LIMIT ?", (limit,)).fetchall()
+            if limit is not None else conn.execute(sql).fetchall())
+    return [r[0] for r in rows]
+
+
+def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple]:
+    """(activity_id, start_time_local) of every archived run holding streams but
+    no run_intervals row at `version` — rows at a stale version count as
+    missing, which is how an INTERVAL_VERSION bump self-heals."""
+    return conn.execute(
+        f"""SELECT a.activity_id, a.start_time_local
+            FROM activities a
+            LEFT JOIN run_intervals i
+              ON i.activity_id = a.activity_id AND i.lens_version = ?
+            WHERE a.detail_streams_json IS NOT NULL
+              AND {_RUN_TYPE_SQL}
+              AND i.activity_id IS NULL
+            ORDER BY a.start_time_local""",
+        (version,),
+    ).fetchall()
+
+
+def upsert_run_intervals(conn: sqlite3.Connection, row: dict) -> None:
+    """INSERT OR REPLACE keyed by activity_id — derived rows are disposable, so
+    a recompute at a newer version simply replaces the stale row."""
+    conn.execute(
+        f"INSERT OR REPLACE INTO run_intervals "
+        f"({', '.join(_RUN_INTERVALS_COLS)}, computed_at) "
+        f"VALUES ({', '.join('?' * len(_RUN_INTERVALS_COLS))}, ?)",
+        tuple(row.get(c) for c in _RUN_INTERVALS_COLS) + (_now(),),
+    )
+    conn.commit()
+
+
+def interval_document(conn: sqlite3.Connection, activity_id) -> dict | None:
+    row = conn.execute(
+        "SELECT doc_json FROM run_intervals WHERE activity_id = ?",
+        (activity_id,)).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def intervals_coverage(conn: sqlite3.Connection, version: int) -> dict:
+    """The intervals section --verify-archive reports: streamed runs vs runs
+    holding a document at the current version, and the shape mix."""
+    streamed = conn.execute(
+        f"""SELECT COUNT(*) FROM activities a
+            WHERE a.detail_streams_json IS NOT NULL AND {_RUN_TYPE_SQL}"""
+    ).fetchone()[0]
+    scored = conn.execute(
+        "SELECT COUNT(*) FROM run_intervals WHERE lens_version = ?",
+        (version,)).fetchone()[0]
+    shapes = {r[0]: r[1] for r in conn.execute(
+        "SELECT shape, COUNT(*) FROM run_intervals WHERE lens_version = ? "
+        "GROUP BY shape", (version,))}
+    lapped = conn.execute(
+        "SELECT COUNT(*) FROM activities WHERE laps_json IS NOT NULL").fetchone()[0]
+    return {"streamed_runs": streamed, "scored": scored,
+            "shapes": shapes, "lapped": lapped}
 
 
 def detail_payload(conn: sqlite3.Connection, activity_id):

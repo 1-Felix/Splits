@@ -567,9 +567,17 @@ def _calibration(runs: list[dict], profile: dict, rhr_days: dict | None = None):
 
 def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
                        plan_goal: str | None = None,
-                       rhr_days: dict | None = None) -> dict:
+                       rhr_days: dict | None = None,
+                       calibration: tuple | None = None) -> dict:
+    # `calibration` (add-interval-lens Task 11 fix round): (max_hr, rhr,
+    # work_floor), precomputed ONCE by a caller that also calls
+    # `build_archive` on the same `runs` (`main()`) — `_work_floor` rescans
+    # every run's samples, so computing it twice per build for a guaranteed-
+    # identical result is wasted work on a real archive. None (every existing
+    # caller, including every test in this file) falls back to computing it
+    # here, unchanged from before this fix round.
     runs = [r for r in runs if _usable(r)]
-    max_hr, rhr, work_floor = _calibration(runs, profile, rhr_days)
+    max_hr, rhr, work_floor = calibration or _calibration(runs, profile, rhr_days)
     week_km, week_runs = weekly_volume(runs, today)
     ctl, atl = fitness_fatigue(runs, max_hr, today)
     start_month, pace, cad = monthly_pace(runs)
@@ -785,13 +793,21 @@ def _upsert_archive_row(conn, aid: int, run: dict) -> bool:
 
 def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                   rhr_days: dict | None = None,
-                  prune_uids: list[str] | None = None) -> int:
+                  prune_uids: list[str] | None = None,
+                  calibration: tuple | None = None) -> int:
     """The archive build pass: upsert every usable banked run into
     activity-archive.db and bring its derived artifacts (columnar streams,
     distilled detail, run_metrics) to the current versions. Write-once in the
     steady state — derived artifacts are recomputed only when missing, when a
     version marker moved (design D8), or when the banked payload itself changed
-    (a re-pushed run). Returns the number of archived runs."""
+    (a re-pushed run). Returns the number of archived runs.
+
+    `calibration` (add-interval-lens Task 11 fix round): see
+    `build_athlete_data` — precompute once in `main()` and pass the SAME
+    tuple here to avoid a second `_work_floor` sweep over every run's
+    samples for a result identical to `build_athlete_data`'s. None (every
+    existing caller, including every test in this file) falls back to
+    computing it here, unchanged from before this fix round."""
     runs = sorted((r for r in runs if _usable(r) and r.get("sessionUid")),
                   key=lambda r: r["startTimeLocal"])
     if not runs:
@@ -799,7 +815,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
         # rather than creating an empty archive that would flip /api/status's
         # `archive` flag and reveal empty archive chrome on a fresh instance
         return 0
-    max_hr, rhr, work_floor = _calibration(runs, profile, rhr_days)
+    max_hr, rhr, work_floor = calibration or _calibration(runs, profile, rhr_days)
     conn = activity_archive.open_archive(Path(data_dir))
     try:
         # a run that lost a duplicate group must leave the archive too, or
@@ -928,15 +944,24 @@ def main() -> None:
               f"{winner['distanceM'] / 1000:.2f} km ({winner.get('source')}) — dropped",
               flush=True)
 
+    # add-interval-lens Task 11 fix round: compute (max_hr, rhr, work_floor)
+    # ONCE here and thread the SAME tuple into both build_athlete_data and
+    # build_archive below — they used to each call `_calibration` (and its
+    # `_work_floor`, which rescans every run's own columnar samples)
+    # independently on this same `runs` list for a guaranteed-identical
+    # result, doubling that scan for no reason on a real archive.
+    calibration = _calibration(runs, profile, rhr_days)
+
     data = build_athlete_data(runs, profile, dt.date.today(), _plan_goal(data_dir),
-                              rhr_days=rhr_days)
+                              rhr_days=rhr_days, calibration=calibration)
     tmp = data_dir / f".garmin-data.{os.getpid()}.tmp.js"
     tmp.write_text(build_garmin_data_js(data), encoding="utf-8")
     tmp.replace(data_dir / "garmin-data.js")
     print(f"✓ built garmin-data.js from {len(runs)} ingested run(s)", flush=True)
     try:
         n = build_archive(data_dir, runs, profile, rhr_days,
-                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates])
+                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates],
+                          calibration=calibration)
         print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
     except Exception as e:  # noqa: BLE001 — the archive is a derived cache; a
         # failure here must never sink the telemetry build (task 3.7)

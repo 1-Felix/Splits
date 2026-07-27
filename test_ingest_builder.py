@@ -740,20 +740,59 @@ def test_empty_store_is_safe():
 
 
 # ── the contract: compact interval summary (add-interval-lens Task 11) ──────
+# Shared by _interval_run() (Health Connect shape) AND _garmin_raw_detail()
+# (Garmin shape) below — the SAME physical run (per-second speed + HR), so a
+# genuine cross-pipeline parity test can be built from it without the two
+# fixtures silently drifting apart from each other over time.
+_PARITY_SPANS = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 4 + [(300, 2.6)]
+
+
+def _parity_hr(mps: float) -> int:
+    return 150 if mps > 3 else 130
+
+
 def _interval_run():
     """A Health Connect run with a real 4×1 km inside it."""
-    spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 4 + [(300, 2.6)]
+    spans = _PARITY_SPANS
     speed, hr, clock = [], [], 0
     for dur, mps in spans:
         for _ in range(dur):
             speed.append({"tSec": clock, "mps": mps})
-            hr.append({"tSec": clock, "bpm": 150 if mps > 3 else 130})
+            hr.append({"tSec": clock, "bpm": _parity_hr(mps)})
             clock += 1
     total_m = sum(dur * mps for dur, mps in spans)
     return {"sessionUid": "iv", "startTimeLocal": "2026-07-15T07:00:00",
             "durationS": clock, "distanceM": total_m, "avgHr": 145,
             "sportType": "running", "avgSpeed": total_m / clock,
             "source": "shealth", "speedSamples": speed, "hrSamples": hr}
+
+
+def _garmin_raw_detail(spans):
+    """The SAME physical run as `_interval_run()`, reshaped into GARMIN's raw
+    `get_activity_details` payload (metricDescriptors + activityDetailMetrics)
+    — for `sync_garmin.distill_run_streams`, the real Garmin reshaper. Fix
+    round finding 1: the original parity test ran `ingest_builder._columnar`
+    on BOTH sides (Garmin's raw detail was never involved at all — `_columnar`
+    is Health Connect's own reshaper, by its own docstring, and `run_detail`
+    already calls it internally), so the "parity" check reduced to comparing
+    a document to a manual re-derivation of itself; proved vacuous by making
+    `distill_run_streams` raise unconditionally and observing the old test
+    still pass (see the fix-round section of the task report). Descriptor
+    order is scrambled (mirrors `test_run_detail._stream_payload`,
+    test_run_detail.py:108-124) so the distiller is proven to read columns by
+    key, not by position."""
+    keys = ["directHeartRate", "sumDuration", "directSpeed", "sumDistance"]
+    rows = []
+    clock, dist = 0, 0.0
+    for dur, mps in spans:
+        for _ in range(dur):
+            rows.append({"metrics": [_parity_hr(mps), clock, mps, round(dist)]})
+            clock += 1
+            dist += mps
+    return {
+        "metricDescriptors": [{"key": k, "metricsIndex": i} for i, k in enumerate(keys)],
+        "activityDetailMetrics": rows,
+    }
 
 
 def test_max_gets_interval_structure():
@@ -801,34 +840,64 @@ def test_no_speed_series_means_no_intervals_key():
 
 
 def test_both_pipelines_agree_on_the_same_run():
-    """PARITY: one engine, two producers. Reshape the same physical run
-    through each pipeline's input format and the documents must match —
-    otherwise Felix's runs and Max's are being read by different rules, which
-    is the one thing this design exists to prevent. Mirrors
+    """PARITY: one engine, two producers. Reshape the SAME physical run
+    through EACH pipeline's OWN raw-input format and the resulting documents
+    must agree — otherwise Felix's runs and Max's are being read by different
+    rules, which is the one thing this design exists to prevent. Mirrors
     test_course_parity.mjs.
 
-    FIXTURE FIX: the brief's `il.build_document(garmin_streams)` (no
-    `work_floor`) is uncalibrated, so `build_document` forces `bouts` to `[]`
-    and returns `shape: "steady"`, `set: None` — the very next line then
-    indexes `from_garmin["set"]["found"]` and raises `TypeError` before any
-    assertion runs; the brief's own test cannot execute as written (verified
-    directly). A shared, explicit floor — the SAME value fed to both sides —
-    calibrates them identically, which is also what makes this a genuine
-    parity check: two independently-uncalibrated "steady" verdicts would
-    trivially agree for a reason that has nothing to do with the reshaping
-    under test. The explicit `shape == "reps"` assertion below guards against
-    exactly that vacuous-agreement failure mode."""
+    FIX ROUND, finding 1 (CRITICAL): the original version of this test ran
+    `ingest_builder._columnar` on BOTH sides — `_columnar` is Health Connect's
+    own reshaper (its own docstring says so), and `run_detail` already calls
+    it internally, so the assertion reduced to comparing a document to a
+    manual re-derivation of itself. `sync_garmin.distill_run_streams` — the
+    real Garmin reshaper — was never invoked at all. Proved vacuous: making
+    `distill_run_streams` raise unconditionally left this test (and all 51 in
+    this file) passing regardless (see the task report's fix-round section
+    for the exact commands/output). Rebuilt so the Garmin side is built from
+    `_garmin_raw_detail()` — a synthetic raw `get_activity_details` payload,
+    the SAME shape `test_run_detail._stream_payload` uses — fed through
+    `sync_garmin.distill_run_streams` for real.
+
+    A shared, explicit `work_floor` (and `bounds`) — the SAME values fed to
+    both sides — calibrates them identically, which is what makes this a
+    genuine parity check rather than two independently-uncalibrated "steady"
+    verdicts trivially agreeing for a reason that has nothing to do with the
+    reshaping under test. The explicit `shape == "reps"` assertion guards
+    against exactly that vacuous-agreement failure mode.
+
+    `shape`/`label`/`set.found` are discrete facts and must match exactly.
+    `quality.workDistM` is a real-valued distance integrated independently by
+    two different reshapers (Garmin's raw stream reports `sumDistance`
+    verbatim per sample; Health Connect's `_columnar` integrates speed×time
+    itself) — checked within a tolerance rather than exact equality per the
+    fix-round guidance, so a future rounding-path tweak on either side can't
+    turn an honest near-agreement into test flakiness. See the task report
+    for the actual measured difference (this fixture, being fully 1 Hz on
+    both raw inputs with no sample gaps, measured exactly 0 m — the tolerance
+    exists for the general case, not because this particular run needed it)."""
     import interval_lens as il
-    hc = _interval_run()
+    import sync_garmin
+
     floor = 3.0
-    garmin_streams = ingest_builder._columnar(hc)
-    from_garmin = il.compact(il.build_document(garmin_streams, work_floor=floor))
+    bounds = il.zone_bounds(190)
+
+    garmin_streams = sync_garmin.distill_run_streams(_garmin_raw_detail(_PARITY_SPANS))
+    from_garmin = il.compact(il.build_document(garmin_streams, bounds=bounds, work_floor=floor))
+
+    hc = _interval_run()
     from_hc = ingest_builder.run_detail(hc, max_hr=190, work_floor=floor)["intervals"]
+
     assert from_garmin["shape"] == "reps", "fixture must exercise real, non-vacuous structure"
     assert from_garmin["shape"] == from_hc["shape"]
     assert from_garmin["label"] == from_hc["label"]
     assert from_garmin["set"]["found"] == from_hc["set"]["found"]
-    assert from_garmin["quality"]["workDistM"] == from_hc["quality"]["workDistM"]
+
+    a, b = from_garmin["quality"]["workDistM"], from_hc["quality"]["workDistM"]
+    tolerance = max(5, round(0.01 * max(a, b)))  # 1 % of the work distance, floor 5 m
+    assert abs(a - b) <= tolerance, (
+        f"quality.workDistM diverged beyond the stated tolerance: "
+        f"garmin={a} hc={b} tolerance={tolerance}")
 
 
 if __name__ == "__main__":

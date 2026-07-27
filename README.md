@@ -138,9 +138,15 @@ laps that carry no intent whatsoever, and a lap-driven detector that trusted
 them would read that run as a 19-rep interval session. `laps_are_autolap()`
 checks whether every *full* lap (the always-partial final lap is excluded)
 lands within ±5 % of exactly 1 km or 1 mile; if so, the laps are ignored
-entirely and detection falls through to the stream. Only when the laps
-disagree with each other — a real workout's warm-up, reps and cool-down are
-never the same length — are they trusted as structure.
+entirely and detection falls through to the stream. It only fires once there
+are at least three full laps to judge — one or two 1 km-ish laps return
+`False` regardless of length, deliberately, so a genuine short session (a
+prescribed 2×1 km, say) is never vetoed just for happening to land near a
+round number. Separately, `laps_are_structured()` is what actually decides
+whether laps carry real structure at all: either Garmin marks the activity
+`hasIntensityIntervals`, or it has a `workoutId` *and* its laps carry more
+than one distinct `intensityType` — manual, unlabelled laps satisfy neither
+and are left to the stream detector.
 
 **Cross-run calibration.** "This bout was faster than the rest of this run" is
 not the same claim as "this bout was genuinely fast, for this athlete". A
@@ -152,9 +158,14 @@ athlete's own moving-speed history, swept across the *whole* archive
 (`baseline_samples()` accumulated per run, `work_floor()` computed once over
 the whole pool) and passed into every call. A bout only counts as work once
 its own pace clears that floor — "fast for you", not "fast for this 20
-minutes". Call `build_document` without a floor and it makes no rep claim at
-all: every run reads `shape: "steady"`, `calibrated: false`, rather than
-guess. `test_interval_truth.py` sweeps the real archive to compute this floor
+minutes". Call `build_document` without a floor and every candidate bout is
+discarded, so it makes no **rep** claim at all — `reps` and `block` become
+impossible, not just unlikely. `progression` is unaffected: it never passes
+through the bout floor, since it is read straight off the pace trend across
+the run's quintiles, so a genuinely ramping run still detects with no
+calibration at all — this is exactly the uncalibrated path Max's young
+Health Connect archive hits today, before it has enough history of its own.
+`test_interval_truth.py` sweeps the real archive to compute this floor
 before it asserts anything, for exactly that reason.
 
 ## Self-hosting with Docker (recommended)

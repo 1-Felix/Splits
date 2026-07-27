@@ -83,6 +83,8 @@ def _load_archive():
         samples.extend(il.baseline_samples(streams))
         rows.append((aid, name, summary, streams, laps))
     floor = il.work_floor(samples)
+    if floor is not None:
+        floor = round(floor, 3)   # mirrors sync_garmin.derive_intervals exactly
     bounds = il.zone_bounds(ATHLETE_MAX_HR)
     return floor, bounds, rows, len(samples)
 
@@ -122,7 +124,7 @@ _KNOWN_LIMITATIONS = {
     23059014879: (
         "'Tempo: 5x 1km (Pace 6:00-6:10)' — the prescribed pace (6:00-6:10/km "
         "= 2.70-2.78 m/s) sits right at this athlete's calibration floor "
-        "(2.700 m/s, measured below). Of the candidate bouts split_classes "
+        "(2.700 m/s, measured below). Of the candidate bouts find_bouts "
         "finds in this run, only 2 clear the floor — one short of "
         "REPS_MIN_COUNT (3) — so the session reads as steady. A genuine "
         "boundary case, not a bug: the floor's entire job is to refuse a rep "

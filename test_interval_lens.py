@@ -287,3 +287,73 @@ def test_set_stats_report_consistency_and_fade():
     assert stats["prescribed"] is None      # blind detection in Change 1
     assert stats["fadePct"] > 5             # the last rep really was slower
     assert stats["paceCvPct"] > 0
+
+
+def test_round_dist_names_short_common_distances():
+    """200/300/500/1500 m are common prescribed rep distances that the old
+    target list omitted entirely, falling through to the wrong register
+    ('0.2 km' instead of '200 m') or a misnamed neighbour (1500 -> '1600 m')."""
+    assert il._round_dist(200) == "200 m"
+    assert il._round_dist(300) == "300 m"
+    assert il._round_dist(500) == "500 m"
+    assert il._round_dist(1500) == "1500 m"
+
+
+def test_round_dist_picks_the_nearest_target_not_the_first_match():
+    """Ordering bug: a first-match loop over ascending targets finds 800's
+    ±12 % band (704-896) before ever comparing to 1000, even where the value
+    is relatively closer to 1000.
+
+    FIXTURE NOTE: the crossover between "closer to 800" and "closer to 1000"
+    by relative error is at 800*1000/(800+1000) = 888.89 m, verified directly
+    against both the old first-match code and the new closest-by-relative-
+    error code across the full 860-900 m range. The true divergence zone is
+    [889, 896] m. 884 m (as originally suggested) sits BELOW the crossover —
+    it is genuinely closer to 800 under both implementations and does not
+    exercise the bug at all; 890 m does."""
+    assert il._round_dist(960) == "1 km"
+    assert il._round_dist(1040) == "1 km"
+    assert il._round_dist(890) == "1 km"          # inside 800's band, but closer to 1000
+
+
+def test_round_dist_890_fails_under_the_old_first_match_logic():
+    """Direct regression guard for the ordering bug, independent of the live
+    implementation: reproduces the OLD first-match loop verbatim and asserts
+    it actually mislabels 890 m as '800 m' — proving the bug was real before
+    trusting the fix above."""
+    def old_round_dist(metres):
+        for target, text in ((400, "400 m"), (600, "600 m"), (800, "800 m"),
+                              (1000, "1 km"), (1200, "1.2 km"), (1600, "1600 m"),
+                              (2000, "2 km"), (3000, "3 km"), (5000, "5 km")):
+            if abs(metres - target) / target <= 0.12:
+                return text
+        return f"{metres / 1000:.2g} km"
+
+    assert old_round_dist(890) == "800 m"
+    assert il._round_dist(890) == "1 km"
+
+
+def test_round_dist_falls_through_for_a_genuinely_odd_distance():
+    """700 m sits in the true gap between 600's band (528-672) and 800's band
+    (704-896) — no target's ±12 % tolerance covers it, so it renders as a
+    plain km fallback rather than being force-snapped to a named distance.
+
+    FIXTURE NOTE: the brief's suggested 1750 m does NOT demonstrate this —
+    1750 m sits inside 1600's band at a relative error of 0.094 (<= 0.12), so
+    it snaps to '1600 m' under the fixed closest-by-relative-error logic too,
+    verified directly. 700 m is a genuine gap between adjacent bands."""
+    assert il._round_dist(700) == "0.7 km"
+
+
+def _flat_dist_at(seconds):
+    """1 m/s so elapsed seconds double as metres — enough to drive label_for
+    directly without building full streams."""
+    return float(seconds)
+
+
+def test_label_for_pyramid_reads_as_the_pyramid():
+    """Direct coverage of label_for's own varied branch: the existing suite
+    (test_unequal_reps_are_varied_not_averaged) only reaches varied-ness
+    through set_stats, never asserting on label_for's own pyramid string."""
+    bouts = [(0, 1000), (1000, 3000), (3000, 4000)]     # 1 km, 2 km, 1 km
+    assert il.label_for("reps", bouts, _flat_dist_at) == "1-2-1 km"

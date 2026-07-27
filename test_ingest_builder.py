@@ -3,6 +3,7 @@
 inputs (today is injected), so the assertions are deterministic."""
 import datetime as dt
 
+import ingest_builder
 from ingest_builder import build_athlete_data
 
 TODAY = dt.date(2026, 7, 15)  # a Wednesday; this week's Monday = 2026-07-13
@@ -736,6 +737,98 @@ def test_empty_store_is_safe():
     assert d["recentRuns"] == []
     assert len(d["history"]["weeklyKm"]) == 26
     assert "readiness" not in d and "vo2max" not in d["history"]
+
+
+# ── the contract: compact interval summary (add-interval-lens Task 11) ──────
+def _interval_run():
+    """A Health Connect run with a real 4×1 km inside it."""
+    spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 4 + [(300, 2.6)]
+    speed, hr, clock = [], [], 0
+    for dur, mps in spans:
+        for _ in range(dur):
+            speed.append({"tSec": clock, "mps": mps})
+            hr.append({"tSec": clock, "bpm": 150 if mps > 3 else 130})
+            clock += 1
+    total_m = sum(dur * mps for dur, mps in spans)
+    return {"sessionUid": "iv", "startTimeLocal": "2026-07-15T07:00:00",
+            "durationS": clock, "distanceM": total_m, "avgHr": 145,
+            "sportType": "running", "avgSpeed": total_m / clock,
+            "source": "shealth", "speedSamples": speed, "hrSamples": hr}
+
+
+def test_max_gets_interval_structure():
+    """One engine, both athletes — Samsung writes no laps, so this is
+    stream-only.
+
+    FIXTURE FIX: the brief's call omits `work_floor`. Without one,
+    `build_document` makes no rep claim at all (Task 7b: `calibrated` gates
+    on `work_floor is not None`, and forces `bouts` to `[]` when it is not) —
+    so this run, a real and clean 4×1 km, would read `shape: "steady"`, not
+    "reps", and the assertions below would fail. A floor comfortably below
+    the 4.0 m/s work pace and above the 2.2-2.6 m/s recovery/warmup pace
+    restores the calibrated path the assertions actually mean to exercise."""
+    detail = ingest_builder.run_detail(_interval_run(), max_hr=190, work_floor=3.0)
+    assert detail["intervals"]["shape"] == "reps"
+    assert detail["intervals"]["label"] == "4×1 km"
+    assert detail["intervals"]["set"]["found"] == 4
+
+
+def test_compact_summary_omits_segments():
+    """The cockpit reads this from a static file — segments belong to
+    `/run/:id`. Calibrated (work_floor=3.0) so this run really does carry a
+    populated `segments` list before `compact()` strips it — otherwise the
+    assertion would hold vacuously for a shape ("steady") whose `segments` is
+    already `[]` and was never a list worth removing."""
+    detail = ingest_builder.run_detail(_interval_run(), max_hr=190, work_floor=3.0)
+    assert "segments" not in detail["intervals"]
+
+
+def test_steady_run_reports_steady_not_missing():
+    run = {"sessionUid": "s", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 1800, "distanceM": 5400, "avgHr": 140,
+           "sportType": "running", "avgSpeed": 3.0, "source": "shealth",
+           "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(1800)],
+           "hrSamples": [{"tSec": t, "bpm": 140} for t in range(0, 1800, 5)]}
+    assert ingest_builder.run_detail(run, max_hr=190)["intervals"]["shape"] == "steady"
+
+
+def test_no_speed_series_means_no_intervals_key():
+    run = {"sessionUid": "n", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 1800, "distanceM": 5000, "avgHr": 140,
+           "sportType": "running", "avgSpeed": 2.8, "source": "shealth",
+           "speedSamples": [], "hrSamples": []}
+    assert ingest_builder.run_detail(run, max_hr=190) is None
+
+
+def test_both_pipelines_agree_on_the_same_run():
+    """PARITY: one engine, two producers. Reshape the same physical run
+    through each pipeline's input format and the documents must match —
+    otherwise Felix's runs and Max's are being read by different rules, which
+    is the one thing this design exists to prevent. Mirrors
+    test_course_parity.mjs.
+
+    FIXTURE FIX: the brief's `il.build_document(garmin_streams)` (no
+    `work_floor`) is uncalibrated, so `build_document` forces `bouts` to `[]`
+    and returns `shape: "steady"`, `set: None` — the very next line then
+    indexes `from_garmin["set"]["found"]` and raises `TypeError` before any
+    assertion runs; the brief's own test cannot execute as written (verified
+    directly). A shared, explicit floor — the SAME value fed to both sides —
+    calibrates them identically, which is also what makes this a genuine
+    parity check: two independently-uncalibrated "steady" verdicts would
+    trivially agree for a reason that has nothing to do with the reshaping
+    under test. The explicit `shape == "reps"` assertion below guards against
+    exactly that vacuous-agreement failure mode."""
+    import interval_lens as il
+    hc = _interval_run()
+    floor = 3.0
+    garmin_streams = ingest_builder._columnar(hc)
+    from_garmin = il.compact(il.build_document(garmin_streams, work_floor=floor))
+    from_hc = ingest_builder.run_detail(hc, max_hr=190, work_floor=floor)["intervals"]
+    assert from_garmin["shape"] == "reps", "fixture must exercise real, non-vacuous structure"
+    assert from_garmin["shape"] == from_hc["shape"]
+    assert from_garmin["label"] == from_hc["label"]
+    assert from_garmin["set"]["found"] == from_hc["set"]["found"]
+    assert from_garmin["quality"]["workDistM"] == from_hc["quality"]["workDistM"]
 
 
 if __name__ == "__main__":

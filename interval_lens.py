@@ -651,6 +651,16 @@ def build_document(streams: dict | None, summary: dict | None = None,
     }
 
 
+def compact(doc: dict | None) -> dict | None:
+    """The document MINUS its segments — what the cockpit and the recent-run
+    drill-down need. It rides in garmin-data.js because the cockpit renders
+    complete from static files with no API, and an interval label must not be
+    the thing that breaks that promise. `/run/:id` fetches the full document."""
+    if not doc:
+        return None
+    return {k: v for k, v in doc.items() if k != "segments"}
+
+
 def _hr_grid(streams: dict, length: int) -> list:
     """HR on the same 1 Hz grid as the speed series, last-value-held."""
     t = streams.get("t") or []

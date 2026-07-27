@@ -334,7 +334,8 @@ def classify(a: dict) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. FETCHERS  (each returns data already shaped to the contract, §3)
 # ──────────────────────────────────────────────────────────────────────────────
-def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[dict]:
+def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
+                      work_floor: float | None = None) -> list[dict]:
     runs = [a for a in acts if is_run(a) and act_km(a) > 0]
     runs.sort(key=act_date, reverse=True)
     out = []
@@ -348,7 +349,7 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[di
             "hr": act_hr(a) or 0,
             "cad": act_cad(a),
             "vo2": round(act_vo2(a), 1) if act_vo2(a) else None,
-            "detail": fetch_run_detail(client, a),
+            "detail": fetch_run_detail(client, a, work_floor=work_floor),
         })
     return out
 
@@ -393,18 +394,25 @@ def _fetch_raw_laps(client, aid) -> list | None:
     return doc.get("lapDTOs") if isinstance(doc, dict) else doc
 
 
-def fetch_run_detail(client, activity) -> dict | None:
+def fetch_run_detail(client, activity, work_floor: float | None = None) -> dict | None:
     """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
     activity id so re-syncs only fetch genuinely new runs."""
     det = _fetch_raw_detail(client, activity.get("activityId"))
-    return distill_run_detail(det, activity)
+    return distill_run_detail(det, activity, work_floor=work_floor)
 
 
-def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
+def distill_run_detail(det: dict | None, activity: dict,
+                       work_floor: float | None = None) -> dict | None:
     """Distill a RAW `get_activity_details` payload + its raw activity summary
     into the recent-run `detail` contract of garmin-data.js. Pure over its
     inputs — one distiller, two callers: fetch_run_detail (fresh from the API)
-    and the archive's distillation pass (stored payloads, no network)."""
+    and the archive's distillation pass (stored payloads, no network).
+
+    `work_floor` (add-interval-lens Task 11) is this athlete's own interval
+    calibration floor, banked by `derive_intervals` in `archive_meta` and
+    threaded down by both callers (`_interval_floor_from_archive` /
+    `_stored_interval_floor`) — never recomputed here, so this distiller
+    stays pure over its own arguments."""
     if not det:
         return None
 
@@ -425,6 +433,13 @@ def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
         temp = activity.get("minTemperature")
     load = activity.get("activityTrainingLoad")
     elev = activity.get("elevationGain")
+
+    streams = distill_run_streams(det)
+    bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
+    intervals = interval_lens.compact(
+        interval_lens.build_document(streams, activity, None, bounds=bounds,
+                                     work_floor=work_floor))
+
     return {
         "splits": splits,
         "hrSeries": [int(round(v)) for v in _downsample(hr_all, 30)],
@@ -435,6 +450,7 @@ def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
         "load": round(load) if load else None,
         "elevGain": round(elev) if elev else None,
         "splitShape": _split_shape(splits),
+        "intervals": intervals,
     }
 
 
@@ -1023,6 +1039,13 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
     # pulls anyway, so wellness_step can bank them without a second round-trip.
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    # This athlete's interval calibration floor (Task 7b), as `intervals_step`
+    # just banked it — read fresh, never recomputed here (design order in
+    # `main()`: archive, intervals, THEN build_data). Without this,
+    # recentRuns[].detail.intervals would read `work_floor=None` on every
+    # run and the cockpit would show "steady" for every recent run even
+    # though this athlete's archive is long since calibrated.
+    interval_floor = safe(_interval_floor_from_archive, None, "interval floor lookup")
 
     monthly = fetch_monthly(client, acts)
     weekly_km, weekly_runs = fetch_weekly(acts)
@@ -1056,7 +1079,7 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
         "personalBests": fetch_personal_bests(client),
-        "recentRuns": fetch_recent_runs(client, acts),
+        "recentRuns": fetch_recent_runs(client, acts, work_floor=interval_floor),
         "history": {
             "vo2maxStartMonth": monthly["vo2maxStartMonth"],
             "vo2max": monthly["vo2max"],
@@ -1462,16 +1485,45 @@ def _archive_detail_topup(client, conn, limit: int) -> int:
     return topped
 
 
+def _stored_interval_floor(conn) -> float | None:
+    """This athlete's interval calibration floor (Task 7b), as `derive_intervals`
+    last banked it in `archive_meta` — read, never recomputed, so
+    `distill_run_detail` stays pure over its own arguments. None on a fresh
+    archive or before the intervals step has ever run; callers pass that
+    straight through, which is the honest 'no rep claim yet' case."""
+    raw = activity_archive.get_meta(conn, "interval_work_floor")
+    if raw in (None, "None", ""):
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _interval_floor_from_archive() -> float | None:
+    """Same lookup as `_stored_interval_floor`, opening its own connection —
+    for callers (`build_data`) that run outside an already-open archive
+    connection. `intervals_step` runs before `build_data` in `main()` (design
+    order), so the floor it just banked is fresh by the time this reads it."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        return _stored_interval_floor(conn)
+    finally:
+        conn.close()
+
+
 def _distill_pass(conn) -> int:
     """Distill every archived run holding raw detail but no distilled copy —
     both this sync's topped-up runs and (as the recovery pass) runs archived
     before schema v4. Stored payloads in, no network; idempotent — a second
     pass finds nothing to do. Raw payloads are never modified."""
+    floor = _stored_interval_floor(conn)
     done = 0
     for aid in activity_archive.runs_missing_distilled(conn):
         distilled = distill_run_detail(
             activity_archive.detail_payload(conn, aid),
-            activity_archive.summary_payload(conn, aid) or {})
+            activity_archive.summary_payload(conn, aid) or {},
+            work_floor=floor)
         if distilled and activity_archive.write_distilled(conn, aid, distilled):
             done += 1
     return done

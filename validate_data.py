@@ -313,6 +313,15 @@ def validate(d: dict) -> list[str]:
         check(det.get("splitShape") in ("even", "positive", "negative"),
               f"recentRuns detail.splitShape invalid: {det.get('splitShape')!r}", e)
 
+        # interval summary (add-interval-lens Task 11) — OPTIONAL: a run with
+        # no usable speed signal at all carries no `intervals` key; when it
+        # does, `shape` must be one of the four-value vocabulary, the same
+        # contract check the other detail keys already get.
+        intervals = det.get("intervals")
+        if intervals is not None:
+            check(intervals.get("shape") in ("reps", "block", "progression", "steady"),
+                  f"recentRuns detail.intervals.shape invalid: {intervals.get('shape')!r}", e)
+
     return e
 
 

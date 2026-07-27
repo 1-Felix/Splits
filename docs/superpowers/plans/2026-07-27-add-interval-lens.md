@@ -308,10 +308,22 @@ def test_split_classes_finds_two_speeds():
     assert 3.8 < hi < 4.1
 
 
-def test_steady_run_has_no_separation():
-    """The whole point: an easy run must fall through as unstructured."""
-    s = il.smooth(il.speed_series(make_streams([(1800, 3.0)])))
-    assert il.split_classes(s) is None
+def test_near_steady_run_falls_below_the_separation_floor():
+    """The guard that keeps an ordinary easy run from reading as a workout.
+
+    The fixture needs REAL variance: a perfectly flat series returns at the
+    empty-partition guard on iteration 1 and never reaches the SEPARATION_MIN
+    comparison at all, so it would pass with the threshold check deleted."""
+    spans = [(1, 3.0 + (0.06 if i % 2 else -0.06)) for i in range(1800)]
+    s = il.smooth(il.speed_series(make_streams(spans)))
+    assert il.split_classes(s) is None          # observed separation ≈ 0.039
+
+
+def test_a_perfectly_flat_series_cannot_be_partitioned():
+    """The OTHER bailout: with zero variation there are not two classes to
+    find. Returns before any threshold is compared — a different guard from
+    the separation floor above, so both need their own test."""
+    assert il.split_classes([3.0] * 600) is None
 
 
 def test_gentle_drift_is_not_structure():
@@ -342,7 +354,7 @@ MIN_MOVING_SAMPLES = 60    # fewer than a minute of moving data decides nothing
 ```
 
 ```python
-def split_classes(series: list):
+def split_classes(series: list) -> tuple[float, float, float] | None:
     """1-D 2-means over the moving samples → (lo_mps, hi_mps, separation), or
     None when the run has no two-class structure at all.
 
@@ -389,6 +401,18 @@ detection stops, which is what keeps an easy run from reading as fartlek."
 ```
 
 ---
+
+> **Measured after Task 3 — read before touching Task 4 or 5's constants.**
+> `SEPARATION_MIN = 0.12` is a WEAK filter against continuous, non-bimodal
+> variance. Observed separations: noisy easy run → `None` (correctly rejected);
+> smooth "hilly" sinusoid over 2 h → 0.19; uniform GPS noise 2.0–4.0 m/s → 0.29;
+> easy run plus a single 40 s surge → 0.31; a real 5×1 km → 0.375.
+> Everything from 0.19 up **clears the structure gate**. So `split_classes` does
+> not reject wide-variance unstructured runs on its own — the minimum-bout
+> floors below (work ≥ 30 s AND ≥ 150 m, recovery ≥ 20 s) and the ≥ 3-bout rule
+> in Task 5 carry the entire false-positive burden. Relaxing any of them
+> re-opens "an easy run reads as a workout", which is this feature's worst
+> failure mode.
 
 ### Task 4: Engine — bout finding with hysteresis
 

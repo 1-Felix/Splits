@@ -30,6 +30,11 @@ EXIT_FRAC = 0.45           # leave work at lo + .45·(hi−lo)
 WORK_MIN_S = 30
 WORK_MIN_M = 150
 RECOVERY_MIN_S = 20
+REPS_MIN_COUNT = 3            # 2 when a prior expects a set (design D3)
+BLOCK_MIN_S = 300
+BLOCK_MIN_M = 1500
+VARIED_TOLERANCE = 0.20       # rep distances differing by >20 % → varied
+PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 
 
 def speed_series(streams: dict) -> list[float | None]:
@@ -165,3 +170,124 @@ def find_bouts(series: list, dist_at, lo: float, hi: float) -> list[tuple[int, i
 
     return [(a, b) for a, b in merged
             if b - a >= WORK_MIN_S and dist_at(b) - dist_at(a) >= WORK_MIN_M]
+
+
+def _pace_s_per_km(mps: float) -> int:
+    return int(round(1000.0 / mps)) if mps and mps > 0 else 0
+
+
+def _mean(vals):
+    vals = [v for v in vals if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _is_progression(series: list) -> bool:
+    """No discrete bouts, but speed rising monotonically across quintiles. This
+    replaces splitShape's first-third-vs-last-third guess with something that
+    has to hold all the way through."""
+    vals = [v for v in series if v is not None]
+    if len(vals) < 5 * MIN_MOVING_SAMPLES:
+        return False
+    step = len(vals) // 5
+    means = [_mean(vals[i * step:(i + 1) * step]) for i in range(5)]
+    if any(m is None or m <= 0 for m in means):
+        return False
+    if any(means[i + 1] < means[i] for i in range(4)):
+        return False
+    return (means[-1] - means[0]) / means[0] >= PROGRESSION_MIN_GAIN
+
+
+def classify(bouts, series, dist_at, expect_reps: int | None = None) -> str:
+    """reps / block / progression / steady (design D2).
+
+    The rep floor is 3 rather than 2: two unexplained bouts are more often a
+    hill and a headwind than a session. A prior that expects a set lowers it to
+    2 — a prescribed 2×2 km is real — which is the ONLY thing the prior relaxes
+    about existence (design D4)."""
+    floor = 2 if expect_reps and expect_reps <= 2 else REPS_MIN_COUNT
+    if len(bouts) >= floor:
+        return "reps"
+    if len(bouts) == 1:
+        a, b = bouts[0]
+        if b - a >= BLOCK_MIN_S or dist_at(b) - dist_at(a) >= BLOCK_MIN_M:
+            return "block"
+    if _is_progression(series):
+        return "progression"
+    return "steady"
+
+
+def label_for(shape: str, bouts, dist_at) -> str | None:
+    """The one-line session name — '5×1 km', '20 min block'. None when the run
+    has no shape worth naming."""
+    if shape == "block" and bouts:
+        a, b = bouts[0]
+        return f"{int(round((b - a) / 60))} min block"
+    if shape != "reps" or not bouts:
+        return None
+    dists = sorted(dist_at(b) - dist_at(a) for a, b in bouts)
+    nominal = dists[len(dists) // 2]
+    spread = (dists[-1] - dists[0]) / nominal if nominal else 1.0
+    if spread > VARIED_TOLERANCE:
+        parts = "-".join(f"{(dist_at(b) - dist_at(a)) / 1000:.3g}" for a, b in bouts)
+        return f"{parts} km"
+    return f"{len(bouts)}×{_round_dist(nominal)}"
+
+
+def _round_dist(metres: float) -> str:
+    """Reps are run to round numbers — snap to the one the athlete meant."""
+    for target, text in ((400, "400 m"), (600, "600 m"), (800, "800 m"),
+                         (1000, "1 km"), (1200, "1.2 km"), (1600, "1600 m"),
+                         (2000, "2 km"), (3000, "3 km"), (5000, "5 km")):
+        if abs(metres - target) / target <= 0.12:
+            return text
+    return f"{metres / 1000:.2g} km"
+
+
+def set_stats(bouts, series, dist_at, hr: list | None) -> dict:
+    """The set's own numbers — consistency, fade, and what the recoveries cost.
+
+    `found` vs `prescribed` is the honesty contract (design D4): prescribed is
+    None while detection is blind, and once Change 2 fills the prior these two
+    are allowed to disagree. A bailed session reports 3 of 4."""
+    reps = []
+    for a, b in bouts:
+        mps = _mean(series[a:b])
+        reps.append({
+            "durS": b - a,
+            "distM": round(dist_at(b) - dist_at(a)),
+            "paceS": _pace_s_per_km(mps or 0),
+            "hr": int(round(_mean(hr[a:b]))) if hr and b <= len(hr) and _mean(hr[a:b]) else None,
+        })
+    paces = [r["paceS"] for r in reps if r["paceS"]]
+    dists = sorted(r["distM"] for r in reps)
+    nominal = dists[len(dists) // 2] if dists else 0
+    varied = bool(nominal) and (dists[-1] - dists[0]) / nominal > VARIED_TOLERANCE
+
+    mean_pace = _mean(paces)
+    cv = None
+    if mean_pace and len(paces) > 1:
+        var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
+        cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
+
+    recoveries = [bouts[i + 1][0] - bouts[i][1] for i in range(len(bouts) - 1)]
+    drops = []
+    if hr:
+        for i in range(len(bouts) - 1):
+            work_hr = _mean(hr[bouts[i][0]:bouts[i][1]])
+            rest_hr = _mean(hr[bouts[i][1]:bouts[i + 1][0]])
+            if work_hr and rest_hr:
+                drops.append(work_hr - rest_hr)
+
+    return {
+        "found": len(bouts),
+        "prescribed": None,
+        "nominalDistM": None if varied else (nominal or None),
+        "varied": varied,
+        "paceS": int(round(mean_pace)) if mean_pace else None,
+        "paceCvPct": cv,
+        "fadePct": round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+                   if len(paces) > 1 and paces[0] else None,
+        "recoveryS": int(round(_mean(recoveries))) if recoveries else None,
+        "recoveryHrDrop": int(round(_mean(drops))) if drops else None,
+        "reps": reps,
+    }

@@ -202,3 +202,88 @@ def test_open_bout_auto_closes_at_the_last_sample():
     the final sample instead of discarding it."""
     spans = [(600, 2.6), (250, 4.0)]
     assert _bouts(spans) == [(600, 849)]
+
+
+def _classify(spans, expect_reps=None):
+    s = make_streams(spans)
+    series = il.smooth(il.speed_series(s))
+    dist_at = il.distance_fn(s)
+    classes = il.split_classes(series)
+    bouts = il.find_bouts(series, dist_at, classes[0], classes[1]) if classes else []
+    return il.classify(bouts, series, dist_at, expect_reps), bouts, s
+
+
+def test_five_reps_classify_as_reps():
+    shape, bouts, _ = _classify([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    assert shape == "reps"
+    assert len(bouts) == 5
+
+
+def test_one_long_bout_is_a_block():
+    """2 km wu · 5 km @ threshold · 1 km cd — the classic tempo shape."""
+    shape, _, _ = _classify([(700, 2.9), (1100, 3.6), (350, 2.9)])
+    assert shape == "block"
+
+
+def test_two_bouts_are_not_reps_without_a_prior():
+    """Two unexplained bouts are more likely noise than a session."""
+    shape, _, _ = _classify([(600, 2.6), (250, 4.0), (60, 2.2), (250, 4.0), (300, 2.6)])
+    assert shape != "reps"
+
+
+def test_two_bouts_are_reps_when_a_prior_expects_a_set():
+    """A prescribed 2×2 km is a real session (spec D3 / Change 2 fills this)."""
+    shape, _, _ = _classify(
+        [(600, 2.6), (250, 4.0), (60, 2.2), (250, 4.0), (300, 2.6)], expect_reps=2)
+    assert shape == "reps"
+
+
+def test_steady_run_is_steady():
+    shape, bouts, _ = _classify([(2400, 3.0)])
+    assert shape == "steady"
+    assert bouts == []
+
+
+def test_progression_is_detected_without_bouts():
+    """No discrete work bouts, but a monotone ramp — its own shape (spec D2).
+
+    FIXTURE FIX: the brief's original spans — (2.7, 2.85, 3.0, 3.15, 3.35)
+    across 5×400 s blocks — measure at split_classes separation 0.1231, just
+    OVER SEPARATION_MIN (0.12). split_classes finds structure, find_bouts
+    then reports a single 799 s / ~2597 m bout, and classify reads that as a
+    "block", never reaching _is_progression at all — this was verified by
+    direct execution, not just arithmetic. The shallower ramp below keeps the
+    same shape (5 equal blocks, monotone increase) but measures separation
+    0.057 (52 % below the 0.12 gate, so a plausible retune upward doesn't
+    resurrect the trap) while the end-to-end gain is 0.10 (100 % over
+    PROGRESSION_MIN_GAIN's 0.05) — comfortable margin on both floors so this
+    exercises _is_progression itself rather than the structure gate."""
+    spans = [(400, 2.8), (400, 2.87), (400, 2.94), (400, 3.01), (400, 3.08)]
+    shape, bouts, _ = _classify(spans)
+    assert bouts == []
+    assert shape == "progression"
+
+
+def test_label_reads_as_the_session():
+    _, bouts, s = _classify([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    assert il.label_for("reps", bouts, il.distance_fn(s)) == "5×1 km"
+
+
+def test_unequal_reps_are_varied_not_averaged():
+    """The pyramid: labelling this '3×1.3 km' would be a lie."""
+    spans = [(600, 2.6), (250, 4.0), (60, 2.2), (500, 4.0), (60, 2.2),
+             (250, 4.0), (300, 2.6)]
+    _, bouts, s = _classify(spans)
+    stats = il.set_stats(bouts, il.smooth(il.speed_series(s)), il.distance_fn(s), s["hr"])
+    assert stats["varied"] is True
+    assert stats["nominalDistM"] is None
+
+
+def test_set_stats_report_consistency_and_fade():
+    spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 4 + [(250, 3.6), (300, 2.6)]
+    _, bouts, s = _classify(spans)
+    stats = il.set_stats(bouts, il.smooth(il.speed_series(s)), il.distance_fn(s), s["hr"])
+    assert stats["found"] == 5
+    assert stats["prescribed"] is None      # blind detection in Change 1
+    assert stats["fadePct"] > 5             # the last rep really was slower
+    assert stats["paceCvPct"] > 0

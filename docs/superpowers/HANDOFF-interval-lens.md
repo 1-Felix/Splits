@@ -151,6 +151,42 @@ All found by the final whole-branch review, all in `interval_lens.py`:
 
 ---
 
+## Priority 2.7 — found in production, partially fixed
+
+The deploy on 2026-07-27 banked 124 runs' lap data, which created the first
+lap-sourced documents that had ever existed. Two defects surfaced immediately
+that no fixture could have caught, because the code path had never met its
+input. The first was fixed the same night (`INTERVAL_VERSION` 2→3); the second
+was not.
+
+### P2.7a — Galloway run/walk sessions misclassify as rep sets (NOT fixed)
+
+`Leinfelden-Echterdingen - Run Walk Run®` has lap distances
+`[205, 106, 81, 145, 52, 94, 66, 118, 52, 97, 50, 111, 42, 173, 914]`. It is a
+Galloway run/walk, not an interval session, and it should not be `reps` at all.
+
+Before the lap floor it read `found: 15` with no label; after, three segments
+survive the floor **by chance** and it reads `found: 3, label "3 reps"` — a more
+specific wrong answer, not a fixed one. No floor value fixes this: the
+misclassification is that a run/walk pattern looks structurally identical to a
+rep set, and a count threshold does not help because 3 clears any plausible one.
+
+Needs either a run/walk-aware shape (Garmin's `splitSummaries` already carries
+`RWD_RUN` / `RWD_WALK` counts, which would identify these directly) or a
+whole-set-trust rule that refuses to call a set when most of its laps failed the
+floor. One run out of 168 today.
+
+### P2.7b — the two paths disagree on how many reps make a set
+
+The lap path classifies `reps` at `len(work) >= 2`; the stream path uses
+`REPS_MIN_COUNT = 3`, which is what design D2 specifies. Pre-existing, untouched
+by the lap-floor fix, and it changed neither flagged case's outcome — but it is
+one more place the two paths quietly differ, which is exactly what the
+one-engine design exists to prevent.
+
+Note this interacts with **P3.1**: whatever `expect_reps` logic lands with the
+prescription parser must apply to both paths, not just the stream one.
+
 ## Priority 3 — Change 2 blockers
 
 These must be resolved **before** the prescription parser ships, not after.

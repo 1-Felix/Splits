@@ -168,6 +168,28 @@ Health Connect archive hits today, before it has enough history of its own.
 `test_interval_truth.py` sweeps the real archive to compute this floor
 before it asserts anything, for exactly that reason.
 
+**Three grids, one clock.** Detection runs on grade-adjusted speed where the
+run carries it (`gap`, present on 161 of 165 archived runs): on a hill a rep up
+a drag and a rep back down it are the same effort, and raw pace would split one
+set into a fade. But that is the *detection* signal, not the reported one.
+`speed_series()` builds it; `raw_speed_series()` and `gap_speed_series()` build
+the two reporting grids beside it on the same 1 Hz index, so a segment's
+`paceS` is what the watch actually recorded and its `gapS` is the grade
+adjustment — with `gapS` **null**, never a copy of `paceS`, on a run that
+carries no `gap` at all (a treadmill, and every one of Max's). `fadePct` and
+`paceCvPct` stay on the detection signal, because "did this set fade" is an
+effort question. Lap-sourced segments keep the device's own `paceS` and gain
+their `gapS` from the stream over each lap's window — a lapDTO carries no grade
+adjustment, and those are the runs where it matters most.
+
+**Labels stop at the point of usefulness.** A set whose reps differ by more
+than `VARIED_TOLERANCE` is `varied`, and a varied set is normally enumerated —
+`1-2-1 km`. That only reads as a session when there are few enough reps to take
+in and every one of them lands on a distance a human would prescribe;
+otherwise it is the detector's fragment list, and `label_for` returns
+`N reps` instead. Detection is untouched by this — the bouts, the segments and
+every `set` number are the same either way.
+
 ## Self-hosting with Docker (recommended)
 
 SPLITS ships as a single image — Node serves the dashboard, Python runs the Garmin

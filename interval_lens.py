@@ -25,6 +25,11 @@ MOVING_MPS_MIN = 0.5       # below this the athlete is stopped, not recovering
 MIN_SPAN_S = 60            # shorter than this and there is nothing to segment
 SEPARATION_MIN = 0.12      # work must be >=12 % faster than rest to be structure
 MIN_MOVING_SAMPLES = 60    # fewer than a minute of moving data decides nothing
+ENTER_FRAC = 0.65          # hysteresis: enter work at lo + .65·(hi−lo)
+EXIT_FRAC = 0.45           # leave work at lo + .45·(hi−lo)
+WORK_MIN_S = 30
+WORK_MIN_M = 150
+RECOVERY_MIN_S = 20
 
 
 def speed_series(streams: dict) -> list[float | None]:
@@ -122,3 +127,41 @@ def split_classes(series: list) -> tuple[float, float, float] | None:
             break
     sep = (hi - lo) / hi
     return (lo, hi, sep) if sep >= SEPARATION_MIN else None
+
+
+def find_bouts(series: list, dist_at, lo: float, hi: float) -> list[tuple[int, int]]:
+    """Walk the smoothed grid with HYSTERESIS → work bouts as (start_s, end_s).
+
+    Entering work needs more speed than staying in it. With a single threshold
+    a rep that wobbles across the line becomes three reps and the whole set
+    reads wrong; the gap between ENTER_FRAC and EXIT_FRAC is what makes one rep
+    stay one rep.
+
+    Then two filters, in this order: bouts separated by less than
+    RECOVERY_MIN_S are one bout (a momentary let-up is not a recovery), and a
+    bout must clear BOTH a duration and a distance floor to exist at all — a
+    20 s surge to a crossing is not a rep."""
+    enter = lo + ENTER_FRAC * (hi - lo)
+    leave = lo + EXIT_FRAC * (hi - lo)
+    bouts: list[tuple[int, int]] = []
+    start = None
+    for i, v in enumerate(series):
+        if v is None:
+            continue
+        if start is None and v >= enter:
+            start = i
+        elif start is not None and v < leave:
+            bouts.append((start, i))
+            start = None
+    if start is not None:
+        bouts.append((start, len(series) - 1))
+
+    merged: list[list[int]] = []
+    for a, b in bouts:
+        if merged and a - merged[-1][1] < RECOVERY_MIN_S:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+
+    return [(a, b) for a, b in merged
+            if b - a >= WORK_MIN_S and dist_at(b) - dist_at(a) >= WORK_MIN_M]

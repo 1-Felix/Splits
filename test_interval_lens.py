@@ -115,3 +115,55 @@ def test_separation_is_the_relative_speed_gap():
     s = il.smooth(il.speed_series(make_streams([(300, 2.0), (300, 4.0)])))
     _, _, sep = il.split_classes(s)
     assert 0.45 < sep < 0.55  # (4 − 2) / 4
+
+
+def _bouts(spans):
+    s = make_streams(spans)
+    series = il.smooth(il.speed_series(s))
+    classes = il.split_classes(series)
+    assert classes is not None, "fixture should be structured"
+    lo, hi, _ = classes
+    return il.find_bouts(series, il.distance_fn(s), lo, hi)
+
+
+def test_finds_five_reps():
+    spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)]
+    assert len(_bouts(spans)) == 5
+
+
+def test_rep_boundaries_land_near_the_truth():
+    spans = [(600, 2.6), (250, 4.0), (60, 2.2), (250, 4.0), (300, 2.6)]
+    first = _bouts(spans)[0]
+    assert abs(first[0] - 600) <= 10
+    assert abs(first[1] - 850) <= 10
+
+
+def test_chatter_does_not_shred_one_rep():
+    """Hysteresis earns its place here: without it, a wobbling rep becomes 3.
+
+    The original i%7 dip-to-3.2 fixture from the brief was vacuous: a period-7,
+    single-sample dip is exactly the impulsive noise SMOOTH_WINDOW_S=15's
+    rolling median is built to erase (fewer than half the samples in any
+    15-wide window are the dip), so it never survives to reach find_bouts —
+    the smoothed series is a flat 4.0 throughout, and even a single threshold
+    (no entry/exit gap at all) produces the same one bout. This version dips
+    to a speed long enough (40 s blocks, so the median preserves it) and
+    tuned (3.30 mps) to sit strictly between `leave` and `enter` for this
+    lo/hi — above leave, so a real rep never reads as ending, but below
+    enter, so a naive single-threshold walk re-triggers on every up-swing and
+    fragments the one rep into three.
+    """
+    wobble = [(40, 4.0), (40, 3.30)] * 3
+    spans = [(600, 2.6)] + wobble + [(300, 2.6)]
+    assert len(_bouts(spans)) == 1
+
+
+def test_bouts_shorter_than_the_minimum_are_dropped():
+    """A 20 s surge to a traffic light is not a rep."""
+    spans = [(600, 2.6), (20, 4.5), (600, 2.6), (250, 4.0), (300, 2.6)]
+    assert len(_bouts(spans)) == 1
+
+
+def test_bouts_closer_than_the_minimum_recovery_merge():
+    spans = [(600, 2.6), (200, 4.0), (10, 2.4), (200, 4.0), (300, 2.6)]
+    assert len(_bouts(spans)) == 1

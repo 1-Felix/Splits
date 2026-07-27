@@ -61,6 +61,7 @@ existing cannot serve both athletes.
 | D5 | Grade-adjusted speed (`gap`) is the detection signal where available | On hills, a rep up a drag and one down it are the same effort. Using raw pace would split one set into a fade. |
 | D6 | The document is a versioned, disposable derived cache | Same semantics as `run_metrics` / `block_lens` / `course_lens`. A threshold tweak is a version bump, not a migration. |
 | D7 | Ships as two OpenSpec changes, designed together | The seam is producer/consumer. Change 1's detector can be verified against real interval history before five pages depend on its output. |
+| D8 | Change 1 ships the prior *interface* and blind detection; Change 2 fills it | The prescription parser lives in Change 2, so Change 1's engine would otherwise carry a prior nothing can populate. Staging it this way also validates the detector before the plan can flatter it. Change 2 bumps `INTERVAL_VERSION`, which self-heals every stored document — the cache design makes this free. |
 
 ## The document contract
 
@@ -196,6 +197,8 @@ interval labels must not be what breaks that promise.
 ## Change 1 — `add-interval-lens`
 
 Lap acquisition, schema v11, the engine, the archive API, and the primary render.
+Detection runs **blind** here (D8): the engine accepts `prior=None` and every document
+carries `guidedBy: null` until Change 2 lands the parser.
 
 **`/run/:id`** gains a rep table when `shape !== "steady"`: rep #, distance, time, pace,
 GAP, avg HR, with the recovery beneath each rep (duration + HR drop). Deviation bars

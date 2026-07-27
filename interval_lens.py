@@ -452,6 +452,34 @@ def _segments_from_bouts(bouts, series, dist_at, hr, total_s) -> list[dict]:
     return segs
 
 
+def _progression_segments(series: list, dist_at, hr: list, total_s: int) -> list[dict]:
+    """A progression's ramp as five `step` segments, one per detected pace
+    tier, in time order — tiling the run's full span edge to edge with no
+    gaps, the same property `_segments_from_bouts` guarantees for rep runs, so
+    a consumer can read a progression's ramp the way it reads a rep table.
+
+    Quintile boundaries are cut on the raw 1 Hz grid (not the moving-only
+    values `_is_progression` measures its monotone rise against) so that t0/t1
+    tile the run exactly; the two agree whenever the run has no pauses, which
+    `_is_progression`'s own MIN_MOVING_SAMPLES floor already requires close to."""
+    step = total_s // 5
+    edges = [(i * step, total_s if i == 4 else (i + 1) * step) for i in range(5)]
+    segs = []
+    for idx, (a, b) in enumerate(edges):
+        mps = _mean(series[a:b])
+        segs.append({
+            "idx": idx + 1, "role": "step",
+            "t0": a, "t1": b,
+            "d0": int(round(dist_at(a))), "d1": int(round(dist_at(b))),
+            "durS": b - a, "distM": int(round(dist_at(b) - dist_at(a))),
+            "paceS": _pace_s_per_km(mps or 0),
+            "gapS": None,
+            "hr": int(round(_mean(hr[a:b]))) if hr and _mean(hr[a:b]) else None,
+            "cad": None,
+        })
+    return segs
+
+
 def _confidence(separation: float, bouts, series, cv) -> float:
     """Three factors, multiplied and clamped (spec): how far apart the two pace
     classes sit, how crisp the boundaries are, and — for a set — how regular
@@ -584,8 +612,16 @@ def build_document(streams: dict | None, summary: dict | None = None,
     if shape in ("steady", "progression"):
         bouts = []
     stats = set_stats(bouts, series, dist_at, hr) if shape == "reps" else None
-    segments = (_segments_from_bouts(bouts, series, dist_at, hr, len(series))
-                if shape != "steady" else [])
+    if shape == "steady":
+        segments = []
+    elif shape == "progression":
+        # A progression has no discrete work bouts to segment — its ramp is
+        # five `step` tiers instead (design contract), not the single
+        # whole-run bout-shaped segment `_segments_from_bouts` would produce
+        # from an empty bout list.
+        segments = _progression_segments(series, dist_at, hr, len(series))
+    else:
+        segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series))
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,

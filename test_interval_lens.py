@@ -703,3 +703,54 @@ def test_lap_sourced_documents_are_always_calibrated():
     doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
     assert doc["source"] == "laps"
     assert doc["calibrated"] is True
+
+
+# ── progression segments (Task 7b, Part B) ───────────────────────────────────
+# The same monotone-ramp fixture as test_progression_is_detected_without_bouts:
+# a shallow enough ramp that split_classes finds no two-class structure
+# (separation 0.057, well under SEPARATION_MIN) but _is_progression's quintile
+# check finds the monotone rise (end-to-end gain 0.10, over PROGRESSION_MIN_GAIN's
+# 0.05). At the document level, before this fix, this run's ramp emitted ONE
+# segment spanning the whole run with role "steady" and no `step` role at all
+# — verified directly. The design contract requires a `step` segment per
+# detected pace tier so a consumer can read the ramp the way it reads a rep
+# table.
+
+_PROGRESSION_SPANS = [(400, 2.8), (400, 2.87), (400, 2.94), (400, 3.01), (400, 3.08)]
+
+
+def test_progression_emits_five_step_segments_in_time_order():
+    doc = il.build_document(make_streams(_PROGRESSION_SPANS))
+    assert doc["shape"] == "progression"
+    segs = doc["segments"]
+    assert len(segs) == 5
+    assert [seg["role"] for seg in segs] == ["step"] * 5
+    assert [seg["idx"] for seg in segs] == [1, 2, 3, 4, 5]
+    for prev, cur in zip(segs, segs[1:]):
+        assert cur["t0"] >= prev["t0"]
+    # a progression has no discrete work bouts — this is correct, not a bug
+    assert doc["quality"]["workDistM"] == 0
+    assert doc["quality"]["workDurS"] == 0
+
+
+def test_progression_paces_decrease_monotonically():
+    """Speed rises quintile over quintile (that is what makes it a
+    progression), so paceS — seconds per km — must fall in step."""
+    doc = il.build_document(make_streams(_PROGRESSION_SPANS))
+    paces = [seg["paceS"] for seg in doc["segments"]]
+    assert len(paces) == 5
+    assert all(paces[i] > paces[i + 1] for i in range(len(paces) - 1))
+
+
+def test_progression_segments_tile_without_gaps():
+    """The same tiling property _segments_from_bouts already guarantees for
+    rep runs: each segment starts exactly where the previous one ended, no
+    gap and no overlap, and the run's full span is covered edge to edge."""
+    s = make_streams(_PROGRESSION_SPANS)
+    doc = il.build_document(s)
+    segs = doc["segments"]
+    assert segs[0]["t0"] == 0
+    for prev, cur in zip(segs, segs[1:]):
+        assert cur["t0"] == prev["t1"]
+        assert cur["d0"] == prev["d1"]
+    assert segs[-1]["t1"] == len(il.speed_series(s))

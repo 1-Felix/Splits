@@ -201,6 +201,36 @@ prior and bumps `INTERVAL_VERSION`, which self-heals every stored document.
 
 ---
 
+## NUC operations — a trap hit during this very deploy
+
+**Never wrap `ssh … docker compose exec …` in a client-side `timeout`.**
+
+Doing so kills the *SSH client*, not the remote process. The Python process
+keeps running inside the container, orphaned, holding a write-capable SQLite
+handle — and the next writer dies with `sqlite3.OperationalError: database is
+locked`. That is exactly how the first lap-backfill attempt of this deploy
+failed, aborting on its first write.
+
+It was harmless only because of three existing design choices worth preserving:
+`write_laps` commits per call (nothing half-written), DELETE journal mode leaves
+no journal when a reader dies, and the archive was verifiably intact afterwards.
+
+Two further facts learned the hard way:
+
+- **The image has neither `ps` nor `kill`.** To find an orphan, run
+  `docker top splits` from the NUC host; the PIDs it prints are host PIDs.
+- **The orphan runs as root**, so `kill` as `felix` fails. The reliable
+  clearance is `docker compose restart splits` — the container is stateless,
+  all data lives in the `splits-data` volume.
+
+Use `run_in_background` for long remote commands, or put the timeout *inside*
+the container.
+
+Related: `serve.mjs` owns the sync lock and is meant to be the single writer.
+Running `sync_garmin.py` directly via `docker compose exec` bypasses that lock.
+It is fine when nothing else is syncing — but check `docker top splits` first,
+and prefer `POST /api/sync` for a routine sync.
+
 ## Environment hazard — unrelated to this feature, but live
 
 **Stale `__pycache__` in this repo has twice produced a false test result.**

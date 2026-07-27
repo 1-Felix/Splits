@@ -752,14 +752,27 @@ def _parity_hr(mps: float) -> int:
     return 150 if mps > 3 else 130
 
 
-def _interval_run():
-    """A Health Connect run with a real 4×1 km inside it."""
+def _interval_run(speed_step=6, hr_step=10, hr_offset=5):
+    """A Health Connect run with a real 4×1 km inside it.
+
+    FINAL REVIEW I5: speed and HR sit on DIFFERENT clocks, because they do on
+    the real device — Samsung Health writes each metric on its own schedule
+    and the two run roughly 10 s apart, which is exactly why `synth_streams`
+    joins them by sample-and-hold over a UNION axis instead of exact match.
+    The defaults here are deliberately co-prime in phase: speed lands on even
+    seconds and HR on odd ones, so the two sample sets NEVER intersect. The
+    old fixture was 1 Hz on both clocks, where an exact-match join and a
+    held join are indistinguishable — which is why it could not see that
+    `_columnar` (the second reshaping this module used to carry beside
+    `synth_streams`) dropped every HR sample on a real run."""
     spans = _PARITY_SPANS
     speed, hr, clock = [], [], 0
     for dur, mps in spans:
         for _ in range(dur):
-            speed.append({"tSec": clock, "mps": mps})
-            hr.append({"tSec": clock, "bpm": _parity_hr(mps)})
+            if clock % speed_step == 0:
+                speed.append({"tSec": clock, "mps": mps})
+            if clock % hr_step == hr_offset:
+                hr.append({"tSec": clock, "bpm": _parity_hr(mps)})
             clock += 1
     total_m = sum(dur * mps for dur, mps in spans)
     return {"sessionUid": "iv", "startTimeLocal": "2026-07-15T07:00:00",
@@ -772,11 +785,11 @@ def _garmin_raw_detail(spans):
     """The SAME physical run as `_interval_run()`, reshaped into GARMIN's raw
     `get_activity_details` payload (metricDescriptors + activityDetailMetrics)
     — for `sync_garmin.distill_run_streams`, the real Garmin reshaper. Fix
-    round finding 1: the original parity test ran `ingest_builder._columnar`
-    on BOTH sides (Garmin's raw detail was never involved at all — `_columnar`
-    is Health Connect's own reshaper, by its own docstring, and `run_detail`
-    already calls it internally), so the "parity" check reduced to comparing
-    a document to a manual re-derivation of itself; proved vacuous by making
+    round finding 1: the original parity test ran Health Connect's own
+    reshaper on BOTH sides (Garmin's raw detail was never involved at all, and
+    `run_detail` already calls that reshaper internally), so the "parity"
+    check reduced to comparing a document to a manual re-derivation of
+    itself; proved vacuous by making
     `distill_run_streams` raise unconditionally and observing the old test
     still pass (see the fix-round section of the task report). Descriptor
     order is scrambled (mirrors `test_run_detail._stream_payload`,
@@ -916,6 +929,55 @@ def test_a_pruned_duplicate_takes_its_interval_document_with_it():
         "the pruned run's document left with it; the survivor's stayed"
 
 
+def test_hr_survives_clocks_that_never_intersect():
+    """FINAL REVIEW I5: this module carried TWO reshapings of the same samples.
+    `synth_streams` joins HR to speed by sample-and-hold over the UNION of
+    their timestamps, with a staleness cap, precisely because Samsung writes
+    the two on clocks ~10 s apart. `_columnar` exact-matched HR onto the speed
+    timestamps — so on a run whose clocks never coincide (this fixture, and
+    the real device) it produced ZERO non-null HR, and the second athlete
+    silently lost `quality.zone`, `set.recoveryHrDrop` and every
+    `segments[].hr`. Deleting the duplicate is the fix; this is what it buys."""
+    run = _interval_run()
+    speeds = {s["tSec"] for s in run["speedSamples"]}
+    beats = {s["tSec"] for s in run["hrSamples"]}
+    assert speeds and beats and not (speeds & beats), \
+        "fixture precondition: an exact-match join has nothing to match on"
+
+    streams = ib.synth_streams(run)
+    non_null = sum(1 for h in streams["hr"] if h is not None)
+    assert non_null > 0.9 * len(streams["t"]), \
+        f"the held join carries HR across the whole run: {non_null}/{len(streams['t'])}"
+
+    doc = ib.interval_document(run, 190, work_floor=3.0)
+    assert doc["quality"]["zone"] == "Z3", \
+        f"the coaching layer gets a real zone: {doc['quality']['zone']}"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert work and all(s["hr"] for s in work), \
+        f"every rep carries its own average HR: {[s['hr'] for s in work]}"
+    assert doc["set"]["recoveryHrDrop"], \
+        "and the recovery HR drop — the thing a rep session is actually judged on"
+
+
+def test_work_distance_follows_the_device_total_not_the_raw_integral():
+    """The other measured divergence. `synth_streams` scales the integrated
+    distance so its final value equals the total the watch banked;
+    `_columnar` integrated speed × time and stopped there. `quality.workDistM`
+    is the number the design names as the coaching layer's, so the two
+    reshapings disagreed about the one field consumers are told to depend on."""
+    honest = _interval_run()
+    # the same physical run, with the watch's own total 8 % below what
+    # integrating its (coarse, held) speed samples produces
+    short = dict(honest, distanceM=honest["distanceM"] * 0.92)
+
+    a = ib.interval_document(honest, 190, work_floor=3.0)["quality"]["workDistM"]
+    b = ib.interval_document(short, 190, work_floor=3.0)["quality"]["workDistM"]
+    assert abs(a - 4000) <= 40, f"the honest run measures its 4 × 1 km: {a}"
+    assert abs(b - 0.92 * a) <= 40, \
+        f"the banked total is what the work distance follows: {b} vs {0.92 * a:.0f}"
+    assert a - b > 200, "…and the difference is not a rounding artefact"
+
+
 def test_compact_summary_omits_segments():
     """The cockpit reads this from a static file — segments belong to
     `/run/:id`. Calibrated (work_floor=3.0) so this run really does carry a
@@ -951,10 +1013,9 @@ def test_both_pipelines_agree_on_the_same_run():
     test_course_parity.mjs.
 
     FIX ROUND, finding 1 (CRITICAL): the original version of this test ran
-    `ingest_builder._columnar` on BOTH sides — `_columnar` is Health Connect's
-    own reshaper (its own docstring says so), and `run_detail` already calls
-    it internally, so the assertion reduced to comparing a document to a
-    manual re-derivation of itself. `sync_garmin.distill_run_streams` — the
+    Health Connect's own reshaper on BOTH sides — and `run_detail` already
+    calls that reshaper internally, so the assertion reduced to comparing a
+    document to a manual re-derivation of itself. `sync_garmin.distill_run_streams` — the
     real Garmin reshaper — was never invoked at all. Proved vacuous: making
     `distill_run_streams` raise unconditionally left this test (and all 51 in
     this file) passing regardless (see the task report's fix-round section
@@ -973,13 +1034,16 @@ def test_both_pipelines_agree_on_the_same_run():
     `shape`/`label`/`set.found` are discrete facts and must match exactly.
     `quality.workDistM` is a real-valued distance integrated independently by
     two different reshapers (Garmin's raw stream reports `sumDistance`
-    verbatim per sample; Health Connect's `_columnar` integrates speed×time
-    itself) — checked within a tolerance rather than exact equality per the
+    verbatim per sample; Health Connect's `synth_streams` integrates speed×time
+    itself and scales the result to the device's banked total) — checked within a tolerance rather than exact equality per the
     fix-round guidance, so a future rounding-path tweak on either side can't
     turn an honest near-agreement into test flakiness. See the task report
-    for the actual measured difference (this fixture, being fully 1 Hz on
-    both raw inputs with no sample gaps, measured exactly 0 m — the tolerance
-    exists for the general case, not because this particular run needed it)."""
+    for the actual measured difference. FINAL REVIEW I5: the Health Connect
+    side is no longer 1 Hz — its speed and HR now sit on separate, never-
+    intersecting clocks, as they do on the real device — so the two pipelines
+    genuinely sample this run differently and the tolerance now earns its
+    keep: measured 4000 m (Garmin, 1 Hz) vs 4013 m (Health Connect, 6 s speed
+    with hold), 13 m apart against a 40 m allowance."""
     import interval_lens as il
     import sync_garmin
 

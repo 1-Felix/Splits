@@ -115,30 +115,6 @@ def _sorted_samples(run: dict, key: str) -> list[dict]:
     return sorted(run.get(key) or [], key=lambda s: s["tSec"])
 
 
-def _columnar(run: dict) -> dict:
-    """Health Connect samples → the SAME columnar shape the Garmin streams use,
-    so interval_lens sees one input format from both pipelines (design: one
-    engine, two producers). No laps: Samsung does not write ExerciseLap."""
-    speeds = _sorted_samples(run, "speedSamples")
-    if len(speeds) < 2:
-        return {}
-    hrs = _sorted_samples(run, "hrSamples")
-    t = [s["tSec"] for s in speeds]
-    v = [s["mps"] for s in speeds]
-    cum, d = 0.0, []
-    for i, s in enumerate(speeds):
-        d.append(round(cum))
-        if i + 1 < len(speeds):
-            gap = min(speeds[i + 1]["tSec"] - s["tSec"], SAMPLE_GAP_CAP_S)
-            cum += s["mps"] * max(0, gap)
-    hr_by_t = {h["tSec"]: h["bpm"] for h in hrs}
-    held, hr_col = None, []
-    for ts in t:
-        held = hr_by_t.get(ts, held)
-        hr_col.append(held)
-    return {"t": t, "d": d, "v": v, "hr": hr_col}
-
-
 def moving_effort(run: dict):
     """(moving_s, moving_km) with standing/walking pauses stripped from BOTH time
     and distance via the speed series (design D10 — elapsed pace biases a
@@ -261,8 +237,16 @@ def interval_document(run: dict, max_hr: int, rhr=None,
 
     None when the run carries no usable speed series — the same rule
     `run_detail` already applies (design: "a run with no SpeedRecord gets no
-    document at all")."""
-    cols = _columnar(run)
+    document at all").
+
+    The columns come from `synth_streams` — the SAME reshaping the archive
+    banks as `detail_streams_json` and that `_metric_samples` feeds to
+    insight_metrics — so the engine, the charts and the metrics all read one
+    reshaping of this run. A second one (`_columnar`) used to live beside it
+    and had drifted: it exact-matched HR onto speed timestamps, which
+    Samsung's ~10 s-offset clocks rarely hit, and it skipped the distance
+    scaling that pins the integral to the device's own banked total."""
+    cols = synth_streams(run)
     if not cols:
         return None
     return interval_lens.build_document(
@@ -566,7 +550,7 @@ def _work_floor(runs: list[dict]) -> float | None:
     calibrate against."""
     samples: list[float] = []
     for r in runs:
-        cols = _columnar(r)
+        cols = synth_streams(r)
         if cols:
             samples.extend(interval_lens.baseline_samples(cols))
     return interval_lens.work_floor(samples)

@@ -663,6 +663,25 @@ def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple
     ).fetchall()
 
 
+def streamed_runs(conn: sqlite3.Connection) -> list[tuple]:
+    """(activity_id, start_time_local) for EVERY archived run holding columnar
+    streams, regardless of whether it already holds a run_intervals row.
+
+    The intervals pass's calibration sweep needs the whole archive's pace
+    history, not just the runs still pending a document — a percentile taken
+    only over `runs_missing_intervals` would shrink to near-nothing once most
+    of the archive is scored, and drift away from what "work" really means.
+    The same list doubles as the recompute set when the work floor has moved
+    materially: every stored document, not only the missing ones, is stale
+    then."""
+    return conn.execute(
+        f"""SELECT a.activity_id, a.start_time_local
+            FROM activities a
+            WHERE a.detail_streams_json IS NOT NULL AND {_RUN_TYPE_SQL}
+            ORDER BY a.start_time_local"""
+    ).fetchall()
+
+
 def upsert_run_intervals(conn: sqlite3.Connection, row: dict) -> None:
     """INSERT OR REPLACE keyed by activity_id — derived rows are disposable, so
     a recompute at a newer version simply replaces the stale row."""

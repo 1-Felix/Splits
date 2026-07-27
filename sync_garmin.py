@@ -43,6 +43,7 @@ import block_lens
 import coach_briefing
 import course_lens
 import insight_metrics
+import interval_lens
 import plan_compliance
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
@@ -1143,6 +1144,121 @@ def archive_step(client, acts: list[dict]) -> None:
         conn.close()
 
 
+def derive_intervals(conn) -> dict:
+    """Score every archived run holding streams against the athlete's own pace
+    history (add-interval-lens D6, calibrated per Task 7b).
+
+    The pass ALWAYS sweeps every streamed run — scored or not — accumulating
+    `interval_lens.baseline_samples`, then computes `interval_lens.work_floor`
+    over the WHOLE pool exactly once. A percentile taken only from the runs
+    still pending a document would shrink towards nothing once most of the
+    archive is scored and drift away from what "work" really means for this
+    athlete — the sweep has to see runs already holding a document too. The
+    floor (rounded to the millimetre/s) is banked in `archive_meta` so
+    `--verify-archive` can report it.
+
+    Two things force a recompute beyond the normal version-missing set:
+    * the floor has moved by more than 2% since the last pass — every
+      existing document was scored under a floor that no longer describes
+      this athlete, so it is stale even though its lens_version has not
+      changed, and every streamed run is rescored;
+    * the floor is unavailable at all (fewer than
+      `interval_lens.WORK_FLOOR_MIN_SAMPLES` baseline samples — the live path
+      for a young archive): every run is still scored, its document just
+      records `calibrated: false`, logged plainly rather than treated as a
+      failure or a reason to skip.
+
+    Stored payloads in, no network. A per-run failure (bad stream, bad
+    payload) is deterministic, so it is logged and skipped rather than
+    retried every night — one bad run must never sink the rest."""
+    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    runs = activity_archive.streamed_runs(conn)
+
+    samples: list[float] = []
+    for aid, _ in runs:
+        streams = activity_archive.streams_payload(conn, aid)
+        if not streams:
+            continue
+        try:
+            samples.extend(interval_lens.baseline_samples(streams))
+        except Exception as e:  # noqa: BLE001 — one bad stream must not sink calibration
+            warn(f"baseline sampling failed for {aid} ({type(e).__name__}: {e})")
+
+    floor = interval_lens.work_floor(samples)
+    if floor is not None:
+        floor = round(floor, 3)
+    else:
+        warn(f"interval work floor unavailable — {len(samples)} baseline samples "
+             f"< {interval_lens.WORK_FLOOR_MIN_SAMPLES} minimum; scoring every run "
+             "uncalibrated (documents record calibrated: false)")
+
+    prev_raw = activity_archive.get_meta(conn, "interval_work_floor")
+    prev_floor = None
+    if prev_raw not in (None, "None", ""):
+        try:
+            prev_floor = float(prev_raw)
+        except ValueError:
+            prev_floor = None
+
+    moved = False
+    if floor is not None and prev_floor:
+        drift = abs(floor - prev_floor) / prev_floor
+        if drift > 0.02:
+            moved = True
+            warn(f"interval work floor moved {drift:.1%} ({prev_floor:.3f} -> "
+                 f"{floor:.3f} m/s) — every stored document was scored under the "
+                 "old floor and is stale; recomputing the whole archive")
+
+    activity_archive.set_meta(conn, "interval_work_floor", floor)
+
+    bounds = interval_lens.zone_bounds(max_hr)
+    pending = runs if moved else activity_archive.runs_missing_intervals(
+        conn, interval_lens.INTERVAL_VERSION)
+
+    scored = 0
+    for aid, start_local in pending:
+        try:
+            doc = interval_lens.build_document(
+                activity_archive.streams_payload(conn, aid),
+                activity_archive.summary_payload(conn, aid) or {},
+                activity_archive.laps_payload(conn, aid),
+                None, bounds, floor)
+        except Exception as e:  # noqa: BLE001 — one bad stream must not sink the rest
+            warn(f"interval detection failed for {aid} ({type(e).__name__}: {e})")
+            continue
+        if not doc:
+            continue
+        activity_archive.upsert_run_intervals(conn, {
+            "activity_id": aid,
+            "lens_version": interval_lens.INTERVAL_VERSION,
+            "start_time_local": start_local,
+            "shape": doc["shape"], "label": doc.get("label"),
+            "confidence": doc.get("confidence"), "source": doc["source"],
+            "work_dist_m": (doc.get("quality") or {}).get("workDistM"),
+            "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
+            "doc_json": json.dumps(doc, ensure_ascii=False),
+        })
+        scored += 1
+    return {"scored": scored, "floor": floor}
+
+
+def intervals_step() -> None:
+    """Derive the interval documents (add-interval-lens D6). Runs AFTER the
+    archive step (it reads the streams that step wrote) and BEFORE
+    metrics/compliance/build_data; only ever inside safe() — a detection
+    problem is a warning, never a failed sync."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        stats = derive_intervals(conn)
+        floor_desc = (f"{stats['floor']:.3f} m/s" if stats["floor"] is not None
+                      else "uncalibrated")
+        log((f"✓ intervals: {stats['scored']} runs scored (floor {floor_desc})"
+             if stats["scored"] else
+             f"✓ intervals: nothing new to score (floor {floor_desc})"))
+    finally:
+        conn.close()
+
+
 def metrics_step(client, pred_doc) -> None:
     """Phase-1 metrics work (insight_metrics design D1/D7): extract run_metrics
     for anything new or stale-versioned, then bank today's race prediction —
@@ -1573,6 +1689,21 @@ def verify_archive() -> int:
             + (f", latest race {bcov['latest_race']}" if bcov["latest_race"] else "")
             + (f", {bcov['stale']} stale-version rows" if bcov["stale"] else ""))
 
+        # Intervals (add-interval-lens D6): the work floor is a property of the
+        # WHOLE archive, not this version, so it is reported here regardless of
+        # lens_version — a human needs to see what "work" currently means even
+        # between INTERVAL_VERSION bumps.
+        icov = activity_archive.intervals_coverage(conn, interval_lens.INTERVAL_VERSION)
+        floor_raw = activity_archive.get_meta(conn, "interval_work_floor")
+        if floor_raw and floor_raw != "None":
+            floor_val = float(floor_raw)
+            floor_desc = f"{floor_val:.3f} m/s ({fmt_hms(1000.0 / floor_val)}/km)"
+        else:
+            floor_desc = f"uncalibrated (< {interval_lens.WORK_FLOOR_MIN_SAMPLES} baseline samples)"
+        log(f"  intervals  : {icov['scored']}/{icov['streamed_runs']} streamed runs "
+            f"scored at v{interval_lens.INTERVAL_VERSION}, {icov['lapped']} with laps; "
+            f"shapes {icov['shapes']}, work floor {floor_desc}")
+
         # Courses are opt-in (the plan's race names one or it does not), so an
         # empty table is the normal state and never a failure.
         krcov = activity_archive.course_coverage(conn, course_lens.COURSE_LENS_VERSION)
@@ -1706,14 +1837,17 @@ def main() -> None:
         return
 
     # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens
-    # D8): archive, metrics, compliance, the block lens and the course lens all
-    # run BEFORE build_data so insights include today's run and the compliance,
-    # blockLens and courseLens blocks land in the contract; the briefing renders
-    # strictly AFTER the write. Every step is
+    # D8 + add-interval-lens D6): archive, intervals, metrics, compliance, the
+    # block lens and the course lens all run BEFORE build_data so insights
+    # include today's run and the compliance, blockLens and courseLens blocks
+    # land in the contract; the briefing renders strictly AFTER the write.
+    # Intervals runs right after archive (it only reads the streams that step
+    # just wrote and has no garmin-data.js key of its own yet). Every step is
     # safe()-wrapped, so garmin-data.js is written with every existing key
     # even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
+    safe(intervals_step, None, "intervals step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")

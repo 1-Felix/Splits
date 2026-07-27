@@ -1365,6 +1365,52 @@ def test_interval_document_round_trips():
     conn.close()
 
 
+def test_streamed_runs_includes_already_scored_rows():
+    """The calibration sweep needs EVERY streamed run, scored or not — unlike
+    runs_missing_intervals, an existing document must not hide a run from it,
+    or the work floor would shrink towards nothing as the archive gets
+    scored. A run with no streams at all must still be excluded."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())  # run 1 already scored
+    arch.upsert_activities(conn, [_act(2, start="2026-07-11 06:00:00")])  # no streams
+    assert arch.streamed_runs(conn) == [(1, "2026-07-10 06:00:00")]
+    conn.close()
+
+
+def test_verify_archive_reports_interval_calibration_state():
+    """New in add-interval-lens Task 10: verify must never crash reading the
+    intervals section, and must plainly report whether the work floor is
+    calibrated yet — a pre-lens archive (streamed but never scored) is not a
+    regression, it just has nothing to report. Asserted against the actual
+    printed lines, not just the exit code — an exit-code-only check would
+    still pass with no intervals reporting at all."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    orig_log = sg.log
+    lines: list = []
+    sg.log = lines.append
+    try:
+        conn = arch.open_archive(d)
+        arch.upsert_activities(conn, [_act(1, start="2026-07-10 06:00:00")])
+        arch.write_streams(conn, 1, {"t": [0, 1, 2], "d": [0, 3, 6], "v": [3.0, 3.0, 3.0]})
+        conn.close()
+        assert sg.verify_archive() == 0, "streamed but never scored — not a regression"
+        assert any("intervals" in l and "uncalibrated" in l for l in lines), \
+            "verify must plainly say the floor is not yet calibrated"
+
+        lines.clear()
+        conn = arch.open_archive(d)
+        arch.set_meta(conn, "interval_work_floor", 2.7)
+        arch.upsert_run_intervals(conn, _interval_row())
+        conn.close()
+        assert sg.verify_archive() == 0, "a calibrated, scored archive still passes"
+        assert any("2.700 m/s" in l for l in lines), \
+            "verify must report the banked floor in m/s so a human can read it"
+    finally:
+        sg.log = orig_log
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
 def test_single_lap_runs_are_never_queued_for_lap_fetch():
     """The archive's 42 single-lap runs must never cost a Garmin request."""
     conn = arch.open_archive(_tmp())

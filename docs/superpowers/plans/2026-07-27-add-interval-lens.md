@@ -664,6 +664,7 @@ REPS_MIN_COUNT = 3            # 2 when a prior expects a set (design D3)
 BLOCK_MIN_S = 300
 BLOCK_MIN_M = 1500
 VARIED_TOLERANCE = 0.20       # rep distances differing by >20 % → varied
+ROUND_DIST_TOLERANCE = 0.12   # how near a target a rep must be to take its name
 PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 ```
 
@@ -730,12 +731,24 @@ def label_for(shape: str, bouts, dist_at) -> str | None:
 
 
 def _round_dist(metres: float) -> str:
-    """Reps are run to round numbers — snap to the one the athlete meant."""
-    for target, text in ((400, "400 m"), (600, "600 m"), (800, "800 m"),
-                         (1000, "1 km"), (1200, "1.2 km"), (1600, "1600 m"),
-                         (2000, "2 km"), (3000, "3 km"), (5000, "5 km")):
-        if abs(metres - target) / target <= 0.12:
-            return text
+    """Reps are run to round numbers — snap to the one the athlete meant.
+
+    Picks the CLOSEST target by relative error, not the first one within
+    tolerance: 890 m sits inside 800's ±12 % band but is relatively nearer
+    1000, and a first-match loop mislabels it "800 m". (The crossover is at
+    888.89 m — relative, not absolute, error is what keeps one tolerance
+    honest across 200 m and 5 km.)
+
+    The short distances are not optional: without 200/300/500 a real 8×200 m
+    session renders "8×0.2 km", the wrong register entirely.
+    """
+    targets = ((200, "200 m"), (300, "300 m"), (400, "400 m"), (500, "500 m"),
+               (600, "600 m"), (800, "800 m"), (1000, "1 km"), (1200, "1.2 km"),
+               (1500, "1500 m"), (1600, "1600 m"), (2000, "2 km"),
+               (3000, "3 km"), (5000, "5 km"))
+    target, text = min(targets, key=lambda t: abs(metres - t[0]) / t[0])
+    if abs(metres - target) / target <= ROUND_DIST_TOLERANCE:
+        return text
     return f"{metres / 1000:.2g} km"
 
 

@@ -926,9 +926,15 @@ def laps_are_autolap(laps: list[dict]) -> bool:
     turns every long easy run into a rep session. The final lap is always a
     partial and is excluded from the test."""
     dists = [l.get("distance") for l in laps if l.get("distance")]
-    if len(dists) < 3:
+    body = dists[:-1]                  # the final lap is always a partial
+    if len(body) < 3:
+        # Three matching FULL laps is the smallest run of them that means "the
+        # watch is lapping on distance" rather than "this athlete happened to
+        # run two even reps". At a 2-lap floor a real 2×1 km session
+        # ([1000 ACTIVE, 1000 ACTIVE, 200 REST]) was vetoed and its genuine
+        # structure discarded — the mirror of the false positive this guard
+        # exists to prevent.
         return False
-    body = dists[:-1]
     return any(all(abs(d - unit) / unit <= AUTOLAP_TOLERANCE for d in body)
                for unit in AUTOLAP_UNITS)
 

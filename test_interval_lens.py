@@ -1036,3 +1036,247 @@ def test_progression_segments_tile_without_gaps():
         assert cur["t0"] == prev["t1"]
         assert cur["d0"] == prev["d1"]
     assert segs[-1]["t1"] == len(il.speed_series(s))
+
+
+# ── lap-derived rep floor (production defect fix, 2026-07-27) ───────────────
+# `segments_from_laps` maps every ACTIVE/INTERVAL lap to a `work` rep
+# verbatim. The stream path has always required a bout to clear WORK_MIN_S
+# (30 s) *and* WORK_MIN_M (150 m) to exist at all (`find_bouts`); the laps
+# path applied no floor whatsoever, so a trailing partial lap — the athlete
+# pressing stop, or the watch's own end-of-activity lap — became a "rep".
+# Measured on the live archive: 32 of 122 lap-derived reps were under 150 m,
+# affecting 17 of 22 sets, and a 9 m fragment beside five genuine 1 km reps
+# made the whole set read `varied`, which nulled its label.
+
+def _pace_lap(dist_m, pace_s_per_km=300, intensity="ACTIVE"):
+    """A lap at a plausible, constant pace — duration and distance move
+    together, unlike a bare `_lap(dist, dur)` call where a test could
+    accidentally clear one floor while failing to exercise the other."""
+    return _lap(dist_m, dist_m * pace_s_per_km / 1000.0, intensity)
+
+
+def test_lap_work_floor_reroles_a_trailing_fragment_as_cooldown():
+    """The exact shape of the live defect: two real reps then a lap-clock
+    fragment with no more work after it. `_apply_lap_work_floor` must demote
+    it, not count it, and — since nothing follows it — call it `cooldown`,
+    not `recovery` (there is no more work to recover FOR)."""
+    laps = [_lap(600, 180, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
+            _pace_lap(9)]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert [s["role"] for s in segs] == ["warmup", "work", "work", "cooldown"]
+    assert segs[1]["rep"] == 1 and segs[2]["rep"] == 2
+    assert "rep" not in segs[3]
+
+
+def test_lap_work_floor_reroles_leading_fragments_as_warmup():
+    """The Lagrasse case: four short bouts BEFORE the one real block. Demoted
+    laps that precede every surviving rep read as `warmup`, not `recovery` —
+    there is nothing yet to have recovered from."""
+    laps = [_pace_lap(93, 150), _pace_lap(118, 150), _pace_lap(112, 150),
+            _pace_lap(105, 150), _pace_lap(3040, 260)]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert [s["role"] for s in segs] == ["warmup"] * 4 + ["work"]
+    assert segs[4]["rep"] == 1
+    assert all("rep" not in s for s in segs[:4])
+
+
+def test_lap_work_floor_reroles_a_mid_set_fragment_as_recovery_and_renumbers():
+    """A demoted lap BETWEEN two surviving reps reads as `recovery` — the
+    established word for a gap between real work. Its removal from the rep
+    count must not leave a hole in `rep` numbering: the third real rep is
+    still numbered 3, not 4."""
+    laps = [_pace_lap(1000), _pace_lap(1000), _pace_lap(9), _pace_lap(1000)]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert [s["role"] for s in segs] == ["work", "work", "recovery", "work"]
+    assert [s.get("rep") for s in segs] == [1, 2, None, 3]
+    # idx is untouched — segments are re-roled in place, never deleted
+    assert [s["idx"] for s in segs] == [1, 2, 3, 4]
+
+
+def test_lap_work_floor_leaves_short_warmup_recovery_cooldown_alone():
+    """A short warmup/recovery/cooldown lap is legitimate however brief — only
+    `work`-role laps carry a minimum, exactly as on the stream path (a 20 s
+    recovery there is still a recovery, never dropped or re-roled)."""
+    laps = [_lap(50, 15, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
+            _lap(20, 8, "REST"), _pace_lap(1000), _lap(30, 10, "COOLDOWN")]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert [s["role"] for s in segs] == \
+        ["warmup", "work", "work", "recovery", "work", "cooldown"]
+    assert [s.get("rep") for s in segs] == [None, 1, 2, None, 3, None]
+
+
+def test_lap_work_floor_never_touches_a_non_work_role_even_by_position():
+    """The floor's own contract: only `role == 'work'` segments are ever
+    re-roled. A short REST lap that sits BEFORE the first real rep must stay
+    `recovery` — not get relabelled `warmup` by the same position rule that
+    demoted `work` laps go through, which would fire on it too if the code
+    ever stopped checking the role first."""
+    laps = [_lap(10, 5, "REST"), _pace_lap(1000), _pace_lap(1000)]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert segs[0]["role"] == "recovery"
+
+
+def test_lap_work_floor_needs_both_distance_and_duration_not_either_alone():
+    """The floor is an AND, exactly like `find_bouts`'s (the handoff's own M12
+    notes no fixture ever separated the two there — closing that gap here
+    too). A fast 200 m sprint lap clears WORK_MIN_M but not WORK_MIN_S; a
+    slow, dawdling 100 m lap clears WORK_MIN_S but not WORK_MIN_M. Neither
+    alone is a rep."""
+    fast_sprint = _lap(200, 20)          # clears 150 m, fails 30 s
+    slow_stroll = _lap(100, 60)          # clears 30 s, fails 150 m
+    segs = il._apply_lap_work_floor(il.segments_from_laps([fast_sprint, slow_stroll]))
+    assert [s["role"] for s in segs] == ["recovery", "recovery"]
+
+
+def test_lap_work_floor_falls_back_to_recovery_when_nothing_survives():
+    """No surviving rep at all: there is no 'before the first' or 'after the
+    last' to speak of, so the demoted laps read as `recovery` — moot for any
+    number in the document, since the caller demotes the whole run to
+    `steady` or `block` in this case (see test_all_sub_floor_laps_read_
+    steady_with_no_segments) and neither counts a `recovery` segment."""
+    laps = [_pace_lap(9), _pace_lap(8)]
+    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    assert [s["role"] for s in segs] == ["recovery", "recovery"]
+    assert all("rep" not in s for s in segs)
+
+
+def _laps_doc(dists, summary=None, pace_s_per_km=300, laps=None):
+    """A structured-laps `build_document` call for a work-rep distance list —
+    the shape the live archive's buggy documents are described in.
+
+    Pads a leading warmup lap and a short (200 m) recovery lap between each
+    ACTIVE rep — a real Garmin interval workout's laps always alternate this
+    way, and skipping the padding would make an all-1-km-reps fixture (like
+    the '5x1km' case below) trip `laps_are_autolap`'s uniform-1-km veto for a
+    reason that has nothing to do with what this test is about: that veto
+    reads EVERY lap's distance regardless of role, so five bare 1000 m ACTIVE
+    laps back to back look exactly like a 19 km easy run auto-lapping at
+    1 km. `laps` lets a caller override with an exact lap sequence (Lagrasse's
+    strides) for fixtures that need more than one pace or no padding at all."""
+    if laps is None:
+        laps = [_lap(2000, 2000 * 400 / 1000.0, "WARMUP")]
+        for i, d in enumerate(dists):
+            laps.append(_pace_lap(d, pace_s_per_km))
+            if i < len(dists) - 1:
+                laps.append(_lap(200, 200 * 400 / 1000.0, "REST"))
+    total_s = int(sum(l["duration"] for l in laps)) + 60
+    s = make_streams([(total_s, 3.0)])
+    return il.build_document(s, summary or {"hasIntensityIntervals": True}, laps)
+
+
+def test_five_km_reps_plus_a_trailing_fragment_recovers_five_and_the_label():
+    """THE production symptom, end to end: '2km wu, 5x1km @ 5:40' — [1000,
+    1000, 1000, 1000, 1000, 9]. Before this fix: found 6, varied True, label
+    None. After: found 5, varied False, label '5×1 km'."""
+    doc = _laps_doc([1000, 1000, 1000, 1000, 1000, 9])
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+    assert doc["set"]["varied"] is False
+    assert doc["label"] == "5×1 km"
+    assert doc["quality"]["workDistM"] == 5000, "the fragment must not count"
+
+
+def test_pyramid_survives_the_floor_with_its_shape_intact():
+    """'pYRAMIDE: 1-2-1K' — [1000, 2000, 1000, 27]. The real pyramid (varied
+    by design) must not be confused with the fragment that used to sit beside
+    it: 3 reps, still varied, label '1-2-1 km'."""
+    doc = _laps_doc([1000, 2000, 1000, 27])
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3
+    assert doc["set"]["varied"] is True
+    assert doc["label"] == "1-2-1 km"
+
+
+def test_five_two_km_reps_plus_a_trailing_fragment():
+    """'W14 - HM2-Training' — [2000, 2000, 2000, 2000, 2000, 3]."""
+    doc = _laps_doc([2000, 2000, 2000, 2000, 2000, 3])
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+    assert doc["set"]["varied"] is False
+    assert doc["label"] == "5×2 km"
+
+
+def test_uniform_hill_reps_recover_a_clean_label():
+    """'W7 - HM-Training' — [178, 200, 176, 151, 159, 154, 160, 185, 3]. Eight
+    real ~180 m hill reps plus a trailing 3 m fragment; every real rep clears
+    BOTH 150 m and 30 s (230 s/km — a hard uphill effort, but not so fast
+    that a 151 m rep dips under the 30 s duration floor at 27 s the way a
+    naive 180 s/km pace would) so all eight survive and read as one clean
+    uniform set."""
+    doc = _laps_doc([178, 200, 176, 151, 159, 154, 160, 185, 3], pace_s_per_km=230)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 8
+    assert doc["set"]["varied"] is False
+    assert doc["label"] == "8×200 m"
+
+
+def test_all_sub_floor_laps_read_steady_with_no_segments():
+    """When every lap-tagged 'rep' fails the floor, the run is not a rep
+    session at all — the contract's own rule ('a steady run still gets a
+    document... no segments') must hold here too, not just on the stream
+    path. Before this fix this could only happen with zero ACTIVE laps in
+    the first place; the floor makes it reachable from real ACTIVE laps that
+    are simply too short, so the rule needs enforcing explicitly."""
+    doc = _laps_doc([9, 8, 7])
+    assert doc["shape"] == "steady"
+    assert doc["segments"] == []
+    assert doc["set"] is None
+
+
+def test_lagrasse_strides_reclassify_as_a_block_not_five_reps():
+    """'Lagrasse - W12 HM-Training: Tempo' — [93, 118, 112, 105, 3040]. Four
+    short bouts (~15-25 s each) too brief to be reps under the SAME floor the
+    stream path has always used, then one real ~13 min tempo effort. Judged
+    as warm-up strides, not noise: reclassifying this run from a false
+    '5 reps' to 'block' is the correct outcome of applying one consistent
+    floor everywhere, even though it costs the strides their own visibility
+    as reps (see the fix report for the full discussion)."""
+    laps = [_pace_lap(93, 150), _pace_lap(118, 150), _pace_lap(112, 150),
+            _pace_lap(105, 150), _pace_lap(3040, 260)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "block"
+    assert doc["label"] == "13 min block"
+    assert doc["quality"]["workDistM"] == 3040
+    # the strides are not lost from the document — just no longer counted as
+    # reps or work; they are demoted to warmup ahead of the real effort
+    work_roles = [s["role"] for s in doc["segments"]]
+    assert work_roles == ["warmup", "warmup", "warmup", "warmup", "work"]
+
+
+def test_run_walk_run_partially_survives_the_floor_a_known_limitation():
+    """'Run Walk Run®' — [205, 106, 81, 145, 52, 94, 66, 118, 52, 97, 50, 111,
+    42, 173, 914]. This is a Galloway run/walk, not an interval session, but
+    three of its run segments (205, 173 and 914 m) happen to clear 150 m by
+    chance while the rest do not, so the floor alone does NOT fix this case
+    — it reads as `reps: found 3, varied` where the honest answer is neither
+    'reps' nor any of these three numbers. Pinned here as a KNOWN, REPORTED
+    limitation (see the fix report) rather than silently accepted: a uniform
+    floor cannot distinguish 'this rep was a lap-clock artifact' from 'this
+    run/walk cycle happened to be long enough,' and fixing it properly needs
+    a run/walk-aware shape this change does not add."""
+    doc = _laps_doc([205, 106, 81, 145, 52, 94, 66, 118, 52, 97, 50, 111, 42, 173, 914],
+                     pace_s_per_km=320)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3
+    assert doc["set"]["varied"] is True
+
+
+def test_laps_and_stream_paths_share_the_same_reps_labelling_rule():
+    """Fix 2: the laps branch must name a varied set through the SAME rule as
+    the stream path (`_reps_label`, shared by both), not a second hand-rolled
+    formula. Before this fix the laps branch returned `None` for every
+    varied set — this pins the two paths to agree on an equivalent input so
+    they cannot drift apart again."""
+    dists = [1000, 2000, 1000]
+    bouts = [(0, 1000), (1000, 3000), (3000, 4000)]
+    assert il.label_for("reps", bouts, _flat_dist_at) == il._reps_label(dists)
+
+
+def test_lap_sourced_varied_set_gets_a_label_not_none():
+    """The exact user-visible symptom: before Fix 2, `build_document`'s laps
+    branch returned `label: None` for every varied lap-sourced set — 21 of
+    23 lap-sourced documents on the live archive had no label at all."""
+    doc = _laps_doc([1000, 2000, 1000, 27])
+    assert doc["set"]["varied"] is True
+    assert doc["label"] is not None
+    assert doc["label"] == "1-2-1 km"

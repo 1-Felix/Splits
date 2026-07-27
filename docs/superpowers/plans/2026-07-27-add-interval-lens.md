@@ -449,11 +449,35 @@ def test_rep_boundaries_land_near_the_truth():
 
 
 def test_chatter_does_not_shred_one_rep():
-    """Hysteresis earns its place here: without it, a wobbling rep becomes 3."""
-    wobble = []
-    for i in range(250):
-        wobble.append((1, 4.0 if i % 7 else 3.2))
-    spans = [(600, 2.6)] + wobble + [(300, 2.6)]
+    """Hysteresis earns its place here: without it, a wobbling rep becomes 3.
+
+    Two traps this fixture had to escape, both found in review:
+    (a) a period-7 single-sample dip is EXACTLY what SMOOTH_WINDOW_S=15's
+        rolling median erases — it never reaches find_bouts, and the test then
+        passes with hysteresis on or off;
+    (b) a hardcoded dip value rots. The dip must sit between `leave` and
+        `enter`, and the margin is set by EXIT_FRAC alone (the 4.0 peaks clear
+        any plausible ENTER_FRAC), so a retune from 0.45 to 0.47 flipped the
+        result. Derive the dip and assert the precondition, so a future retune
+        fails loudly and diagnostically instead of silently or spuriously.
+    Verified to hold across EXIT_FRAC 0.25–0.56.
+    """
+    probe = [(600, 2.6), (240, 4.0), (300, 2.6)]     # same lo/hi as the wobble
+    lo, hi, _ = il.split_classes(il.smooth(il.speed_series(make_streams(probe))))
+    enter = lo + il.ENTER_FRAC * (hi - lo)
+    leave = lo + il.EXIT_FRAC * (hi - lo)
+    dip = (leave + enter) / 2                        # centred: max margin both ways
+    assert leave < dip < enter, "dip must sit strictly between the REAL thresholds"
+
+    wobble = [(40, 4.0), (40, dip)] * 3
+    assert len(_bouts([(600, 2.6)] + wobble + [(300, 2.6)])) == 1
+
+
+def test_open_bout_auto_closes_at_the_last_sample():
+    """The athlete stops the watch the instant the last rep ends — the bout is
+    still open when the series runs out and must be closed at the final sample,
+    not dropped."""
+    spans = [(600, 2.6), (250, 4.0)]                 # no cooldown tail
     assert len(_bouts(spans)) == 1
 
 

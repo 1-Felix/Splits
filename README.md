@@ -28,6 +28,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) — lives in the `/data` volume (seeded from the default below). |
 | `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
+| `interval_lens.py` | **The interval lens.** What structure did this run have — reps, a sustained block, a progression, or nothing? Pure over its inputs: columnar streams in (plus Garmin lap DTOs when they encode real structure), one versioned document out. One engine, two producers — `sync_garmin.py` and `ingest_builder.py` both call `build_document()`, so Felix's runs and Max's are read by the same rules. Tested in `test_interval_lens.py` against synthetic streams, and against the athlete's own self-describing run names in `test_interval_truth.py`. See [below](#the-interval-lens-auto-lap-and-calibration) for the auto-lap veto and the cross-run calibration it depends on. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
 | `serve.mjs` | Zero-dependency web server: serves the pages behind clean routes (`/`, `/progress`, `/archive`, `/compare`), serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status` + the read-only archive API (`GET /api/archive/…`, via the Node 24 built-in `node:sqlite`), and runs the boot + nightly sync. |
 | `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
@@ -123,6 +124,38 @@ validated by script — `test_palette.mjs` runs the vendored checker in
 `tools/validate-palette.mjs` against every theme's own surface, so status
 colours can never impersonate a series and the zone ramp stays legible under
 colour-vision deficiency.
+
+### The interval lens (auto-lap and calibration)
+
+`interval_lens.py` answers a question per-kilometre splits can't: not "how fast
+was each km" but "did this run *have structure* — reps, a sustained hard block,
+a progression — or was it just a run". Two things about it are surprising
+enough, and load-bearing enough, to call out on their own.
+
+**The auto-lap veto.** Garmin auto-laps every full kilometre (or mile)
+regardless of what the athlete is doing — a plain 19 km easy run produces 19
+laps that carry no intent whatsoever, and a lap-driven detector that trusted
+them would read that run as a 19-rep interval session. `laps_are_autolap()`
+checks whether every *full* lap (the always-partial final lap is excluded)
+lands within ±5 % of exactly 1 km or 1 mile; if so, the laps are ignored
+entirely and detection falls through to the stream. Only when the laps
+disagree with each other — a real workout's warm-up, reps and cool-down are
+never the same length — are they trusted as structure.
+
+**Cross-run calibration.** "This bout was faster than the rest of this run" is
+not the same claim as "this bout was genuinely fast, for this athlete". A
+same-run two-class split (2-means) always finds a faster half and a slower
+half inside *any* run, easy runs included — measured on this athlete's real
+165-run archive, that definition alone read 62 % of it as interval sessions.
+So `build_document` takes an optional `work_floor`: a percentile (p93) of the
+athlete's own moving-speed history, swept across the *whole* archive
+(`baseline_samples()` accumulated per run, `work_floor()` computed once over
+the whole pool) and passed into every call. A bout only counts as work once
+its own pace clears that floor — "fast for you", not "fast for this 20
+minutes". Call `build_document` without a floor and it makes no rep claim at
+all: every run reads `shape: "steady"`, `calibrated: false`, rather than
+guess. `test_interval_truth.py` sweeps the real archive to compute this floor
+before it asserts anything, for exactly that reason.
 
 ## Self-hosting with Docker (recommended)
 

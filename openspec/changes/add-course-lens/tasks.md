@@ -58,4 +58,4 @@ Ordered so pre-race value lands first: profile → pace plan → overlay. The ra
 ## 7. Close-out
 
 - [x] 7.1 `README.md` / `CLAUDE_CODE_HANDOFF.md` note on the course hook and how to point a future race at its own `courseId`
-- [ ] 7.2 Full suite green (Python + `.mjs`) ✅ · `openspec validate --strict` ✅ · **NUC deploy still pending** — needs a push to main so CI builds `:latest`, then `docker compose pull && up -d` on the NUC; only then does the 08:00 sync produce a course document
+- [x] 7.2 Full suite green (Python + `.mjs`) · `openspec validate --strict` 20/20 · **NUC deployed and verified 2026-07-27**: schema migrated to v10 in place, sync derived the course (22 km rows, 3 segments, calibrated k=0.332 / residual 0.007 — identical to local), basemap tiles complete at z12, `/api/archive/course/493447940` serves 200, `/course` renders with the Course tab now reachable from every page, and the ingest-fed instance stays correctly dark

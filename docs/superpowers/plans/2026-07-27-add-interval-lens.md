@@ -1977,8 +1977,27 @@ free. Capped per nightly sync with --backfill-laps as the one-time sweep."
 - Modify: `test_run_detail.py`
 
 **Interfaces:**
-- Consumes: `interval_lens.build_document` (Task 7), `activity_archive.runs_missing_intervals` / `upsert_run_intervals` (Task 8)
-- Produces: `intervals_step() -> None`, `derive_intervals(conn) -> dict` (returns `{"scored": int}`)
+- Consumes: `interval_lens.build_document`, `interval_lens.baseline_samples`, `interval_lens.work_floor`, `interval_lens.zone_bounds` (Tasks 7/7b), `activity_archive.runs_missing_intervals` / `upsert_run_intervals` (Task 8)
+- Produces: `intervals_step() -> None`, `derive_intervals(conn) -> dict` (returns `{"scored": int, "floor": float | None}`)
+
+> **Changed by Task 7b — the pass must calibrate before it scores.** `build_document`
+> takes a `work_floor`, and without one it makes no rep claim at all. So
+> `derive_intervals` must FIRST sweep every streamed run accumulating
+> `interval_lens.baseline_samples(streams)`, then compute
+> `interval_lens.work_floor(samples)` ONCE, and pass that floor (plus
+> `interval_lens.zone_bounds(ATHLETE_MAX_HR)`) into every `build_document` call.
+> Two consequences for this task:
+> * The floor is a property of the whole archive, so it changes as the athlete's
+>   history grows. Store it in `archive_meta` (key `interval_work_floor`) each run
+>   so `--verify-archive` can report it and a human can see what "work" currently
+>   means in s/km.
+> * A version bump is not the only reason to recompute. If the stored floor has
+>   moved materially since the last pass (say by more than 2 %), every document is
+>   stale — recompute them all, and log that this is why. Without that, documents
+>   scored under an old floor silently disagree with new ones.
+> * `work_floor` returns `None` below `WORK_FLOOR_MIN_SAMPLES` (~30 runs). That is
+>   the live path on a young archive: score the runs anyway (the documents record
+>   `calibrated: false`), and log the reason plainly rather than failing.
 
 - [ ] **Step 1: Write the failing test**
 

@@ -403,6 +403,63 @@ def test_label_for_pyramid_reads_as_the_pyramid():
     assert il.label_for("reps", bouts, _flat_dist_at) == "1-2-1 km"
 
 
+# ── FINAL REVIEW I6: enumeration is for pyramids, not for fragment lists ────
+# `varied` is decided by the algorithm and is right; what it produced as a
+# LABEL was not. Measured on the real archive: 13 of 19 rep detections read
+# like "0.89-0.385-0.333-0.417-0.598-0.894-1.77-0.811 km", and that string is
+# user-facing in three places at once (the /archive chip, the rep-card title
+# and — via coach-read.js — the cockpit sentence). Display only: nothing below
+# changes which bouts the engine found or what `set` reports about them.
+
+def test_a_readable_pyramid_still_enumerates_its_reps():
+    """The real archive's `pYRAMIDE: 1-2-1K Tempo` session detects five bouts
+    at 987/958/530/495/296 m. It is the one detection in the archive worth
+    enumerating, so the rule is tuned to keep it: few enough reps to read, and
+    every one of them lands on a distance a human would prescribe."""
+    edges = [0, 987, 1945, 2475, 2970, 3266]
+    bouts = list(zip(edges, edges[1:]))
+    assert il.label_for("reps", bouts, _flat_dist_at) == "0.987-0.958-0.53-0.495-0.296 km"
+
+
+def test_too_many_unequal_reps_collapse_to_a_count():
+    """Eight fragments are not a pyramid anybody wrote down. The real
+    detection this is taken from is the archive's W13 HM2-Training run."""
+    dists = [890, 385, 333, 417, 598, 894, 1770, 811]
+    edges = [0]
+    for d in dists:
+        edges.append(edges[-1] + d)
+    bouts = list(zip(edges, edges[1:]))
+    assert len(bouts) > il.VARIED_MAX_ENUMERATE
+    assert il.label_for("reps", bouts, _flat_dist_at) == "8 reps"
+
+
+def test_a_short_set_of_unprescribable_reps_also_collapses():
+    """The count ceiling alone is not enough: this set has only three reps but
+    a 153 m and a 168 m one, and nobody prescribes those. Taken from the
+    archive's 2024-05-24 run, which used to read '0.153-0.238-0.168 km'."""
+    edges = [0, 153, 391, 559]
+    bouts = list(zip(edges, edges[1:]))
+    assert len(bouts) <= il.VARIED_MAX_ENUMERATE, \
+        "this must fail on the ROUNDNESS rule, not the count one"
+    assert il.label_for("reps", bouts, _flat_dist_at) == "3 reps"
+
+
+def test_a_uniform_set_is_untouched_by_the_collapse_rule():
+    """The rule only ever fires on `varied` sets — a clean 6×200 m keeps its
+    real name however many reps it has."""
+    edges = [i * 200 for i in range(7)]
+    bouts = list(zip(edges, edges[1:]))
+    assert len(bouts) > il.VARIED_MAX_ENUMERATE
+    assert il.label_for("reps", bouts, _flat_dist_at) == "6×200 m"
+
+
+def test_snaps_to_round_is_the_prescribable_distance_test():
+    assert il._snaps_to_round(987) and il._snaps_to_round(296)
+    assert il._snaps_to_round(1580), "1580 m is a 1600 m rep measured short"
+    assert not il._snaps_to_round(153), "nobody prescribes 153 m"
+    assert not il._snaps_to_round(688), "…nor 688 m — that is a fragment"
+
+
 # ── varied: max deviation from the median, not the range (fix round) ────────
 # `set_stats`, `label_for` and the laps path in `build_document` all used to
 # compute this independently as (max - min) / nominal — a RANGE test, fragile

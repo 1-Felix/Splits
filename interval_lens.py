@@ -35,6 +35,7 @@ REPS_MIN_COUNT = 3            # 2 when a prior expects a set (design D3)
 BLOCK_MIN_S = 300
 BLOCK_MIN_M = 1500
 VARIED_TOLERANCE = 0.20       # rep distances differing by >20 % → varied
+VARIED_MAX_ENUMERATE = 5      # more unequal reps than this and the list is noise
 PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 ROUND_DIST_TOLERANCE = 0.12   # relative error within which a rep snaps to a named distance
 AUTOLAP_TOLERANCE = 0.05      # laps all within ±5 % of 1 km / 1 mile = auto-lap
@@ -338,27 +339,52 @@ def label_for(shape: str, bouts, dist_at) -> str | None:
     dists = [dist_at(b) - dist_at(a) for a, b in bouts]
     nominal, varied = _rep_variation(dists)
     if varied:
+        # Enumerating every rep is only informative when the set could
+        # PLAUSIBLY be a written pyramid: few enough reps to read at a glance,
+        # and every one of them landing on a distance a human would prescribe.
+        # Otherwise the "label" is just the detector's fragment list, and it is
+        # user-facing in three places at once — the /archive chip, the rep-card
+        # title and the cockpit sentence. Measured on the real archive before
+        # this rule: only 6 of 19 rep detections had a clean label and the rest
+        # read like "0.89-0.385-0.333-0.417-0.598-0.894-1.77-0.811 km", which
+        # is worse than the thirds verdict it replaced. Display only — the
+        # detection, the segments and every `set` number are untouched, so
+        # "N reps" never hides a rep the engine found.
+        if len(bouts) > VARIED_MAX_ENUMERATE or not all(_snaps_to_round(d) for d in dists):
+            return f"{len(bouts)} reps"
         parts = "-".join(f"{(dist_at(b) - dist_at(a)) / 1000:.3g}" for a, b in bouts)
         return f"{parts} km"
     return f"{len(bouts)}×{_round_dist(nominal)}"
 
 
-def _round_dist(metres: float) -> str:
-    """Reps are run to round numbers — snap to the one the athlete meant.
+_ROUND_TARGETS = ((200, "200 m"), (300, "300 m"), (400, "400 m"), (500, "500 m"),
+                  (600, "600 m"), (800, "800 m"), (1000, "1 km"), (1200, "1.2 km"),
+                  (1500, "1500 m"), (1600, "1600 m"), (2000, "2 km"),
+                  (3000, "3 km"), (5000, "5 km"))
 
-    Picks the CLOSEST target by relative error, not the first within tolerance:
+
+def _nearest_target(metres: float) -> tuple[int, str, float]:
+    """The named distance this measurement is relatively closest to, and how
+    far off it is. CLOSEST by relative error, not the first within tolerance:
     880 m sits inside 800's ±12 % band but is relatively nearer 1000, and a
     first-match loop mislabels it. Relative (not absolute) error is what keeps
-    one tolerance honest across 200 m and 5 km.
-    """
-    targets = ((200, "200 m"), (300, "300 m"), (400, "400 m"), (500, "500 m"),
-               (600, "600 m"), (800, "800 m"), (1000, "1 km"), (1200, "1.2 km"),
-               (1500, "1500 m"), (1600, "1600 m"), (2000, "2 km"),
-               (3000, "3 km"), (5000, "5 km"))
-    target, text = min(targets, key=lambda t: abs(metres - t[0]) / t[0])
-    if abs(metres - target) / target <= ROUND_DIST_TOLERANCE:
-        return text
-    return f"{metres / 1000:.2g} km"
+    one tolerance honest across 200 m and 5 km."""
+    target, text = min(_ROUND_TARGETS, key=lambda t: abs(metres - t[0]) / t[0])
+    return target, text, abs(metres - target) / target
+
+
+def _snaps_to_round(metres: float) -> bool:
+    """Did the athlete plausibly MEAN this distance? A prescribed session is
+    written in round numbers, so a set every one of whose reps snaps is a
+    candidate for enumeration; one containing a 155 m or a 688 m fragment is
+    the detector cutting continuous running into pieces."""
+    return _nearest_target(metres)[2] <= ROUND_DIST_TOLERANCE
+
+
+def _round_dist(metres: float) -> str:
+    """Reps are run to round numbers — snap to the one the athlete meant."""
+    _, text, err = _nearest_target(metres)
+    return text if err <= ROUND_DIST_TOLERANCE else f"{metres / 1000:.2g} km"
 
 
 def set_stats(bouts, series, dist_at, hr: list | None,

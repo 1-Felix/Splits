@@ -391,9 +391,17 @@ def test_structured_needs_intensity_or_the_flag():
 
 
 def test_autolap_beats_the_workout_flag():
-    """A workout run whose laps are all 1 km still carries no rep structure."""
+    """A workout run whose laps are all 1 km still carries no rep structure.
+
+    FIXTURE FIX: the brief's original laps carried no intensityType at all, so
+    `intensities` was empty and `len(intensities) > 1` was already False —
+    this passed even with the auto-lap veto deleted entirely, verified
+    directly. Alternating ACTIVE/REST on the same uniform 1 km laps gives two
+    distinct intensities, so the workout-flag branch would read True without
+    the veto; only the veto firing first makes this False, confirmed by
+    running both versions of laps_are_structured against this exact fixture."""
     summary = {"workoutId": 42}
-    laps = [_lap(1000, 330) for _ in range(8)]
+    laps = [_lap(1000, 330, "ACTIVE" if i % 2 == 0 else "REST") for i in range(8)]
     assert il.laps_are_structured(summary, laps) is False
 
 

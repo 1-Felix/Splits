@@ -505,7 +505,8 @@ def test_moved_work_floor_forces_a_full_archive_recompute():
 
     second = sg.derive_intervals(conn)
     drift = abs(second["floor"] - first["floor"]) / first["floor"]
-    assert drift > 0.02, "the drift guard must actually have something to trigger on"
+    assert drift > sg.INTERVAL_FLOOR_DRIFT_GATE, \
+        "the drift guard must actually have something to trigger on"
     assert second["floor"] == 5.0
 
     total_runs = len(pad_ids) + 2  # + run 5 + the new fast run
@@ -518,6 +519,67 @@ def test_moved_work_floor_forces_a_full_archive_recompute():
 
     # settles again: a third pass with no further drift is a no-op
     assert sg.derive_intervals(conn)["scored"] == 0
+    conn.close()
+
+
+def test_a_floor_drift_under_the_gate_only_scores_the_new_run():
+    """The other half of the moved-floor guard: drift that is real but stays
+    under sg.INTERVAL_FLOOR_DRIFT_GATE must NOT force a full recompute — only
+    the run(s) genuinely still pending a document get scored. The positive
+    test above alone can't catch a regression that made the drift comparison
+    always-true (it would stay green while every nightly sync silently
+    recomputed the whole archive); this is the other half of that guard.
+
+    The padding run's size is DERIVED from INTERVAL_FLOOR_DRIFT_GATE and
+    interval_lens.WORK_FLOOR_PCT, not hand-picked, so this keeps proving what
+    it claims even if the gate, the percentile, or the padding archive's size
+    change later."""
+    conn = arch.open_archive(Path(tempfile.mkdtemp()))
+    pad_ids = _seed_calibrated_archive(conn)
+    arch.upsert_activities(conn, [_run_summary(5, 13, "2026-07-10 06:00:00")])
+    arch.write_streams(conn, 5, _rep_streams())
+
+    first = sg.derive_intervals(conn)
+    floor0 = first["floor"]
+    assert floor0 is not None
+
+    # Target a pace at 40% of the drift gate above the current floor — safely
+    # nonzero, safely under the gate, whatever the gate's value happens to be.
+    target_ratio = sg.INTERVAL_FLOOR_DRIFT_GATE * 0.4
+    target_mps = round(floor0 * (1 + target_ratio), 3)
+    assert 0 < target_ratio < sg.INTERVAL_FLOOR_DRIFT_GATE
+
+    # How many samples at target_mps are needed for the 93rd-percentile pick
+    # to actually land among them? Worked out from the archive's OWN current
+    # composition (not assumed): the percentile index must clear every
+    # existing sample at or below the current floor.
+    existing = []
+    for aid, _ in arch.streamed_runs(conn):
+        existing.extend(sg.interval_lens.baseline_samples(arch.streams_payload(conn, aid)))
+    below = sum(1 for v in existing if v <= floor0)
+    n0 = len(existing)
+    pct = sg.interval_lens.WORK_FLOOR_PCT
+    k_min = max(1, int(below / pct) - n0 + 1)
+    k = k_min * 2 + 100                              # generous safety margin
+    duration_s = k * sg.interval_lens.BASELINE_STRIDE
+
+    arch.upsert_activities(conn, [_run_summary(300, 1, "2026-03-01 06:00:00")])
+    arch.write_streams(conn, 300, _steady_streams(duration_s, mps=target_mps))
+
+    second = sg.derive_intervals(conn)
+    assert second["floor"] == target_mps
+
+    drift = abs(second["floor"] - floor0) / floor0
+    assert 0 < drift < sg.INTERVAL_FLOOR_DRIFT_GATE, \
+        f"expected a nonzero, sub-gate drift; measured {drift:.4%}"
+
+    # only the genuinely pending run (the new padding run) gets scored —
+    # NOT a full-archive recompute
+    assert second["scored"] == 1
+
+    # the previously-scored reps run must be untouched under the barely-
+    # moved floor, not silently recomputed
+    assert arch.interval_document(conn, 5)["shape"] == "reps"
     conn.close()
 
 

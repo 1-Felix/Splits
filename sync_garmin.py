@@ -1120,6 +1120,10 @@ DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
 MAPS_PER_SYNC = 10           # basemap backlog drains the same way; the full
                              # sweep is `--backfill-maps` (route-basemap D5)
 LAPS_PER_SYNC = 40           # bounded so a nightly sync stays polite to Garmin
+INTERVAL_FLOOR_DRIFT_GATE = 0.02   # add-interval-lens D6/Task 7b: a banked
+                                   # work floor that has moved more than this
+                                   # since the last pass makes every stored
+                                   # document stale, version bump or not
 
 
 def archive_step(client, acts: list[dict]) -> None:
@@ -1203,9 +1207,9 @@ def derive_intervals(conn) -> dict:
     moved = False
     if floor is not None and prev_floor:
         drift = abs(floor - prev_floor) / prev_floor
-        if drift > 0.02:
+        if drift > INTERVAL_FLOOR_DRIFT_GATE:
             moved = True
-            warn(f"interval work floor moved {drift:.1%} ({prev_floor:.3f} -> "
+            warn(f"interval work floor moved {drift:.1%} ({prev_floor:.3f} → "
                  f"{floor:.3f} m/s) — every stored document was scored under the "
                  "old floor and is stale; recomputing the whole archive")
 

@@ -481,7 +481,7 @@ def test_unrecognised_intensity_defaults_to_work():
 
 def test_document_shape_for_a_rep_session():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
-    doc = il.build_document(s)
+    doc = il.build_document(s, work_floor=3.0)
     assert doc["version"] == il.INTERVAL_VERSION
     assert doc["shape"] == "reps"
     assert doc["source"] == "stream"
@@ -519,14 +519,14 @@ def test_structured_laps_win_over_the_stream():
 def test_autolap_falls_through_to_the_stream():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
     laps = [_lap(1000, 330) for _ in range(8)]
-    doc = il.build_document(s, {"workoutId": 9}, laps)
+    doc = il.build_document(s, {"workoutId": 9}, laps, work_floor=3.0)
     assert doc["source"] == "stream"
     assert doc["set"]["found"] == 5
 
 
 def test_segments_cover_warmup_reps_and_cooldown():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 3 + [(300, 2.6)])
-    roles = [seg["role"] for seg in il.build_document(s)["segments"]]
+    roles = [seg["role"] for seg in il.build_document(s, work_floor=3.0)["segments"]]
     assert roles[0] == "warmup"
     assert roles[-1] == "cooldown"
     assert roles.count("work") == 3
@@ -566,15 +566,22 @@ def test_quality_zone_is_time_weighted():
         s["hr"][i] = 145                       # Z3 — short
     for i in range(w3a, w3b):
         s["hr"][i] = 145                       # Z3 — short
-    doc = il.build_document(s, bounds=bounds)
+    doc = il.build_document(s, bounds=bounds, work_floor=3.0)
     assert doc["set"]["found"] == 3
     assert doc["quality"]["zone"] == "Z5"
 
 
 def test_quality_zone_is_null_without_bounds():
-    """A guessed zone is worse than no zone."""
+    """A guessed zone is worse than no zone.
+
+    FIXTURE NOTE (Task 7b): without an explicit `work_floor` this document is
+    uncalibrated, so `bouts` is forced empty, the shape is "steady", and there
+    are no "work" segments at all — the assertion would then hold vacuously
+    for a reason unrelated to `bounds`. Passing `work_floor=3.0` restores real
+    "reps" shape and real work segments, so the missing-bounds guard in
+    `_quality` is what the assertion actually exercises."""
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
-    assert il.build_document(s)["quality"]["zone"] is None
+    assert il.build_document(s, work_floor=3.0)["quality"]["zone"] is None
 
 
 def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
@@ -586,8 +593,113 @@ def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
 
 def test_confidence_is_higher_for_a_crisp_set():
     crisp = il.build_document(
-        make_streams([(600, 2.6)] + [(250, 4.2), (60, 2.2)] * 5 + [(300, 2.6)]))
+        make_streams([(600, 2.6)] + [(250, 4.2), (60, 2.2)] * 5 + [(300, 2.6)]),
+        work_floor=3.0)
     ragged = il.build_document(
-        make_streams([(600, 2.8)] + [(250, 3.3), (60, 2.6)] * 5 + [(300, 2.8)]))
+        make_streams([(600, 2.8)] + [(250, 3.3), (60, 2.6)] * 5 + [(300, 2.8)]),
+        work_floor=3.0)
     assert crisp["confidence"] > ragged["confidence"]
     assert 0.0 <= ragged["confidence"] <= 1.0
+
+
+# ── cross-run calibration (Task 7b) ──────────────────────────────────────────
+
+def test_baseline_samples_subsamples_the_moving_grid():
+    """One run contributes a thinned sample of its moving speeds — thinned
+    because a full-resolution accumulation over years of runs is needless."""
+    s = make_streams([(600, 3.0)])
+    out = il.baseline_samples(s, stride=5)
+    assert 100 < len(out) < 140          # ~600/5, allowing for the grid's +1
+    assert all(v == 3.0 for v in out)
+
+
+def test_baseline_samples_excludes_pauses():
+    """A pause is absent data — it must not drag the athlete's baseline down."""
+    s = make_streams([(300, 3.0), (300, 0.0), (300, 3.0)])
+    assert all(v >= il.MOVING_MPS_MIN for v in il.baseline_samples(s))
+
+
+def test_work_floor_is_the_percentile_of_the_history():
+    """FIXTURE FIX: the brief's 1..1000 sample (assert ≈ 930) never reaches the
+    percentile arithmetic at all — it is 1000 samples against
+    WORK_FLOOR_MIN_SAMPLES = 20_000, so `work_floor` returns None at the
+    history-size gate before `sorted`/indexing ever runs (verified directly:
+    `work_floor([float(i) for i in range(1, 1001)], 0.93) is None`). Scaled to
+    1..100000 — comfortably past the 20_000 floor and disentangled from the
+    boundary itself, which `test_work_floor_needs_enough_history` already
+    covers — the same 0.93 percentile of a 1..N run is (about) 0.93·N."""
+    samples = [float(i) for i in range(1, 100_001)]      # 1..100000
+    assert abs(il.work_floor(samples, 0.93) - 93_000) <= 1
+
+
+def test_work_floor_needs_enough_history():
+    """An unstable percentile is worse than none — Max's archive starts small."""
+    assert il.work_floor([3.0] * (il.WORK_FLOOR_MIN_SAMPLES - 1)) is None
+    assert il.work_floor([3.0] * il.WORK_FLOOR_MIN_SAMPLES) is not None
+
+
+def test_calibration_rejects_a_bout_that_is_merely_faster_than_its_own_run():
+    """THE POINT OF THIS TASK. A warm-up surge inside an easy run is faster
+    than that run's average but is not fast for this athlete. Unfiltered it
+    becomes a rep; calibrated it does not.
+
+    GUARD-TRACE: verified directly that this fixture's three bouts are real —
+    split_classes finds separation 0.128 (clears SEPARATION_MIN's 0.12), and
+    find_bouts locates exactly three bouts at mean speed 2.62 m/s, each
+    250 s / ~655 m (clears WORK_MIN_S=30 and WORK_MIN_M=150). The floor (2.70)
+    is what removes them — not an earlier gate — because 2.62 < 2.70.
+
+    FIXTURE FIX: the brief's `uncalibrated = il.build_document(s)` (no
+    `work_floor`) cannot assert `shape == "reps"` — under this task's own
+    "honest silence" rule, `build_document` with `work_floor=None` makes NO
+    rep claim at all regardless of what find_bouts found (bouts forced to
+    `[]`, `calibrated: False` — see test_uncalibrated_documents_make_no_rep_claim
+    for that behaviour, same fixture). Verified directly:
+    `il.build_document(s)["shape"] == "steady"`, not `"reps"` as the brief's
+    text asserts — the brief's own Step 3 implementation contradicts its own
+    Step 1 test. "The old, wrong behaviour" this test wants to contrast
+    against is what `classify` returns on the RAW, unfiltered bouts (the
+    pre-Task-7b engine, before any calibration concept existed), so that is
+    what is asserted instead, preserving the test's stated intent without
+    relying on a build_document call the new contract makes impossible."""
+    spans = [(600, 2.30)] + [(250, 2.62), (60, 2.20)] * 3 + [(300, 2.30)]
+    s = make_streams(spans)
+    floor = 2.70                                    # this athlete's p93
+
+    series = il.smooth(il.speed_series(s))
+    dist_at = il.distance_fn(s)
+    classes = il.split_classes(series)
+    assert classes is not None, "fixture should be structured"
+    raw_bouts = il.find_bouts(series, dist_at, classes[0], classes[1])
+    assert il.classify(raw_bouts, series, dist_at, None) == "reps"  # the old, wrong behaviour
+
+    calibrated = il.build_document(s, work_floor=floor)
+    assert calibrated["shape"] == "steady"          # nothing here is genuinely fast
+    assert calibrated["calibrated"] is True
+
+
+def test_calibration_keeps_a_genuine_set():
+    """The same floor must not eat real reps — 4.0 m/s is well above it."""
+    spans = [(600, 2.30)] + [(250, 4.0), (60, 2.20)] * 5 + [(300, 2.30)]
+    doc = il.build_document(make_streams(spans), work_floor=2.70)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+
+
+def test_uncalibrated_documents_make_no_rep_claim():
+    """Without a baseline the engine cannot tell fast from merely-faster, so it
+    must not claim a set at all. Honest silence beats a confident lie."""
+    spans = [(600, 2.30)] + [(250, 2.62), (60, 2.20)] * 3 + [(300, 2.30)]
+    doc = il.build_document(make_streams(spans))     # no work_floor
+    assert doc["calibrated"] is False
+
+
+def test_lap_sourced_documents_are_always_calibrated():
+    """Device laps need no baseline — the watch is not guessing."""
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 250, "ACTIVE"),
+            _lap(150, 60, "REST"), _lap(1000, 250, "ACTIVE"),
+            _lap(1000, 360, "COOLDOWN")]
+    doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
+    assert doc["source"] == "laps"
+    assert doc["calibrated"] is True

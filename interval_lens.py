@@ -46,6 +46,15 @@ CONFIDENCE_ASSERT_MIN = 0.5   # below this the UI says "possible", never asserts
 # trailing 1.00 closes the top.
 ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)
 
+# Cross-run calibration (Task 7b). "Work" is not "faster than the rest of this
+# run" — 2-means always yields a fast half, so that definition turns every easy
+# run into a workout (measured: 62 % of a real archive). It is "genuinely fast
+# FOR THIS ATHLETE", measured against their own history.
+WORK_FLOOR_PCT = 0.93         # validated against a real 165-run archive; p90
+                              # kept a warm-up fragment, p97 lost real workouts
+BASELINE_STRIDE = 5           # 1-in-5 sampling — 100k+ points is ample
+WORK_FLOOR_MIN_SAMPLES = 20_000   # ~30 runs; below this the percentile is noise
+
 # Garmin intensityType → our role vocabulary. Anything unrecognised is work:
 # an unlabelled lap inside a structured workout is far more likely a rep than
 # a rest, and calling it a rest would silently shrink the set.
@@ -121,6 +130,24 @@ def distance_fn(streams: dict) -> Callable[[int], float]:
         else:
             held = grid[k]
     return lambda s: grid[min(max(int(s), 0), span)]
+
+
+def baseline_samples(streams: dict, stride: int = BASELINE_STRIDE) -> list[float]:
+    """One run's contribution to the athlete's pace history — the moving speeds
+    of its 1 Hz grid, thinned by `stride`. Callers accumulate these across the
+    archive; pauses are already excluded by speed_series."""
+    series = speed_series(streams)
+    return [v for i, v in enumerate(series) if v is not None and i % stride == 0]
+
+
+def work_floor(samples: list[float], percentile: float = WORK_FLOOR_PCT) -> float | None:
+    """The speed above which this athlete is genuinely working, from their own
+    history. None when there is too little history to be stable — an unstable
+    percentile is worse than none, and the caller must then make no rep claim."""
+    if len(samples) < WORK_FLOOR_MIN_SAMPLES:
+        return None
+    ordered = sorted(samples)
+    return ordered[int(percentile * (len(ordered) - 1))]
 
 
 def split_classes(series: list) -> tuple[float, float, float] | None:
@@ -482,14 +509,19 @@ def _quality(segments: list[dict], bounds: list[int] | None) -> dict:
 def build_document(streams: dict | None, summary: dict | None = None,
                    laps: list[dict] | None = None,
                    prior: dict | None = None,
-                   bounds: list[int] | None = None) -> dict | None:
+                   bounds: list[int] | None = None,
+                   work_floor: float | None = None) -> dict | None:
     """The ONE entry point both producers call. Returns the interval document,
     or None when the run carries no usable speed signal at all.
 
     Order of authority (design D1/D8): structured device laps win outright;
     otherwise the stream decides, optionally sharpened by a plan prior. In this
     change `prior` is always None — the parameter exists so Change 2 can fill
-    it without reshaping the contract."""
+    it without reshaping the contract.
+
+    `work_floor` (Task 7b) is the caller-supplied calibration floor — this
+    engine never opens a database, so it cannot derive its own. Device laps
+    need no such floor (the watch is not guessing) and are always calibrated."""
     summary = summary or {}
     series_raw = speed_series(streams or {})
     if not series_raw:
@@ -513,6 +545,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
         return {
             **base,
             "shape": shape, "source": "laps", "confidence": 1.0,
+            "calibrated": True,
             "label": (f"{len(work)}×{_round_dist(nominal)}"
                       if shape == "reps" and not varied else None),
             "segments": segments,
@@ -537,6 +570,16 @@ def build_document(streams: dict | None, summary: dict | None = None,
     classes = split_classes(series)
     bouts = find_bouts(series, dist_at, classes[0], classes[1]) if classes else []
     expect = (prior or {}).get("count")
+
+    # Cross-run calibration (Task 7b): a bout must be genuinely fast for THIS
+    # athlete, not merely faster than the rest of its own run. Without a floor
+    # we cannot tell those apart, so we make no rep claim at all.
+    calibrated = work_floor is not None
+    if calibrated:
+        bouts = [(a, b) for a, b in bouts
+                 if (_mean(series[a:b]) or 0) >= work_floor]
+    else:
+        bouts = []
     shape = classify(bouts, series, dist_at, expect)
     if shape in ("steady", "progression"):
         bouts = []
@@ -545,7 +588,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
                 if shape != "steady" else [])
     return {
         **base,
-        "shape": shape, "source": "stream",
+        "shape": shape, "source": "stream", "calibrated": calibrated,
         "confidence": _confidence(classes[2] if classes else 0.0, bouts, series,
                                   stats["paceCvPct"] if stats else None),
         "label": label_for(shape, bouts, dist_at),

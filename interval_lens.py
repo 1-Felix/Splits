@@ -262,6 +262,28 @@ def classify(bouts, series, dist_at, expect_reps: int | None = None) -> str:
     return "steady"
 
 
+def _rep_variation(dists: list) -> tuple[int, bool]:
+    """The set's nominal distance and whether it is 'varied' — the ONE
+    definition every caller (label_for, set_stats, the laps path) shares, so
+    they cannot disagree about a set's uniformity.
+
+    `varied` is decided by the MAXIMUM per-rep deviation from the median, not
+    the range (max − min): a range test lets a single outlier rep — most
+    often one bout that got clipped early at find_bouts' exit threshold and so
+    reads a little short — drag the whole verdict, turning a plainly uniform
+    set into a false 'pyramid' on the strength of one under-measured rep.
+    Measured on the real archive: this flips four genuinely uniform sets
+    (a 5×1 km and three ~180–200 m hill/tempo sessions) to their correct
+    label, while a real 1-2-1 km pyramid still reads as varied — the whole
+    reason `varied` exists is to catch runs like that pyramid."""
+    if not dists:
+        return 0, False
+    ordered = sorted(dists)
+    nominal = ordered[len(ordered) // 2]
+    varied = bool(nominal) and max(abs(d - nominal) for d in ordered) / nominal > VARIED_TOLERANCE
+    return nominal, varied
+
+
 def label_for(shape: str, bouts, dist_at) -> str | None:
     """The one-line session name — '5×1 km', '20 min block'. None when the run
     has no shape worth naming."""
@@ -270,10 +292,9 @@ def label_for(shape: str, bouts, dist_at) -> str | None:
         return f"{int(round((b - a) / 60))} min block"
     if shape != "reps" or not bouts:
         return None
-    dists = sorted(dist_at(b) - dist_at(a) for a, b in bouts)
-    nominal = dists[len(dists) // 2]
-    spread = (dists[-1] - dists[0]) / nominal if nominal else 1.0
-    if spread > VARIED_TOLERANCE:
+    dists = [dist_at(b) - dist_at(a) for a, b in bouts]
+    nominal, varied = _rep_variation(dists)
+    if varied:
         parts = "-".join(f"{(dist_at(b) - dist_at(a)) / 1000:.3g}" for a, b in bouts)
         return f"{parts} km"
     return f"{len(bouts)}×{_round_dist(nominal)}"
@@ -313,9 +334,7 @@ def set_stats(bouts, series, dist_at, hr: list | None) -> dict:
             "hr": int(round(_mean(hr[a:b]))) if hr and b <= len(hr) and _mean(hr[a:b]) else None,
         })
     paces = [r["paceS"] for r in reps if r["paceS"]]
-    dists = sorted(r["distM"] for r in reps)
-    nominal = dists[len(dists) // 2] if dists else 0
-    varied = bool(nominal) and (dists[-1] - dists[0]) / nominal > VARIED_TOLERANCE
+    nominal, varied = _rep_variation([r["distM"] for r in reps])
 
     mean_pace = _mean(paces)
     cv = None
@@ -567,9 +586,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
             var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
             cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
         shape = "reps" if len(work) >= 2 else ("block" if work else "steady")
-        dists = sorted(s["distM"] for s in work)
-        nominal = dists[len(dists) // 2] if dists else 0
-        varied = bool(nominal) and (dists[-1] - dists[0]) / nominal > VARIED_TOLERANCE
+        nominal, varied = _rep_variation([s["distM"] for s in work])
         return {
             **base,
             "shape": shape, "source": "laps", "confidence": 1.0,

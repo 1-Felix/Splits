@@ -359,6 +359,81 @@ def test_label_for_pyramid_reads_as_the_pyramid():
     assert il.label_for("reps", bouts, _flat_dist_at) == "1-2-1 km"
 
 
+# ── varied: max deviation from the median, not the range (fix round) ────────
+# `set_stats`, `label_for` and the laps path in `build_document` all used to
+# compute this independently as (max - min) / nominal — a RANGE test, fragile
+# because a single outlier rep (most often one bout clipped early at
+# find_bouts' exit threshold, reading a little short) drags the whole
+# verdict. The real archive's known '2km wu, 5x1km @ 5:40' session detects
+# reps [968, 907, 959, 981, 782] m: (981 - 782) / 959 = 0.207, a hair over
+# VARIED_TOLERANCE (0.20), so a plainly uniform 5x1 km set degraded to the
+# label '0.968-0.907-0.959-0.981-0.782 km'. `_rep_variation` is now the ONE
+# place all three callers compute this, using the maximum per-rep deviation
+# from the median instead.
+
+def test_rep_variation_one_clipped_rep_stays_uniform_under_the_new_rule():
+    """THE POINT OF THE FIX ROUND. Distances derived from VARIED_TOLERANCE
+    (T), not hardcoded, so a retune cannot silently rot this: a low tail at
+    0.9*T below nominal (the clipped rep) and a mildly long natural high tail
+    at 0.6*T above it, with three reps sitting exactly at nominal. Their SUM
+    (1.5*T) exceeds T for any positive T, so the OLD range rule
+    ((max-min)/nominal) always calls this varied; neither deviation alone
+    exceeds T, so the NEW max-deviation rule always calls it uniform."""
+    T = il.VARIED_TOLERANCE
+    nominal = 1000
+    low = round(nominal * (1 - 0.9 * T))     # the clipped rep
+    high = round(nominal * (1 + 0.6 * T))    # a mildly long natural rep
+    dists = [nominal, nominal, nominal, low, high]
+
+    old_range_frac = (max(dists) - min(dists)) / nominal
+    assert old_range_frac > T, "fixture must reproduce the old rule's false positive"
+
+    result_nominal, varied = il._rep_variation(dists)
+    assert result_nominal == nominal
+    assert varied is False
+
+
+def test_rep_variation_a_genuine_pyramid_stays_varied():
+    """Pyramids must survive the fix — that is the whole reason `varied`
+    exists. Sized off VARIED_TOLERANCE (T) rather than hardcoded so a retune
+    cannot silently rot this: the middle rep is `1 + 3*T` times the flanking
+    reps, comfortably over tolerance under either rule for any reasonable T."""
+    T = il.VARIED_TOLERANCE
+    flank = 1000
+    middle = round(flank * (1 + 3 * T))       # the pyramid's long middle rep
+    dists = [flank, middle, flank]            # the 1-2-1 km pyramid's shape
+
+    nominal, varied = il._rep_variation(dists)
+    assert nominal == flank
+    assert varied is True
+
+
+def test_document_label_survives_one_clipped_rep():
+    """End-to-end regression, through find_bouts → set_stats → label_for:
+    the same qualitative shape as the real '2km wu, 5x1km' archive session
+    (three reps at nominal, one mildly long, one clipped short), built from
+    full streams so the WIRING is what is under test, not just the pure
+    helper — using the same VARIED_TOLERANCE-derived distances as
+    test_rep_variation_one_clipped_rep_stays_uniform_under_the_new_rule."""
+    T = il.VARIED_TOLERANCE
+    speed = 4.0
+    nominal_s = 250                                   # 250 s @ 4.0 m/s = 1000 m
+    low_s = round(nominal_s * (1 - 0.9 * T))          # the clipped rep
+    high_s = round(nominal_s * (1 + 0.6 * T))         # a mildly long natural rep
+    work = [nominal_s, nominal_s, nominal_s, low_s, high_s]
+
+    spans = [(600, 2.6)]
+    for d in work:
+        spans += [(d, speed), (60, 2.2)]
+    spans += [(300, 2.6)]
+
+    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+    assert doc["set"]["varied"] is False
+    assert doc["label"] == "5×1 km"
+
+
 def _lap(dist, dur, intensity=None, hr=150):
     lap = {"distance": dist, "duration": dur, "averageHR": hr,
            "averageSpeed": dist / dur if dur else 0}

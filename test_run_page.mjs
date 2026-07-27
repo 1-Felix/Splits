@@ -43,7 +43,16 @@ const DETAIL = {
 // full document with all five work segments AND the four recoveries between
 // them populated (Task 12's fixture only ever populated the warmup segment,
 // since that task just tested passthrough — this page renders reps and
-// recoveries, so both must be real here).
+// recoveries, so both must be real here). REP_RUN_ID also carries a real
+// DETAIL (splits) so the "km splits card still renders below the rep table"
+// claim is genuinely exercised, not merely matched against the "SPLITS"
+// header wordmark that appears on every page regardless.
+//
+// gapS is populated (not null) on every work segment: GAP is the engine's own
+// grade-adjusted signal, not decoration — a rep up a drag and a rep down it
+// can carry the same raw pace deviation for very different real effort, and
+// GAP is what tells them apart. Each work rep's gapS runs 4 s/km faster than
+// its raw paceS, simulating a net-downhill grade adjustment.
 const PLAIN_RUN_ID = 7;
 const REP_RUN_ID = 9001;
 const REP_SEGMENTS = [];
@@ -54,7 +63,7 @@ for (let i = 0; i < 5; i++) {
   rep += 1;
   REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "work", rep,
     t0: t, t1: t + 250, d0: d, d1: d + 1000, durS: 250, distM: 1000,
-    paceS: 330 + i * 3, gapS: null, hr: 168 + i, cad: null });
+    paceS: 330 + i * 3, gapS: 330 + i * 3 - 4, hr: 168 + i, cad: null });
   t += 250; d += 1000;
   if (i < 4) {
     REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "recovery",
@@ -71,6 +80,64 @@ const REP_DOC = {
          paceS: 336, paceCvPct: 1.8, fadePct: 2.4, recoveryS: 60,
          recoveryHrDrop: 24, reps: [] },
   quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
+};
+
+// LOWCONF_RUN_ID: a genuine "reps" detection, but weak (confidence 0.35 < the
+// 0.5 hedge threshold) — the honesty contract this card exists for: a session
+// the athlete may have bailed on says "possible structure", not a flat claim.
+// This is a fixture no task in this plan has ever exercised (grepped: the
+// "possible structure" string appears nowhere in any test across the plan).
+const LOWCONF_RUN_ID = 9002;
+const LOWCONF_SEGMENTS = [];
+let lt = 300, ld = 700, lrep = 0;
+LOWCONF_SEGMENTS.push({ idx: 1, role: "warmup", t0: 0, t1: 300, d0: 0, d1: 700,
+                        durS: 300, distM: 700, paceS: 428, gapS: null, hr: 128, cad: null });
+for (let i = 0; i < 3; i++) {
+  lrep += 1;
+  LOWCONF_SEGMENTS.push({ idx: LOWCONF_SEGMENTS.length + 1, role: "work", rep: lrep,
+    t0: lt, t1: lt + 200, d0: ld, d1: ld + 800, durS: 200, distM: 800,
+    paceS: 250 + i * 10, gapS: 246 + i * 10, hr: 160 + i * 2, cad: null });
+  lt += 200; ld += 800;
+  if (i < 2) {
+    LOWCONF_SEGMENTS.push({ idx: LOWCONF_SEGMENTS.length + 1, role: "recovery",
+      t0: lt, t1: lt + 90, d0: ld, d1: ld + 200, durS: 90, distM: 200,
+      paceS: 450, gapS: null, hr: 140, cad: null });
+    lt += 90; ld += 200;
+  }
+}
+const LOWCONF_DOC = {
+  version: 1, shape: "reps", source: "stream", confidence: 0.35,
+  label: "3×800 m", guidedBy: null,
+  segments: LOWCONF_SEGMENTS,
+  set: { found: 3, prescribed: null, nominalDistM: 800, varied: false,
+         paceS: 260, paceCvPct: 6.2, fadePct: 8.0, recoveryS: 90,
+         recoveryHrDrop: 18, reps: [] },
+  quality: { workDistM: 2400, workDurS: 630, zone: "Z3" },
+};
+
+// STEADY_RUN_ID: every streamed run gets a run_intervals ROW (derive_intervals
+// writes a document for every run, never skips one) — the realistic "no
+// reps" case is a document present with shape:"steady", not an absent row.
+// In production, a real steady classification always ships `segments: []`
+// (interval_lens.py: `if shape == "steady": segments = []`), which means the
+// segments-truthiness check alone already suppresses the table for every
+// steady run seen in practice today — the `iv.shape !== 'steady'` clause in
+// run.dc.html's guard is never actually exercised by that emptiness alone.
+// This fixture deliberately gives a shape:"steady" document ONE populated
+// `work` segment specifically so the test exercises the explicit shape
+// check itself, not the segments-emptiness fallback — see the guard-removal
+// proof in the fix-round report.
+const STEADY_RUN_ID = 9003;
+const STEADY_SEGMENTS = [
+  { idx: 1, role: "work", t0: 0, t1: 1800, d0: 0, d1: 5000,
+    durS: 1800, distM: 5000, paceS: 360, gapS: 355, hr: 150, cad: null },
+];
+const STEADY_DOC = {
+  version: 1, shape: "steady", source: "stream", confidence: 0.95,
+  label: null, guidedBy: null,
+  segments: STEADY_SEGMENTS,
+  set: null,
+  quality: { workDistM: 5000, workDurS: 1800, zone: "Z2" },
 };
 
 function makeArchive(dir) {
@@ -134,15 +201,18 @@ function makeArchive(dir) {
   const tins = db.prepare("INSERT INTO map_tiles (z, x, y, png, fetched_at) VALUES (?, ?, ?, ?, 'x')");
   for (let x = 34320; x <= 34322; x++) for (let y = 22950; y <= 22952; y++) tins.run(16, x, y, PNG1);
   // ── add-interval-lens: REP_RUN_ID carries a full run_intervals document —
-  // five work segments, four recoveries between them. Run 7 (PLAIN_RUN_ID,
-  // already inserted above) gets no row here — that absence is the point.
+  // five work segments, four recoveries between them — AND a real DETAIL
+  // (splits), so "the km splits card still renders below the rep table" is
+  // an honest claim about THIS run's page, not proven only on a different
+  // run. Run 7 (PLAIN_RUN_ID, already inserted above) gets no run_intervals
+  // row here — that absence is the point.
   db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
       distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
       summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
       detail_streams_json)
     VALUES (?, '2026-07-10 06:51:15', 'running', 'Track 5×1 km',
-      6560, 1850, 158, 178, 172.0, 10.0, '{}', '{}', 'x', 'x', NULL, NULL)`)
-    .run(REP_RUN_ID);
+      6560, 1850, 158, 178, 172.0, 10.0, '{}', '{}', 'x', 'x', ?, NULL)`)
+    .run(REP_RUN_ID, JSON.stringify(DETAIL));
   db.exec(`CREATE TABLE run_intervals (
     activity_id INTEGER PRIMARY KEY, lens_version INTEGER NOT NULL,
     start_time_local TEXT NOT NULL, shape TEXT NOT NULL, label TEXT,
@@ -151,6 +221,34 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     REP_RUN_ID, 1, "2026-07-10 06:51:15", "reps", "5×1 km", 0.86, "stream",
     5000, 1250, JSON.stringify(REP_DOC), "2026-07-27T09:00:00");
+
+  // ── fix-round finding 2: LOWCONF_RUN_ID — a genuine "reps" detection below
+  // the 0.5 hedge threshold. Renders as a rep table, but must hedge honestly.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-11 06:51:15', 'running', 'Maybe Fartlek',
+      3000.0, 890, 150, 172, 168.0, 5.0, '{}', '{}', 'x', 'x', NULL, NULL)`)
+    .run(LOWCONF_RUN_ID);
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    LOWCONF_RUN_ID, 1, "2026-07-11 06:51:15", "reps", "3×800 m", 0.35, "stream",
+    2400, 630, JSON.stringify(LOWCONF_DOC), "2026-07-27T09:00:00");
+
+  // ── fix-round finding 3: STEADY_RUN_ID — every streamed run gets a
+  // run_intervals ROW; the realistic "no reps" case is shape:"steady" with a
+  // document present, not an absent row. Real DETAIL too, so the km splits
+  // card is proven to render (with real content) while no rep table does.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-12 06:51:15', 'running', 'Ordinary Easy Run',
+      5000.0, 1800, 145, 160, 165.0, 15.0, '{}', '{}', 'x', 'x', ?, NULL)`)
+    .run(STEADY_RUN_ID, JSON.stringify(DETAIL));
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    STEADY_RUN_ID, 1, "2026-07-12 06:51:15", "steady", null, 0.95, "stream",
+    5000, 1800, JSON.stringify(STEADY_DOC), "2026-07-27T09:00:00");
   db.close();
 }
 
@@ -320,18 +418,64 @@ try {
   assert.equal(await page.locator(".rep-row").count(), 5, "five reps render");
   assert.match(await page.locator(".rep-title").innerText(), /5×1 km/,
     "the rep card titles itself with the detected label");
-  assert.match(await page.locator(".rep-row").first().innerText(), /5:3\d/,
+  const firstRowText = await page.locator(".rep-row").first().innerText();
+  assert.match(firstRowText, /5:3\d/,
     "the first rep shows ITS OWN pace (330 s = 5:30), not a placeholder or the wrong segment");
+  // fix-round finding 1: time and GAP are computed but were never rendered.
+  // Pin both to the FIRST work segment's real values: durS 250 s -> "4:10",
+  // gapS 326 s/km -> "5:26" (paceS 330 minus the fixture's -4 s/km grade
+  // adjustment) — not merely that the cells exist.
+  assert.match(firstRowText, /4:10/,
+    "the first rep shows its real elapsed time (durS 250s), not a placeholder");
+  assert.match(firstRowText, /5:26/,
+    "the first rep shows its real grade-adjusted pace (gapS 326), distinct from raw pace");
+  assert.match(await page.locator(".rep-time").first().innerText(), /4:10/,
+    "the time cell specifically carries the real value");
+  assert.match(await page.locator(".rep-gap").first().innerText(), /5:26/,
+    "the GAP cell specifically carries the real grade-adjusted value");
   // the recovery between reps is shown, and there is one fewer of them —
   // nothing trails the final rep
   assert.equal(await page.locator(".rep-rec").count(), 4);
   assert.match(await page.locator(".rep-rec").first().innerText(), /60 s recovery/,
     "the recovery row shows its real duration, not a placeholder");
-  assert.ok((await page.locator("text=Splits").count()) > 0,
-    "the per-km splits card still renders BELOW the rep table on the same page");
+  // fix-round finding 2 (discriminating half): a high-confidence (0.86) set
+  // must NOT carry the low-confidence hedge.
+  const repSub = await page.locator(".rep-table .card-sub").innerText();
+  assert.ok(!repSub.includes("possible structure"),
+    "a confident detection (0.86) does not hedge: " + repSub);
+  // the per-km splits card renders BELOW the rep table on the SAME page —
+  // pinned to real content ("km 6"), not the "SPLITS" header wordmark that
+  // appears on every page regardless of whether this card renders
+  const repPageText = await page.evaluate(() => document.body.innerText);
+  assert.ok(repPageText.includes("Splits") && repPageText.includes("km 6"),
+    "the km splits card still renders its real rows alongside the rep table");
 
-  // a steady run (no run_intervals row at all — PLAIN_RUN_ID reuses run 7)
-  // shows no rep table at all, and the km splits card is unaffected
+  // fix-round finding 2: a genuine but WEAK detection (confidence 0.35 < 0.5)
+  // renders as reps, but hedges honestly as "possible structure" — untested
+  // anywhere in this plan before this fix round.
+  await page.goto(B + `/run/${LOWCONF_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rep-table", { timeout: 15000 });
+  assert.equal(await page.locator(".rep-row").count(), 3, "the weak detection still renders its reps");
+  const lowConfSub = await page.locator(".rep-table .card-sub").innerText();
+  assert.ok(lowConfSub.includes("possible structure"),
+    "confidence 0.35 hedges honestly instead of asserting structure: " + lowConfSub);
+
+  // fix-round finding 3: the REALISTIC "no reps" case — every streamed run
+  // gets a run_intervals document (derive_intervals never skips one); a
+  // steady run's document has shape:"steady", not an absent row. No rep
+  // table must render, and the km splits card (real DETAIL on this fixture
+  // too) must still render its real content.
+  await page.goto(B + `/run/${STEADY_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".card");
+  const steadyText = await page.evaluate(() => document.body.innerText);
+  assert.ok(steadyText.includes("Splits") && steadyText.includes("km 6"),
+    "steady run: the km splits card still renders its real rows");
+  assert.equal(await page.locator(".rep-table").count(), 0,
+    "steady run: a run_intervals document with shape:'steady' renders NO rep table");
+
+  // a run with no run_intervals row at all (PLAIN_RUN_ID reuses run 7) — the
+  // other real "no reps" path — shows no rep table either, and the km
+  // splits card is unaffected
   await page.goto(B + `/run/${PLAIN_RUN_ID}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".card");
   assert.equal(await page.locator(".rep-table").count(), 0, "no structure detected — no rep table");

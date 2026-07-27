@@ -366,6 +366,24 @@ export function buildSpec(desc) {
     }
   }
 
+  // ── rep bands (add-interval-lens): work-segment windows → px bands ──
+  // The descriptor supplies rep windows in the track's OWN x-units — seconds
+  // when the axis is time, metres when it is distance, following the run
+  // page's distance⇄time toggle (which swaps x.values, never the units a
+  // caller writes in) — so the caller never has to know the scale; clipping
+  // to the plot happens here, once, rather than in every renderer. Only the
+  // linear (numeric) x-kind carries a value→px scale a rep window can be
+  // projected through — the only x-kind the run page's stream tracks use;
+  // any other x-kind (band/time/point) yields no bands rather than a
+  // misplaced or crashing one.
+  const repBands = (xk.kind === "linear" && xScaleForAnns)
+    ? (desc.repBands || []).map((b) => {
+        const x0 = Math.max(xScaleForAnns(b.x0), plot.x);
+        const x1 = Math.min(xScaleForAnns(b.x1), plot.x + plot.w);
+        return { x: x0, width: Math.max(0, x1 - x0), rep: b.rep };
+      }).filter((b) => b.width > 0)
+    : [];
+
   // ── ribbon: the shaded gap between two series (trajectory) ──
   if (desc.ribbon) {
     const A = series.find((s) => s.key === desc.ribbon[0]);
@@ -516,6 +534,7 @@ export function buildSpec(desc) {
     height: desc.height || null,   // CSS render height for the view (e.g. '130px')
     clipPlot: !!desc.clipPlot,     // clip mark layers to the plot rect (streams)
     plot,
+    repBands,                      // rep windows as px bands (add-interval-lens)
     x: { ticks: xTicks, label: (desc.x && desc.x.label) || null },
     y: { ticks: yTicks, label: (desc.y && desc.y.label) || policy.dirLabel || null, domain: [dom.min, dom.max] },
     layers,
@@ -662,9 +681,9 @@ export function sharedXScale(values, w = 600, padL = 46, padR = 10) {
 // ── multi-track stack (run-detail D4) ────────────────────────────────────────
 // One x domain shared by every track, one y domain per track from the policy
 // table. tracks: [{ id, ariaLabel, series, policy, unit?, spans?, h?, height?,
-// hover? }]; sharedX: { values (the stored t or d column), fmt, label?, w?,
-// cross? ({i} from crosshairAt) }. Returns one ChartSpec per track; the last
-// track carries the x tick labels for the whole stack.
+// repBands?, hover? }]; sharedX: { values (the stored t or d column), fmt,
+// label?, w?, cross? ({i} from crosshairAt) }. Returns one ChartSpec per
+// track; the last track carries the x tick labels for the whole stack.
 export function multiTrackSpec(tracks, sharedX) {
   const nT = tracks.length;
   return tracks.map((tr, ti) => buildSpec({
@@ -684,6 +703,7 @@ export function multiTrackSpec(tracks, sharedX) {
     y: { policy: tr.policy || {}, label: tr.unit },
     series: tr.series,
     spans: tr.spans,
+    repBands: tr.repBands,
     cross: sharedX.cross,
     clipPlot: true,   // stream spikes draw off the plot edge, never own the scale
     hover: tr.hover || {},

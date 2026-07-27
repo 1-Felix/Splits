@@ -28,11 +28,13 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `plan-data.js` | **The plan — coach-owned.** `race` / `weekPlan` / `block` (the 6-week arc) / `coach`. The sync never touches it. (`EDITABLE`) — lives in the `/data` volume (seeded from the default below). |
 | `plan-data.default.js` | The **shipped default plan** — seeds `plan-data.js` into the data volume on first container boot, then never overwrites it. |
 | `sync_garmin.py` | Pulls from Garmin Connect and writes `garmin-data.js`. |
+| `interval_lens.py` | **The interval lens.** What structure did this run have — reps, a sustained block, a progression, or nothing? Pure over its inputs: columnar streams in (plus Garmin lap DTOs when they encode real structure), one versioned document out. One engine, two producers — `sync_garmin.py` and `ingest_builder.py` both call `build_document()`, so Felix's runs and Max's are read by the same rules. Tested in `test_interval_lens.py` against synthetic streams, and against the athlete's own self-describing run names in `test_interval_truth.py`. See [below](#the-interval-lens-auto-lap-and-calibration) for the auto-lap veto and the cross-run calibration it depends on. |
 | `validate_data.py` | Asserts the §3 data-contract invariants against the merged `running-data.js`. |
 | `serve.mjs` | Zero-dependency web server: serves the pages behind clean routes (`/`, `/progress`, `/archive`, `/compare`), serves the data files from the data dir, exposes `POST /api/sync` + `GET /api/status` + the read-only archive API (`GET /api/archive/…`, via the Node 24 built-in `node:sqlite`), and runs the boot + nightly sync. |
 | `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
 | `.github/workflows/docker-publish.yml` | CI that builds and pushes `ghcr.io/1-felix/splits` on `main` and on version tags. |
 | `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
+| `requirements-dev.txt` | **Development-only dependencies** — `pytest` for the Python suite. Never installed into the image; the runtime stays on `requirements.txt` alone. Run the suite with `python -m pytest -q`. |
 | `CLAUDE_CODE_HANDOFF.md` | The backend brief: data contract, metric→source map, formulas, open decisions. |
 | `.env.example` | Template for Garmin credentials. Copy to `.env`. |
 
@@ -122,6 +124,71 @@ validated by script — `test_palette.mjs` runs the vendored checker in
 `tools/validate-palette.mjs` against every theme's own surface, so status
 colours can never impersonate a series and the zone ramp stays legible under
 colour-vision deficiency.
+
+### The interval lens (auto-lap and calibration)
+
+`interval_lens.py` answers a question per-kilometre splits can't: not "how fast
+was each km" but "did this run *have structure* — reps, a sustained hard block,
+a progression — or was it just a run". Two things about it are surprising
+enough, and load-bearing enough, to call out on their own.
+
+**The auto-lap veto.** Garmin auto-laps every full kilometre (or mile)
+regardless of what the athlete is doing — a plain 19 km easy run produces 19
+laps that carry no intent whatsoever, and a lap-driven detector that trusted
+them would read that run as a 19-rep interval session. `laps_are_autolap()`
+checks whether every *full* lap (the always-partial final lap is excluded)
+lands within ±5 % of exactly 1 km or 1 mile; if so, the laps are ignored
+entirely and detection falls through to the stream. It only fires once there
+are at least three full laps to judge — one or two 1 km-ish laps return
+`False` regardless of length, deliberately, so a genuine short session (a
+prescribed 2×1 km, say) is never vetoed just for happening to land near a
+round number. Separately, `laps_are_structured()` is what actually decides
+whether laps carry real structure at all: either Garmin marks the activity
+`hasIntensityIntervals`, or it has a `workoutId` *and* its laps carry more
+than one distinct `intensityType` — manual, unlabelled laps satisfy neither
+and are left to the stream detector.
+
+**Cross-run calibration.** "This bout was faster than the rest of this run" is
+not the same claim as "this bout was genuinely fast, for this athlete". A
+same-run two-class split (2-means) always finds a faster half and a slower
+half inside *any* run, easy runs included — measured on this athlete's real
+165-run archive, that definition alone read 62 % of it as interval sessions.
+So `build_document` takes an optional `work_floor`: a percentile (p93) of the
+athlete's own moving-speed history, swept across the *whole* archive
+(`baseline_samples()` accumulated per run, `work_floor()` computed once over
+the whole pool) and passed into every call. A bout only counts as work once
+its own pace clears that floor — "fast for you", not "fast for this 20
+minutes". Call `build_document` without a floor and every candidate bout is
+discarded, so it makes no **rep** claim at all — `reps` and `block` become
+impossible, not just unlikely. `progression` is unaffected: it never passes
+through the bout floor, since it is read straight off the pace trend across
+the run's quintiles, so a genuinely ramping run still detects with no
+calibration at all — this is exactly the uncalibrated path Max's young
+Health Connect archive hits today, before it has enough history of its own.
+`test_interval_truth.py` sweeps the real archive to compute this floor
+before it asserts anything, for exactly that reason.
+
+**Three grids, one clock.** Detection runs on grade-adjusted speed where the
+run carries it (`gap`, present on 161 of 165 archived runs): on a hill a rep up
+a drag and a rep back down it are the same effort, and raw pace would split one
+set into a fade. But that is the *detection* signal, not the reported one.
+`speed_series()` builds it; `raw_speed_series()` and `gap_speed_series()` build
+the two reporting grids beside it on the same 1 Hz index, so a segment's
+`paceS` is what the watch actually recorded and its `gapS` is the grade
+adjustment — with `gapS` **null**, never a copy of `paceS`, on a run that
+carries no `gap` at all (a treadmill, and every one of Max's). `fadePct` and
+`paceCvPct` stay on the detection signal, because "did this set fade" is an
+effort question. Lap-sourced segments keep the device's own `paceS` and gain
+their `gapS` from the stream over each lap's window — a lapDTO carries no grade
+adjustment, and those are the runs where it matters most.
+
+**Labels stop at the point of usefulness.** A set whose reps differ by more
+than `VARIED_TOLERANCE` is `varied`, and a varied set is normally enumerated —
+`1-2-1 km`. That only reads as a session when there are few enough reps to take
+in and every one of them lands on a distance a human would prescribe;
+otherwise it is the detector's fragment list, and `label_for` returns
+`N reps` instead. Detection is untouched by this — the bouts, the segments and
+every `set` number are the same either way.
 
 ## Self-hosting with Docker (recommended)
 

@@ -64,4 +64,26 @@ r = { date: "2026-07-03", type: "Run", km: 7, pace: 330, hr: 170,
 assert.match(coachRead(r, flat, maxHR), /Quality threshold work/);      // found the earlier-week Hard day
 assert.doesNotMatch(coachRead(r, [], maxHR), /Quality threshold work/); // without the lookup → not classified hard
 
+// add-interval-lens: the read names the session instead of guessing from thirds
+{
+  const read = coachRead({
+    date: "2026-07-10", type: "Tempo Run", km: 9.1, pace: 345, hr: 158,
+    detail: {
+      splits: [], splitShape: "even",
+      intervals: { shape: "reps", label: "5×1 km", confidence: 0.9,
+                   set: { found: 5, prescribed: null, paceS: 334, fadePct: 2.4 } },
+    },
+  }, null, 197);
+  assert.match(read, /5×1 km/);
+  assert.match(read, /5:34/);
+}
+{
+  // a steady run keeps the old shape language — nothing regresses
+  const read = coachRead({
+    date: "2026-07-11", type: "Recovery", km: 6, pace: 400, hr: 132,
+    detail: { splits: [], splitShape: "even", intervals: { shape: "steady" } },
+  }, null, 197);
+  assert.doesNotMatch(read, /×/);
+}
+
 console.log("ALL PASS");

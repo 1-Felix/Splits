@@ -305,4 +305,63 @@ function demoSpec(overrides = {}) {
     "no tiles → no basemap layer");
 }
 
+// ── rep bands (add-interval-lens): bands render BENEATH the marks — a rep
+//    highlight must never hide the line it highlights. The brief's original
+//    snippet asserted paint order via `svg.children.findIndex(c => c.props.
+//    className === "series-line")` against a `findByTag` helper that doesn't
+//    exist in this file, matched against a className chart-view never
+//    emits — line paths carry the `data-series-line` attribute, not a class
+//    (see chart-view.js). Both findIndex calls would silently return -1,
+//    so `bandIdx < lineIdx` (0 < -1) is FALSE: the brief's snippet, taken
+//    literally, fails even against a correct implementation — the opposite
+//    failure mode from a vacuous pass, but broken all the same. Rewritten to
+//    use this file's own `collect()` (which walks in real paint/document
+//    order, including inside the <clipPath> <g> that stream tracks wrap
+//    their marks in — a direct `.children` scan would miss it) and the
+//    attribute chart-view really emits.
+{
+  const spec = buildSpec({
+    id: "tr-pace", ariaLabel: "Pace", clipPlot: true,
+    x: { kind: "linear", values: [0, 100, 200, 300, 400], fmt: (v) => v + "m" },
+    y: { policy: {} },
+    series: [{ key: "pace", name: "Pace", color: "var(--series1)", values: [300, 310, 305, 320, 300] }],
+    repBands: [{ x0: 50, x1: 150, rep: 1 }],
+  });
+  const el = renderChart(spec, React);
+
+  // one collect() call, one predicate matching either mark, walked in
+  // document order — the FIRST match proves what paints first, positively
+  const painted = collect(el, (n) =>
+    n.props.className === "rep-band" ||
+    (n.type === "path" && n.props["data-series-line"] === ""));
+  assert.strictEqual(painted.length, 2, "exactly one band and one line-segment path render");
+  assert.strictEqual(painted[0].props.className, "rep-band", "the band paints BEFORE the line it highlights");
+  assert.strictEqual(painted[1].type, "path", "…and the series line follows it");
+
+  // geometry reaches the DOM verbatim from the spec — real numbers, not a
+  // stand-in: chart-view draws no geometry of its own (chart-core.js does)
+  const band = collect(el, (n) => n.props.className === "rep-band")[0];
+  const specBand = spec.repBands[0];
+  assert.ok(specBand.width > 0, "fixture sanity: the spec actually carries a band");
+  assert.strictEqual(band.props.x, specBand.x);
+  assert.strictEqual(band.props.width, specBand.width);
+  assert.strictEqual(band.props.y, spec.plot.y, "band spans the full plot height, not a data y");
+  assert.strictEqual(band.props.height, spec.plot.h);
+  assert.strictEqual(band.props.fill, "var(--accentFade)", "styled via the existing CSS custom property, no new colour");
+  assert.strictEqual(band.props["aria-hidden"], "true", "decorative — the crosshair/hover card announces the rep, not the band");
+}
+
+// ── no rep windows → no .rep-band nodes at all (absence is silent) ──────────
+{
+  const spec = buildSpec({
+    id: "tr-hr", ariaLabel: "HR", clipPlot: true,
+    x: { kind: "linear", values: [0, 100, 200], fmt: (v) => v + "s" },
+    y: { policy: {} },
+    series: [{ key: "hr", name: "HR", color: "var(--series2)", values: [140, 145, 150] }],
+  });
+  const el = renderChart(spec, React);
+  assert.strictEqual(collect(el, (n) => n.props.className === "rep-band").length, 0,
+    "no repBands on the descriptor → no band nodes rendered");
+}
+
 console.log("ALL PASS");

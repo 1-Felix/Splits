@@ -3,6 +3,7 @@
 inputs (today is injected), so the assertions are deterministic."""
 import datetime as dt
 
+import ingest_builder
 from ingest_builder import build_athlete_data
 
 TODAY = dt.date(2026, 7, 15)  # a Wednesday; this week's Monday = 2026-07-13
@@ -331,6 +332,7 @@ from pathlib import Path
 import activity_archive as arch
 import ingest_builder as ib
 import insight_metrics as im
+import interval_lens
 
 
 def _tmpdir() -> Path:
@@ -736,6 +738,334 @@ def test_empty_store_is_safe():
     assert d["recentRuns"] == []
     assert len(d["history"]["weeklyKm"]) == 26
     assert "readiness" not in d and "vo2max" not in d["history"]
+
+
+# ── the contract: compact interval summary (add-interval-lens Task 11) ──────
+# Shared by _interval_run() (Health Connect shape) AND _garmin_raw_detail()
+# (Garmin shape) below — the SAME physical run (per-second speed + HR), so a
+# genuine cross-pipeline parity test can be built from it without the two
+# fixtures silently drifting apart from each other over time.
+_PARITY_SPANS = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 4 + [(300, 2.6)]
+
+
+def _parity_hr(mps: float) -> int:
+    return 150 if mps > 3 else 130
+
+
+def _interval_run(speed_step=6, hr_step=10, hr_offset=5):
+    """A Health Connect run with a real 4×1 km inside it.
+
+    FINAL REVIEW I5: speed and HR sit on DIFFERENT clocks, because they do on
+    the real device — Samsung Health writes each metric on its own schedule
+    and the two run roughly 10 s apart, which is exactly why `synth_streams`
+    joins them by sample-and-hold over a UNION axis instead of exact match.
+    The defaults here are deliberately co-prime in phase: speed lands on even
+    seconds and HR on odd ones, so the two sample sets NEVER intersect. The
+    old fixture was 1 Hz on both clocks, where an exact-match join and a
+    held join are indistinguishable — which is why it could not see that
+    `_columnar` (the second reshaping this module used to carry beside
+    `synth_streams`) dropped every HR sample on a real run."""
+    spans = _PARITY_SPANS
+    speed, hr, clock = [], [], 0
+    for dur, mps in spans:
+        for _ in range(dur):
+            if clock % speed_step == 0:
+                speed.append({"tSec": clock, "mps": mps})
+            if clock % hr_step == hr_offset:
+                hr.append({"tSec": clock, "bpm": _parity_hr(mps)})
+            clock += 1
+    total_m = sum(dur * mps for dur, mps in spans)
+    return {"sessionUid": "iv", "startTimeLocal": "2026-07-15T07:00:00",
+            "durationS": clock, "distanceM": total_m, "avgHr": 145,
+            "sportType": "running", "avgSpeed": total_m / clock,
+            "source": "shealth", "speedSamples": speed, "hrSamples": hr}
+
+
+def _garmin_raw_detail(spans):
+    """The SAME physical run as `_interval_run()`, reshaped into GARMIN's raw
+    `get_activity_details` payload (metricDescriptors + activityDetailMetrics)
+    — for `sync_garmin.distill_run_streams`, the real Garmin reshaper. Fix
+    round finding 1: the original parity test ran Health Connect's own
+    reshaper on BOTH sides (Garmin's raw detail was never involved at all, and
+    `run_detail` already calls that reshaper internally), so the "parity"
+    check reduced to comparing a document to a manual re-derivation of
+    itself; proved vacuous by making
+    `distill_run_streams` raise unconditionally and observing the old test
+    still pass (see the fix-round section of the task report). Descriptor
+    order is scrambled (mirrors `test_run_detail._stream_payload`,
+    test_run_detail.py:108-124) so the distiller is proven to read columns by
+    key, not by position."""
+    keys = ["directHeartRate", "sumDuration", "directSpeed", "sumDistance"]
+    rows = []
+    clock, dist = 0, 0.0
+    for dur, mps in spans:
+        for _ in range(dur):
+            rows.append({"metrics": [_parity_hr(mps), clock, mps, round(dist)]})
+            clock += 1
+            dist += mps
+    return {
+        "metricDescriptors": [{"key": k, "metricsIndex": i} for i, k in enumerate(keys)],
+        "activityDetailMetrics": rows,
+    }
+
+
+def test_max_gets_interval_structure():
+    """One engine, both athletes — Samsung writes no laps, so this is
+    stream-only.
+
+    FIXTURE FIX: the brief's call omits `work_floor`. Without one,
+    `build_document` makes no rep claim at all (Task 7b: `calibrated` gates
+    on `work_floor is not None`, and forces `bouts` to `[]` when it is not) —
+    so this run, a real and clean 4×1 km, would read `shape: "steady"`, not
+    "reps", and the assertions below would fail. A floor comfortably below
+    the 4.0 m/s work pace and above the 2.2-2.6 m/s recovery/warmup pace
+    restores the calibrated path the assertions actually mean to exercise."""
+    detail = ingest_builder.run_detail(_interval_run(), max_hr=190, work_floor=3.0)
+    assert detail["intervals"]["shape"] == "reps"
+    assert detail["intervals"]["label"] == "4×1 km"
+    assert detail["intervals"]["set"]["found"] == 4
+
+
+def test_the_archive_pass_banks_a_run_intervals_row():
+    """FINAL REVIEW I1: `upsert_run_intervals` had exactly one caller in the
+    tree — `sync_garmin.derive_intervals` — and an ingest-fed instance never
+    runs `sync_garmin`. So `/api/archive/activities/:id` never returned
+    `intervals` for the second athlete and the rep table, the rep bands and
+    the `/archive` shape chip were STRUCTURALLY unreachable for him: four
+    tasks of UI he could not see however well the detection worked. The
+    design says the opposite ("`ingest_builder` … writing the same document
+    to his own archive").
+
+    `calibration` is passed explicitly because this fixture is one 47-minute
+    run — nowhere near `WORK_FLOOR_MIN_SAMPLES` — so a floor derived from it
+    would be None and every document would honestly read "steady", which
+    would make the row's CONTENT untestable even once the row exists."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    ib.build_archive(tmp, [run], PROFILE, calibration=(190, None, 3.0))
+    conn = _db(tmp)
+    rows = conn.execute(
+        "SELECT activity_id, lens_version, start_time_local, shape, label, "
+        "       source, confidence, work_dist_m, work_dur_s, doc_json "
+        "FROM run_intervals").fetchall()
+    conn.close()
+    assert len(rows) == 1, "the archive pass must bank one document per run"
+    (aid, version, start, shape, label, source, conf, dist, dur, doc_json) = rows[0]
+    assert aid == ib.derive_activity_id("iv"), "keyed to the run's own archive id"
+    assert version == interval_lens.INTERVAL_VERSION
+    assert start == run["startTimeLocal"]
+    assert (shape, label, source) == ("reps", "4×1 km", "stream"), \
+        "Samsung writes no laps — the stream decides, and it found the real set"
+    assert 0 < conf <= 1.0
+    doc = json.loads(doc_json)
+    # the FULL document, not compact(): /run/:id renders `segments`, and a
+    # compact document would leave the rep table and the rep bands empty
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 4, f"four work segments ride in doc_json: {len(doc['segments'])} segs"
+    assert dist == doc["quality"]["workDistM"] and dur == doc["quality"]["workDurS"], \
+        "the promoted columns mirror the document the API serves"
+    assert abs(dist - 4000) <= 40, f"4 × 1 km of work, not {dist} m"
+
+
+def test_the_archive_pass_is_write_once_and_self_heals_intervals():
+    """The row follows the same rule as every other derived artifact here:
+    written when missing, left alone when current, replaced when the lens
+    version moves. Without the version half, an INTERVAL_VERSION bump would
+    heal Felix's archive and silently strand Max's."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    cal = (190, None, 3.0)
+    ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    aid = ib.derive_activity_id("iv")
+
+    def stored():
+        conn = _db(tmp)
+        row = conn.execute("SELECT lens_version, computed_at, shape FROM "
+                           "run_intervals WHERE activity_id = ?", (aid,)).fetchone()
+        conn.close()
+        return row
+
+    first = stored()
+    import time
+    time.sleep(1.1)              # computed_at has 1 s resolution — churn would show
+    ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    assert stored() == first, "a current row is never rewritten"
+
+    real = interval_lens.INTERVAL_VERSION
+    interval_lens.INTERVAL_VERSION = real + 1
+    try:
+        ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    finally:
+        interval_lens.INTERVAL_VERSION = real
+    healed = stored()
+    assert healed[0] == real + 1, "a version bump recomputes the document"
+    conn = _db(tmp)
+    count = conn.execute("SELECT COUNT(*) FROM run_intervals").fetchone()[0]
+    conn.close()
+    assert count == 1, "the stale row is REPLACED, never duplicated"
+
+
+def test_a_pruned_duplicate_takes_its_interval_document_with_it():
+    """A run that lost a duplicate group leaves `activities`; its document
+    must leave with it, or `/archive` keeps showing a shape chip for a run
+    that no longer exists."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    cal = (190, None, 3.0)
+    ib.build_archive(tmp, [run, STEADY_RUN], PROFILE, calibration=cal)
+    ids = {uid: ib.derive_activity_id(uid) for uid in ("iv", "sp")}
+
+    def banked():
+        conn = _db(tmp)
+        rows = {r[0] for r in conn.execute("SELECT activity_id FROM run_intervals")}
+        conn.close()
+        return rows
+
+    assert banked() == set(ids.values()), "both runs start with a document"
+    # the duplicate loser is gone from the banked set AND named in prune_uids —
+    # exactly what `main()` passes after `dedupe_overlapping` drops it
+    ib.build_archive(tmp, [STEADY_RUN], PROFILE, calibration=cal, prune_uids=["iv"])
+    assert banked() == {ids["sp"]}, \
+        "the pruned run's document left with it; the survivor's stayed"
+
+
+def test_hr_survives_clocks_that_never_intersect():
+    """FINAL REVIEW I5: this module carried TWO reshapings of the same samples.
+    `synth_streams` joins HR to speed by sample-and-hold over the UNION of
+    their timestamps, with a staleness cap, precisely because Samsung writes
+    the two on clocks ~10 s apart. `_columnar` exact-matched HR onto the speed
+    timestamps — so on a run whose clocks never coincide (this fixture, and
+    the real device) it produced ZERO non-null HR, and the second athlete
+    silently lost `quality.zone`, `set.recoveryHrDrop` and every
+    `segments[].hr`. Deleting the duplicate is the fix; this is what it buys."""
+    run = _interval_run()
+    speeds = {s["tSec"] for s in run["speedSamples"]}
+    beats = {s["tSec"] for s in run["hrSamples"]}
+    assert speeds and beats and not (speeds & beats), \
+        "fixture precondition: an exact-match join has nothing to match on"
+
+    streams = ib.synth_streams(run)
+    non_null = sum(1 for h in streams["hr"] if h is not None)
+    assert non_null > 0.9 * len(streams["t"]), \
+        f"the held join carries HR across the whole run: {non_null}/{len(streams['t'])}"
+
+    doc = ib.interval_document(run, 190, work_floor=3.0)
+    assert doc["quality"]["zone"] == "Z3", \
+        f"the coaching layer gets a real zone: {doc['quality']['zone']}"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert work and all(s["hr"] for s in work), \
+        f"every rep carries its own average HR: {[s['hr'] for s in work]}"
+    assert doc["set"]["recoveryHrDrop"], \
+        "and the recovery HR drop — the thing a rep session is actually judged on"
+
+
+def test_work_distance_follows_the_device_total_not_the_raw_integral():
+    """The other measured divergence. `synth_streams` scales the integrated
+    distance so its final value equals the total the watch banked;
+    `_columnar` integrated speed × time and stopped there. `quality.workDistM`
+    is the number the design names as the coaching layer's, so the two
+    reshapings disagreed about the one field consumers are told to depend on."""
+    honest = _interval_run()
+    # the same physical run, with the watch's own total 8 % below what
+    # integrating its (coarse, held) speed samples produces
+    short = dict(honest, distanceM=honest["distanceM"] * 0.92)
+
+    a = ib.interval_document(honest, 190, work_floor=3.0)["quality"]["workDistM"]
+    b = ib.interval_document(short, 190, work_floor=3.0)["quality"]["workDistM"]
+    assert abs(a - 4000) <= 40, f"the honest run measures its 4 × 1 km: {a}"
+    assert abs(b - 0.92 * a) <= 40, \
+        f"the banked total is what the work distance follows: {b} vs {0.92 * a:.0f}"
+    assert a - b > 200, "…and the difference is not a rounding artefact"
+
+
+def test_compact_summary_omits_segments():
+    """The cockpit reads this from a static file — segments belong to
+    `/run/:id`. Calibrated (work_floor=3.0) so this run really does carry a
+    populated `segments` list before `compact()` strips it — otherwise the
+    assertion would hold vacuously for a shape ("steady") whose `segments` is
+    already `[]` and was never a list worth removing."""
+    detail = ingest_builder.run_detail(_interval_run(), max_hr=190, work_floor=3.0)
+    assert "segments" not in detail["intervals"]
+
+
+def test_steady_run_reports_steady_not_missing():
+    run = {"sessionUid": "s", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 1800, "distanceM": 5400, "avgHr": 140,
+           "sportType": "running", "avgSpeed": 3.0, "source": "shealth",
+           "speedSamples": [{"tSec": t, "mps": 3.0} for t in range(1800)],
+           "hrSamples": [{"tSec": t, "bpm": 140} for t in range(0, 1800, 5)]}
+    assert ingest_builder.run_detail(run, max_hr=190)["intervals"]["shape"] == "steady"
+
+
+def test_no_speed_series_means_no_intervals_key():
+    run = {"sessionUid": "n", "startTimeLocal": "2026-07-15T07:00:00",
+           "durationS": 1800, "distanceM": 5000, "avgHr": 140,
+           "sportType": "running", "avgSpeed": 2.8, "source": "shealth",
+           "speedSamples": [], "hrSamples": []}
+    assert ingest_builder.run_detail(run, max_hr=190) is None
+
+
+def test_both_pipelines_agree_on_the_same_run():
+    """PARITY: one engine, two producers. Reshape the SAME physical run
+    through EACH pipeline's OWN raw-input format and the resulting documents
+    must agree — otherwise Felix's runs and Max's are being read by different
+    rules, which is the one thing this design exists to prevent. Mirrors
+    test_course_parity.mjs.
+
+    FIX ROUND, finding 1 (CRITICAL): the original version of this test ran
+    Health Connect's own reshaper on BOTH sides — and `run_detail` already
+    calls that reshaper internally, so the assertion reduced to comparing a
+    document to a manual re-derivation of itself. `sync_garmin.distill_run_streams` — the
+    real Garmin reshaper — was never invoked at all. Proved vacuous: making
+    `distill_run_streams` raise unconditionally left this test (and all 51 in
+    this file) passing regardless (see the task report's fix-round section
+    for the exact commands/output). Rebuilt so the Garmin side is built from
+    `_garmin_raw_detail()` — a synthetic raw `get_activity_details` payload,
+    the SAME shape `test_run_detail._stream_payload` uses — fed through
+    `sync_garmin.distill_run_streams` for real.
+
+    A shared, explicit `work_floor` (and `bounds`) — the SAME values fed to
+    both sides — calibrates them identically, which is what makes this a
+    genuine parity check rather than two independently-uncalibrated "steady"
+    verdicts trivially agreeing for a reason that has nothing to do with the
+    reshaping under test. The explicit `shape == "reps"` assertion guards
+    against exactly that vacuous-agreement failure mode.
+
+    `shape`/`label`/`set.found` are discrete facts and must match exactly.
+    `quality.workDistM` is a real-valued distance integrated independently by
+    two different reshapers (Garmin's raw stream reports `sumDistance`
+    verbatim per sample; Health Connect's `synth_streams` integrates speed×time
+    itself and scales the result to the device's banked total) — checked within a tolerance rather than exact equality per the
+    fix-round guidance, so a future rounding-path tweak on either side can't
+    turn an honest near-agreement into test flakiness. See the task report
+    for the actual measured difference. FINAL REVIEW I5: the Health Connect
+    side is no longer 1 Hz — its speed and HR now sit on separate, never-
+    intersecting clocks, as they do on the real device — so the two pipelines
+    genuinely sample this run differently and the tolerance now earns its
+    keep: measured 4000 m (Garmin, 1 Hz) vs 4013 m (Health Connect, 6 s speed
+    with hold), 13 m apart against a 40 m allowance."""
+    import interval_lens as il
+    import sync_garmin
+
+    floor = 3.0
+    bounds = il.zone_bounds(190)
+
+    garmin_streams = sync_garmin.distill_run_streams(_garmin_raw_detail(_PARITY_SPANS))
+    from_garmin = il.compact(il.build_document(garmin_streams, bounds=bounds, work_floor=floor))
+
+    hc = _interval_run()
+    from_hc = ingest_builder.run_detail(hc, max_hr=190, work_floor=floor)["intervals"]
+
+    assert from_garmin["shape"] == "reps", "fixture must exercise real, non-vacuous structure"
+    assert from_garmin["shape"] == from_hc["shape"]
+    assert from_garmin["label"] == from_hc["label"]
+    assert from_garmin["set"]["found"] == from_hc["set"]["found"]
+
+    a, b = from_garmin["quality"]["workDistM"], from_hc["quality"]["workDistM"]
+    tolerance = max(5, round(0.01 * max(a, b)))  # 1 % of the work distance, floor 5 m
+    assert abs(a - b) <= tolerance, (
+        f"quality.workDistM diverged beyond the stated tolerance: "
+        f"garmin={a} hc={b} tolerance={tolerance}")
 
 
 if __name__ == "__main__":

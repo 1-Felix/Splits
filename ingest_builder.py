@@ -32,6 +32,7 @@ from pathlib import Path
 
 import activity_archive
 import insight_metrics
+import interval_lens
 
 # Windows consoles default to cp1252, which can't encode the ✓ glyph below
 # (mirrors sync_garmin.py). Without this the build's success print raises.
@@ -43,7 +44,6 @@ for _stream in (sys.stdout, sys.stderr):
 
 RIEGEL_EXPONENT = 1.06            # mirror insight_metrics
 HALF_KM = 21.0975
-ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)
 ZONE_LABELS = ["Recovery", "Endurance", "Tempo", "Threshold", "VO2 max"]
 SAMPLE_GAP_CAP_S = 30            # a gap between HR samples longer than this is a pause
 MOVING_MPS_MIN = 1.7             # slower than ≈9:48/km = a standing/walking pause (D10)
@@ -98,10 +98,10 @@ def recent_resting_hr(rhr_days: dict | None):
 
 def _zone_bounds(max_hr: int, rhr=None) -> list[int]:
     # Karvonen HR-reserve bounds when resting HR is known (design D12 — the
-    # honest model for a beginner); plain %max otherwise.
-    if rhr and 0 < rhr < max_hr:
-        return [round(rhr + f * (max_hr - rhr)) for f in ZONE_FRACTIONS]
-    return [round(max_hr * f) for f in ZONE_FRACTIONS]
+    # honest model for a beginner); plain %max otherwise. The formula lives in
+    # interval_lens so BOTH pipelines score zones by one rule; this stays as the
+    # name the rest of this module already calls.
+    return interval_lens.zone_bounds(max_hr, rhr)
 
 
 def _zone_of(bpm: float, bounds: list[int]) -> int:
@@ -222,11 +222,47 @@ def _zone_seconds(hr_samples: list[dict], bounds: list[int]) -> list[float]:
     return secs
 
 
-def run_detail(run: dict, max_hr: int, rhr=None):
+def interval_document(run: dict, max_hr: int, rhr=None,
+                      work_floor: float | None = None):
+    """The FULL interval document for one banked run — the same engine, the
+    same inputs and the same document `sync_garmin.derive_intervals` produces
+    for the Garmin athlete (design: one engine, two producers). `source` is
+    always "stream": Samsung writes no ExerciseLap, so there is nothing to
+    override with.
+
+    `run_detail` banks this document's `compact()` form (no segments) inside
+    the distilled detail for the cockpit; `build_archive` banks THIS one in
+    `run_intervals`, which is what `/api/archive/activities/:id` serves. Both
+    surfaces therefore describe one derivation, never two.
+
+    None when the run carries no usable speed series — the same rule
+    `run_detail` already applies (design: "a run with no SpeedRecord gets no
+    document at all").
+
+    The columns come from `synth_streams` — the SAME reshaping the archive
+    banks as `detail_streams_json` and that `_metric_samples` feeds to
+    insight_metrics — so the engine, the charts and the metrics all read one
+    reshaping of this run. A second one (`_columnar`) used to live beside it
+    and had drifted: it exact-matched HR onto speed timestamps, which
+    Samsung's ~10 s-offset clocks rarely hit, and it skipped the distance
+    scaling that pins the integral to the device's own banked total."""
+    cols = synth_streams(run)
+    if not cols:
+        return None
+    return interval_lens.build_document(
+        cols, bounds=_zone_bounds(max_hr, rhr), work_floor=work_floor)
+
+
+def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None):
     """The recent-run drill-down `detail`, shaped exactly like the Garmin
     distiller's contract (splits / hrSeries / driftBpm / zoneMin / splitShape;
     tempC / te / load stay null — Health Connect doesn't carry them). Only runs
-    with a speed series get one — without it there are no splits to show."""
+    with a speed series get one — without it there are no splits to show.
+
+    `work_floor` (add-interval-lens Task 11) is this athlete's own interval
+    calibration floor — see `_work_floor` — threaded down by both callers
+    (`recent_runs` and `build_archive`) so `intervals.shape` reads the same
+    whether this run lands in garmin-data.js or the archive."""
     if len(run.get("speedSamples") or []) < 2:
         return None
     splits = run_splits(run)
@@ -243,6 +279,8 @@ def run_detail(run: dict, max_hr: int, rhr=None):
         "load": None,
         "elevGain": round(elev) if elev is not None else None,
         "splitShape": _split_shape(splits),
+        "intervals": interval_lens.compact(
+            interval_document(run, max_hr, rhr, work_floor)),
     }
 
 
@@ -257,7 +295,8 @@ def _cadence(run: dict):
 
 
 # ── contract sections ─────────────────────────────────────────────────────────
-def recent_runs(runs: list[dict], max_hr: int, rhr=None, n: int = RECENT) -> list[dict]:
+def recent_runs(runs: list[dict], max_hr: int, rhr=None, n: int = RECENT,
+                work_floor: float | None = None) -> list[dict]:
     ordered = sorted(runs, key=lambda r: r["startTimeLocal"], reverse=True)[:n]
     out = []
     for r in ordered:
@@ -272,7 +311,7 @@ def recent_runs(runs: list[dict], max_hr: int, rhr=None, n: int = RECENT) -> lis
             "hr": round(avg) if avg else None,
             "cad": _cadence(r),
         }
-        det = run_detail(r, max_hr, rhr)
+        det = run_detail(r, max_hr, rhr, work_floor=work_floor)
         if det:
             row["detail"] = det
         out.append(row)
@@ -493,10 +532,35 @@ def dedupe_overlapping(runs: list[dict]) -> tuple[list[dict], list[tuple]]:
     return sorted(kept, key=lambda r: r["startTimeLocal"]), dropped
 
 
+def _work_floor(runs: list[dict]) -> float | None:
+    """This athlete's own interval-detection calibration floor (add-interval-
+    lens Task 7b design, mirrored from sync_garmin.derive_intervals):
+    `build_document` makes no rep claim without one — an uncalibrated bout is
+    merely faster than ITS OWN run, not genuinely fast for this athlete.
+
+    Health Connect has no incremental archive sweep of its own the way the
+    Garmin pipeline does (`derive_intervals`, banked in `archive_meta`):
+    every build here already holds every banked run in memory, so the floor
+    is simply recomputed fresh each time from their columnar streams at
+    `interval_lens.BASELINE_STRIDE` resolution — cheap next to the rest of a
+    build, and self-healing the same way a disposable cache is. None while
+    the history is too young (< `interval_lens.WORK_FLOOR_MIN_SAMPLES`) —
+    honest silence, not a guess; every run's `intervals.shape` then reads
+    "steady" until there is enough of this athlete's own pace history to
+    calibrate against."""
+    samples: list[float] = []
+    for r in runs:
+        cols = synth_streams(r)
+        if cols:
+            samples.extend(interval_lens.baseline_samples(cols))
+    return interval_lens.work_floor(samples)
+
+
 def _calibration(runs: list[dict], profile: dict, rhr_days: dict | None = None):
-    """(max_hr, rhr) shared by the telemetry build and the archive pass — the
-    zone bounds inside a run's distilled detail must come out identical on both
-    surfaces (design D6), so the calibration lives in exactly one place.
+    """(max_hr, rhr, work_floor) shared by the telemetry build and the archive
+    pass — the zone bounds AND the interval calibration floor inside a run's
+    distilled detail must come out identical on both surfaces (design D6), so
+    all three live in exactly one place.
 
     maxHR = the best evidence available (design D9): the highest of the
     explicit profile setting and the observed per-run max (an observation is
@@ -505,14 +569,22 @@ def _calibration(runs: list[dict], profile: dict, rhr_days: dict | None = None):
     observed = observed_max_hr(runs)
     cands = [v for v in (explicit, observed) if v]
     max_hr = int(max(cands)) if cands else (220 - int(profile.get("age", 30)))
-    return max_hr, recent_resting_hr(rhr_days)
+    return max_hr, recent_resting_hr(rhr_days), _work_floor(runs)
 
 
 def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
                        plan_goal: str | None = None,
-                       rhr_days: dict | None = None) -> dict:
+                       rhr_days: dict | None = None,
+                       calibration: tuple | None = None) -> dict:
+    # `calibration` (add-interval-lens Task 11 fix round): (max_hr, rhr,
+    # work_floor), precomputed ONCE by a caller that also calls
+    # `build_archive` on the same `runs` (`main()`) — `_work_floor` rescans
+    # every run's samples, so computing it twice per build for a guaranteed-
+    # identical result is wasted work on a real archive. None (every existing
+    # caller, including every test in this file) falls back to computing it
+    # here, unchanged from before this fix round.
     runs = [r for r in runs if _usable(r)]
-    max_hr, rhr = _calibration(runs, profile, rhr_days)
+    max_hr, rhr, work_floor = calibration or _calibration(runs, profile, rhr_days)
     week_km, week_runs = weekly_volume(runs, today)
     ctl, atl = fitness_fatigue(runs, max_hr, today)
     start_month, pace, cad = monthly_pace(runs)
@@ -541,7 +613,7 @@ def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
     data = {
         "profile": prof,                         # NO vo2maxCurrent (D7)
         "today": today.isoformat(),
-        "recentRuns": recent_runs(runs, max_hr, rhr),
+        "recentRuns": recent_runs(runs, max_hr, rhr, work_floor=work_floor),
         "hrZones": hr_zones_this_week(runs, max_hr, today, rhr),
         "predictions": predictions(runs, plan_goal),
         "history": history,
@@ -567,7 +639,12 @@ def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
 # Bump when synth_streams or the distilled-detail derivation changes shape —
 # the marker in archive_meta makes the next build recompute every run's
 # derived artifacts (mirrors insight_metrics.METRICS_VERSION for metrics rows).
-INGEST_DISTILL_VERSION = 2  # 2: hr/v sample-and-hold (was: interleaved nulls)
+INGEST_DISTILL_VERSION = 4  # 4: intervals reshaped by the final review — reps
+                             #    carry gapS, set.paceS is raw pace, ragged
+                             #    pyramid labels collapse to "N reps", and the
+                             #    streams come from synth_streams
+                             # 3: + intervals (add-interval-lens Task 11)
+                             # 2: hr/v sample-and-hold (was: interleaved nulls)
 _DISTILL_MARKER = "ingest_distill_version"
 
 
@@ -727,13 +804,21 @@ def _upsert_archive_row(conn, aid: int, run: dict) -> bool:
 
 def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                   rhr_days: dict | None = None,
-                  prune_uids: list[str] | None = None) -> int:
+                  prune_uids: list[str] | None = None,
+                  calibration: tuple | None = None) -> int:
     """The archive build pass: upsert every usable banked run into
     activity-archive.db and bring its derived artifacts (columnar streams,
     distilled detail, run_metrics) to the current versions. Write-once in the
     steady state — derived artifacts are recomputed only when missing, when a
     version marker moved (design D8), or when the banked payload itself changed
-    (a re-pushed run). Returns the number of archived runs."""
+    (a re-pushed run). Returns the number of archived runs.
+
+    `calibration` (add-interval-lens Task 11 fix round): see
+    `build_athlete_data` — precompute once in `main()` and pass the SAME
+    tuple here to avoid a second `_work_floor` sweep over every run's
+    samples for a result identical to `build_athlete_data`'s. None (every
+    existing caller, including every test in this file) falls back to
+    computing it here, unchanged from before this fix round."""
     runs = sorted((r for r in runs if _usable(r) and r.get("sessionUid")),
                   key=lambda r: r["startTimeLocal"])
     if not runs:
@@ -741,7 +826,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
         # rather than creating an empty archive that would flip /api/status's
         # `archive` flag and reveal empty archive chrome on a fresh instance
         return 0
-    max_hr, rhr = _calibration(runs, profile, rhr_days)
+    max_hr, rhr, work_floor = calibration or _calibration(runs, profile, rhr_days)
     conn = activity_archive.open_archive(Path(data_dir))
     try:
         # a run that lost a duplicate group must leave the archive too, or
@@ -751,6 +836,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
             if aid is None:
                 continue
             conn.execute("DELETE FROM run_metrics WHERE activity_id = ?", (aid,))
+            conn.execute("DELETE FROM run_intervals WHERE activity_id = ?", (aid,))
             conn.execute("DELETE FROM activities WHERE activity_id = ?", (aid,))
             conn.commit()
             print(f"  – pruned archived duplicate {aid} ({uid})", flush=True)
@@ -776,12 +862,44 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                                  " WHERE activity_id = ?", (aid,))
                     conn.commit()
             if stale or changed or missing[1]:
-                det = run_detail(run, max_hr, rhr)
+                det = run_detail(run, max_hr, rhr, work_floor=work_floor)
                 if det:
                     activity_archive.write_distilled(conn, aid, det)
                 elif changed and not missing[1]:
                     conn.execute("UPDATE activities SET detail_distilled_json = NULL"
                                  " WHERE activity_id = ?", (aid,))
+                    conn.commit()
+            # the interval document — the row /api/archive/activities/:id
+            # serves as `intervals`, and the row /archive reads its shape chip
+            # from. `upsert_run_intervals` had exactly ONE caller before this
+            # (sync_garmin), which no ingest-fed instance ever runs, so the rep
+            # table, the rep bands and the archive chip were structurally
+            # unreachable for the second athlete however good the detection was.
+            # Gated on the same stale/changed/missing rule as the distilled
+            # detail, so the steady state stays write-once.
+            has_intervals = conn.execute(
+                "SELECT 1 FROM run_intervals WHERE activity_id = ? AND lens_version = ?",
+                (aid, interval_lens.INTERVAL_VERSION)).fetchone()
+            if stale or changed or not has_intervals:
+                doc = interval_document(run, max_hr, rhr, work_floor)
+                if doc:
+                    activity_archive.upsert_run_intervals(conn, {
+                        "activity_id": aid,
+                        "lens_version": interval_lens.INTERVAL_VERSION,
+                        "start_time_local": run["startTimeLocal"],
+                        "shape": doc["shape"], "label": doc.get("label"),
+                        "confidence": doc.get("confidence"),
+                        "source": doc["source"],
+                        "work_dist_m": (doc.get("quality") or {}).get("workDistM"),
+                        "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
+                        "doc_json": json.dumps(doc, ensure_ascii=False),
+                    })
+                elif changed:
+                    # a re-pushed run that lost its speed samples must lose its
+                    # document too, or /run/:id renders reps that no longer
+                    # have a stream behind them
+                    conn.execute("DELETE FROM run_intervals WHERE activity_id = ?",
+                                 (aid,))
                     conn.commit()
             has_metrics = conn.execute(
                 "SELECT 1 FROM run_metrics WHERE activity_id = ? AND metrics_version = ?",
@@ -870,15 +988,24 @@ def main() -> None:
               f"{winner['distanceM'] / 1000:.2f} km ({winner.get('source')}) — dropped",
               flush=True)
 
+    # add-interval-lens Task 11 fix round: compute (max_hr, rhr, work_floor)
+    # ONCE here and thread the SAME tuple into both build_athlete_data and
+    # build_archive below — they used to each call `_calibration` (and its
+    # `_work_floor`, which rescans every run's own columnar samples)
+    # independently on this same `runs` list for a guaranteed-identical
+    # result, doubling that scan for no reason on a real archive.
+    calibration = _calibration(runs, profile, rhr_days)
+
     data = build_athlete_data(runs, profile, dt.date.today(), _plan_goal(data_dir),
-                              rhr_days=rhr_days)
+                              rhr_days=rhr_days, calibration=calibration)
     tmp = data_dir / f".garmin-data.{os.getpid()}.tmp.js"
     tmp.write_text(build_garmin_data_js(data), encoding="utf-8")
     tmp.replace(data_dir / "garmin-data.js")
     print(f"✓ built garmin-data.js from {len(runs)} ingested run(s)", flush=True)
     try:
         n = build_archive(data_dir, runs, profile, rhr_days,
-                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates])
+                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates],
+                          calibration=calibration)
         print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
     except Exception as e:  # noqa: BLE001 — the archive is a derived cache; a
         # failure here must never sink the telemetry build (task 3.7)

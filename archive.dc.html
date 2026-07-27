@@ -131,7 +131,12 @@
                 <span style="color:var(--sub);font-weight:600">{{ pl.name }}</span>
               </sc-for>
             </span>
-            <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub)">{{ r.typeLabel }}</span>
+            <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub)">
+              {{ r.typeLabel }}
+              <sc-for list="{{ r.shape }}" as="sh" hint-placeholder-count="0">
+                <span class="arch-shape" style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ sh.t }}</span>
+              </sc-for>
+            </span>
             <span data-label="km">{{ r.km }}</span>
             <span data-label="time">{{ r.time }}</span>
             <span data-label="pace">{{ r.pace }}</span>
@@ -342,6 +347,12 @@ class Component extends DCLogic {
           // render as plain rows — no focusable no-op controls (spec 4.x)
           link: run ? [{ href: './run/' + a.activityId, name: a.name || 'Run' }] : [],
           plain: run ? [] : [{ name: a.name || String(a.type || '').replace(/_/g, ' ') }],
+          // add-interval-lens: the label is the friendlier read when present
+          // (e.g. "5×1 km"); otherwise the bare shape word is still worth a
+          // chip, but "steady" carries no news — the type badge already says RUN
+          shape: a.intervalLabel ? [{ t: a.intervalLabel }]
+               : (a.intervalShape && a.intervalShape !== 'steady'
+                  ? [{ t: a.intervalShape }] : []),
           cmp: run ? [{
             on: String(on), mark: on ? '✓' : '',
             title: on ? 'Remove from comparison' : 'Select for comparison',

@@ -1263,6 +1263,242 @@ def test_sync_maps_pass_maps_gps_runs_and_ignores_treadmills():
     conn.close()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# schema v11 (add-interval-lens): run_intervals + write-once laps_json
+# ──────────────────────────────────────────────────────────────────────────────
+def _seeded():
+    """An archive with one archived, streamed run — the precondition every
+    interval test shares."""
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1, start="2026-07-10 06:00:00")])
+    arch.write_streams(conn, 1, {"t": [0, 1, 2], "d": [0, 3, 6], "v": [3.0, 3.0, 3.0]})
+    return conn
+
+
+def _interval_row(**over):
+    row = {"activity_id": 1, "lens_version": 1,
+           "start_time_local": "2026-07-10 06:00:00", "shape": "reps",
+           "label": "5×1 km", "confidence": 0.8, "source": "stream",
+           "work_dist_m": 5000, "work_dur_s": 1250,
+           "doc_json": '{"shape":"reps","label":"5×1 km"}'}
+    row.update(over)
+    return row
+
+
+def test_schema_v11_tables_exist():
+    conn = arch.open_archive(_tmp())
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "run_intervals" in names
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
+    assert "laps_json" in cols
+    assert arch.get_meta(conn, "schema_version") == "11"
+    conn.close()
+
+
+def test_v11_migration_recovers_from_interrupted_alter():
+    """Each `sqlite3` ALTER is its own implicit-autocommit DDL statement, so a
+    process death between the two v11 ALTERs is a real possibility: laps_json
+    lands, laps_fetched_at never does. A later reopen must still add the
+    missing column — a single guard keyed only on laps_json would see it
+    present and skip the whole block, permanently losing laps_fetched_at on
+    an archive that cannot be rebuilt from this branch."""
+    import sqlite3
+    d = _tmp()
+    conn = sqlite3.connect(arch.archive_path(d))
+    conn.executescript(arch.SCHEMA_SQL)
+    conn.executescript(arch.SCHEMA_V2_SQL)
+    conn.executescript(arch.SCHEMA_V3_SQL)
+    arch._apply_schema_v4(conn)
+    arch._apply_schema_v5(conn)
+    arch._apply_schema_v6(conn)
+    arch._apply_schema_v7(conn)
+    conn.executescript(arch.SCHEMA_V8_SQL)
+    conn.executescript(arch.SCHEMA_V9_SQL)
+    conn.executescript(arch.SCHEMA_V10_SQL)
+    # simulate a v11 migration interrupted right after its first ALTER
+    conn.execute("ALTER TABLE activities ADD COLUMN laps_json TEXT")
+    conn.execute("INSERT INTO archive_meta (key, value) VALUES ('schema_version', '10')")
+    conn.commit()
+    conn.close()
+
+    reopened = arch.open_archive(d)  # must heal the gap, not skip it
+    cols = {row[1] for row in reopened.execute("PRAGMA table_info(activities)")}
+    assert "laps_json" in cols
+    assert "laps_fetched_at" in cols, \
+        "each v11 column must be guarded independently (like v5/v7), or a " \
+        "mid-migration crash permanently loses laps_fetched_at"
+    assert arch.get_meta(reopened, "schema_version") == "11"
+    reopened.close()
+
+
+def test_laps_are_write_once():
+    conn = _seeded()
+    assert arch.write_laps(conn, 1, [{"distance": 1000}]) is True
+    assert arch.write_laps(conn, 1, [{"distance": 5}]) is False
+    assert arch.laps_payload(conn, 1)[0]["distance"] == 1000
+    conn.close()
+
+
+def test_empty_laps_are_refused():
+    conn = _seeded()
+    assert arch.write_laps(conn, 1, []) is False
+    assert arch.laps_payload(conn, 1) is None
+    conn.close()
+
+
+def test_stale_interval_rows_count_as_missing():
+    """A version bump must self-heal without a migration."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    assert arch.runs_missing_intervals(conn, 1) == []
+    assert len(arch.runs_missing_intervals(conn, 2)) == 1
+    conn.close()
+
+
+def _stamp(conn, activity_id, computed_at=None, laps_fetched_at=None):
+    """Pin the two timestamps the lap-staleness clause compares. Both columns
+    are written by `_now()` at 1 s resolution in production, so a test that
+    relied on wall-clock ordering could only probe one side of the boundary
+    (and only by sleeping); setting them explicitly is what makes all three
+    orderings below reachable."""
+    if computed_at is not None:
+        conn.execute("UPDATE run_intervals SET computed_at = ? WHERE activity_id = ?",
+                     (computed_at, activity_id))
+    if laps_fetched_at is not None:
+        conn.execute("UPDATE activities SET laps_fetched_at = ? WHERE activity_id = ?",
+                     (laps_fetched_at, activity_id))
+    conn.commit()
+
+
+def test_laps_arriving_after_a_document_make_it_pending_again():
+    """FINAL REVIEW I2: `_laps_pass` is capped per night, so the lap backlog
+    drains over days while the intervals pass scores everything at once. A
+    document computed BEFORE its run's laps landed never saw the device's own
+    boundaries — design D1's "device laps win outright" was silently bypassed
+    for exactly the runs it was written for."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    assert arch.runs_missing_intervals(conn, 1) == [], "current + no laps: settled"
+
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250,
+                               "intensityType": "ACTIVE"}])
+    _stamp(conn, 1, computed_at="2026-07-11T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert [r[0] for r in arch.runs_missing_intervals(conn, 1)] == [1], \
+        "laps that arrived AFTER the document was computed make it stale"
+    conn.close()
+
+
+def test_a_rescored_run_leaves_the_pending_set():
+    """The clause must not become a nightly rescoring loop: once the run has
+    been scored with its laps in hand, it settles — whatever the engine then
+    decided about them. Most of the archive's lapped runs are Garmin auto-lap
+    and will keep `source: 'stream'` for ever; a naive `laps_json IS NOT NULL
+    AND source <> 'laps'` predicate would rescore all of them every night."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250}])
+
+    # rescored after the laps landed — and the engine still said "stream"
+    # (auto-lap, or laps carrying no intensity labels)
+    _stamp(conn, 1, computed_at="2026-07-13T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert arch.runs_missing_intervals(conn, 1) == [], \
+        "a stream verdict reached WITH the laps in hand is final, not pending"
+
+    # a lap-sourced document is never pending on lap grounds at all
+    arch.upsert_run_intervals(conn, _interval_row(source="laps"))
+    _stamp(conn, 1, computed_at="2026-07-11T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert arch.runs_missing_intervals(conn, 1) == [], \
+        "source='laps' already encodes that the device data won"
+    conn.close()
+
+
+def test_lap_staleness_compares_instants_not_strings():
+    """The two stamps carry UTC offsets, and Germany's offset moves twice a
+    year. 02:30+01:00 is LATER than 03:00+02:00; a lexicographic compare of
+    the raw strings gets that backwards and would recompute a document that
+    already saw its laps (or, in the mirror case, skip one that did not)."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250}])
+    _stamp(conn, 1, computed_at="2026-10-25T02:30:00+01:00",     # 01:30 UTC
+           laps_fetched_at="2026-10-25T03:00:00+02:00")          # 01:00 UTC
+    assert arch.runs_missing_intervals(conn, 1) == [], (
+        "the document was computed 30 min AFTER the laps arrived in real time; "
+        "only a naive string compare would call it stale")
+    conn.close()
+
+
+def test_interval_document_round_trips():
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row(
+        shape="block", label="20 min block",
+        doc_json='{"shape":"block","label":"20 min block"}'))
+    assert arch.interval_document(conn, 1)["label"] == "20 min block"
+    conn.close()
+
+
+def test_streamed_runs_includes_already_scored_rows():
+    """The calibration sweep needs EVERY streamed run, scored or not — unlike
+    runs_missing_intervals, an existing document must not hide a run from it,
+    or the work floor would shrink towards nothing as the archive gets
+    scored. A run with no streams at all must still be excluded."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())  # run 1 already scored
+    arch.upsert_activities(conn, [_act(2, start="2026-07-11 06:00:00")])  # no streams
+    assert arch.streamed_runs(conn) == [(1, "2026-07-10 06:00:00")]
+    conn.close()
+
+
+def test_verify_archive_reports_interval_calibration_state():
+    """New in add-interval-lens Task 10: verify must never crash reading the
+    intervals section, and must plainly report whether the work floor is
+    calibrated yet — a pre-lens archive (streamed but never scored) is not a
+    regression, it just has nothing to report. Asserted against the actual
+    printed lines, not just the exit code — an exit-code-only check would
+    still pass with no intervals reporting at all."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    orig_log = sg.log
+    lines: list = []
+    sg.log = lines.append
+    try:
+        conn = arch.open_archive(d)
+        arch.upsert_activities(conn, [_act(1, start="2026-07-10 06:00:00")])
+        arch.write_streams(conn, 1, {"t": [0, 1, 2], "d": [0, 3, 6], "v": [3.0, 3.0, 3.0]})
+        conn.close()
+        assert sg.verify_archive() == 0, "streamed but never scored — not a regression"
+        assert any("intervals" in l and "uncalibrated" in l for l in lines), \
+            "verify must plainly say the floor is not yet calibrated"
+
+        lines.clear()
+        conn = arch.open_archive(d)
+        arch.set_meta(conn, "interval_work_floor", 2.7)
+        arch.upsert_run_intervals(conn, _interval_row())
+        conn.close()
+        assert sg.verify_archive() == 0, "a calibrated, scored archive still passes"
+        assert any("2.700 m/s" in l for l in lines), \
+            "verify must report the banked floor in m/s so a human can read it"
+    finally:
+        sg.log = orig_log
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_single_lap_runs_are_never_queued_for_lap_fetch():
+    """The archive's 42 single-lap runs must never cost a Garmin request."""
+    conn = arch.open_archive(_tmp())
+    solo = _act(1, start="2026-07-10 06:00:00")
+    solo["lapCount"] = 1
+    many = _act(2, start="2026-07-11 06:00:00")
+    many["lapCount"] = 13
+    arch.upsert_activities(conn, [solo, many])
+    assert arch.runs_missing_laps(conn) == [2]
+    conn.close()
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

@@ -91,7 +91,7 @@
       </div>
     </div>
     <sc-for list="{{ pg.verdict }}" as="v" hint-placeholder-count="0">
-      <div style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-top:var(--sp-3);line-height:1.45">⚡ {{ v.t }}</div>
+      <div class="coach-verdict" style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-top:var(--sp-3);line-height:1.45">⚡ {{ v.t }}</div>
     </sc-for>
     <sc-for list="{{ pg.zones }}" as="zr" hint-placeholder-count="0">
       <div style="display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-3)">
@@ -182,10 +182,40 @@
         </div>
       </sc-for>
     </div>
+    <sc-for list="{{ pg.reps }}" as="rp" hint-placeholder-count="0">
+      <div class="card rep-table">
+        <div class="card-title rep-title" style="margin-bottom:var(--sp-1)">{{ rp.label }}</div>
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ rp.sub }}</div>
+        <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
+          <sc-for list="{{ rp.rows }}" as="r" hint-placeholder-count="5">
+            <div>
+              <div class="rep-row" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
+                <span style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.n }}</span>
+                <span style="width:56px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.dist }}</span>
+                <span class="rep-time" style="width:48px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.time }}</span>
+                <div style="flex:1;position:relative;height:16px">
+                  <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)"></div>
+                  <div style="position:absolute;top:2px;height:12px;border-radius:2px;left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
+                </div>
+                <span class="rep-pace" style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
+                <span class="rep-gap" style="width:52px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.gap }}</span>
+                <span style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+              </div>
+              <sc-for list="{{ r.rec }}" as="rc" hint-placeholder-count="0">
+                <div class="rep-rec" style="display:flex;gap:var(--sp-2);padding:2px 0 6px 34px;font-size:var(--fs-2xs);color:var(--sub)">
+                  <span>↓ {{ rc.time }} recovery</span>
+                  <span>{{ rc.drop }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
     <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
       <div class="card">
         <div class="card-title" style="margin-bottom:var(--sp-1)">Splits</div>
-        <div class="card-sub" style="margin-bottom:var(--sp-3)">Bars against this run's own median km — left of the line is faster</div>
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">Per-kilometre averages — blunt through a rep set, honest on a steady run</div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="8">
             <div style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
@@ -291,6 +321,7 @@ class Component extends DCLogic {
       const run = st.run;
       const D = this.state.data;
       const S = this.state.streams;
+      const iv = run.intervals;   // add-interval-lens: the detected rep structure, shared by the track shading and the rep table below
       const km = run.distanceM ? run.distanceM / 1000 : 0;
       const paceS = km > 0 && run.durationS ? Math.round(run.durationS / km) : null;
       const dateISO = (run.startTimeLocal || '').slice(0, 10);
@@ -304,9 +335,19 @@ class Component extends DCLogic {
       pg.pace = this.fmtPace(paceS);
 
       // the verdict — the same coach-read line the drill-downs render (6.2)
+      //
+      // coachRead reads the interval structure off `detail.intervals`, but the
+      // Garmin archive's distilled detail can never grow one: _distill_pass
+      // only fills rows whose detail_distilled_json is NULL and that side has
+      // no distill version marker, so 0 of 165 archived details carry the key.
+      // The full document is already in scope here as `iv` (the API serves it
+      // beside `detail`), so hand coachRead the structure it is looking for —
+      // otherwise this page renders a rep table beneath a sentence produced by
+      // the thirds heuristic the rep table exists to replace.
       let verdict = '';
       if (this._cr && this._cr.coachRead && D && run.detail) {
-        const rr = { date: dateISO, type: 'Run', km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail: run.detail };
+        const detail = iv ? Object.assign({}, run.detail, { intervals: iv }) : run.detail;
+        const rr = { date: dateISO, type: 'Run', km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail };
         verdict = this._cr.coachRead(rr, D.weekPlan || [], (D.profile && D.profile.maxHR) || 0) || '';
       }
       pg.verdict = verdict ? [{ t: verdict }] : [];
@@ -365,6 +406,16 @@ class Component extends DCLogic {
         this._xScale = cc.sharedXScale(xs);
         const xFmt = dist ? ((m) => (m / 1000).toFixed(1).replace(/\.0$/, '') + ' km') : ((s) => this.fmtHMS(s));
 
+        // rep windows for the track shading (add-interval-lens), in the
+        // axis's own units — the distance⇄time toggle already swaps `xs`
+        // above, so this must follow it: metres when distance, seconds when
+        // time, or a metres-axis chart would draw a seconds-wide band
+        const repWindows = (iv && iv.segments || [])
+          .filter((s) => s.role === 'work')
+          .map((s) => (dist
+            ? { x0: s.d0, x1: s.d1, rep: s.rep }
+            : { x0: s.t0, x1: s.t1, rep: s.rep }));
+
         const toPace = (v) => (v != null && v >= 0.6) ? Math.round(1000 / v) : null;
         const pace = (S.v || []).map(toPace);
         const gap = S.gap ? S.gap.map(toPace) : null;
@@ -408,7 +459,7 @@ class Component extends DCLogic {
 
         const ci = this.state.cross;
         const specs = cc.multiTrackSpec(
-          defs.map((t) => ({ ...t, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
+          defs.map((t) => ({ ...t, repBands: repWindows, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
           { values: xs, fmt: xFmt, cross: ci != null ? { i: ci } : null });
         pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
 
@@ -464,6 +515,52 @@ class Component extends DCLogic {
       } else {
         pg.streamSub = 'no stored streams';
         pg.noStreams = [{ t: 'This run has no stored sample streams yet — the next sync writes them from the archived raw payload.' }];
+      }
+
+      // reps against the SET's own median (add-interval-lens) — the run median
+      // is meaningless when half the run is warmup and cooldown
+      pg.reps = [];
+      if (iv && iv.shape !== 'steady' && iv.segments && iv.segments.length) {
+        const work = iv.segments.filter((s) => s.role === 'work');
+        const recs = iv.segments.filter((s) => s.role === 'recovery');
+        if (work.length) {
+          const paces = work.map((s) => s.paceS).filter((p) => p).sort((a, b) => a - b);
+          const median = paces.length ? paces[Math.floor(paces.length / 2)] : 0;
+          const maxDev = Math.max(5, ...work.map((s) => Math.abs((s.paceS || median) - median)));
+          const set = iv.set || {};
+          const bits = [];
+          if (set.paceCvPct != null) bits.push(set.paceCvPct.toFixed(1) + '% spread');
+          if (set.fadePct != null) bits.push((set.fadePct > 0 ? '+' : '') + set.fadePct.toFixed(1) + '% fade');
+          if (set.recoveryHrDrop != null) bits.push('−' + set.recoveryHrDrop + ' bpm recovery');
+          if (iv.confidence != null && iv.confidence < 0.5) bits.push('possible structure');
+          if (set.prescribed != null && set.found !== set.prescribed) {
+            bits.unshift(set.found + ' of ' + set.prescribed + ' reps');
+          }
+          pg.reps = [{
+            label: iv.label || 'Reps',
+            sub: bits.length ? bits.join(' · ') : "Bars against this set's own median rep",
+            rows: work.map((s, i) => {
+              const dev = (s.paceS || median) - median;
+              const half = Math.min(50, Math.abs(dev) / maxDev * 50);
+              const rc = recs[i];
+              return {
+                n: 'rep ' + (s.rep || i + 1),
+                dist: s.distM >= 1000 ? (s.distM / 1000).toFixed(2) + ' km' : s.distM + ' m',
+                time: this.fmtHMS ? this.fmtHMS(s.durS) : s.durS + 's',
+                pace: this.fmtPace(s.paceS),
+                gap: s.gapS ? this.fmtPace(s.gapS) : '—',
+                hr: s.hr != null ? s.hr : '—',
+                left: dev < 0 ? +(50 - half).toFixed(1) : 50,
+                width: +half.toFixed(1) || 0.5,
+                color: dev <= 0 ? 'var(--series1)' : 'var(--sub)',
+                rec: rc ? [{
+                  time: Math.round(rc.durS) + ' s',
+                  drop: rc.hr != null && s.hr != null ? '−' + (s.hr - rc.hr) + ' bpm' : '',
+                }] : [],
+              };
+            }),
+          }];
+        }
       }
 
       // splits vs the run's own median (6.6)

@@ -507,4 +507,84 @@ import { scaleLinear } from "./vendor/d3-lite.js";
   assert.ok(span && span.fill === "var(--z2)", "zone band present with its zone colour");
 }
 
+// ── repBands (add-interval-lens): rep windows → px bands, clipped once ──────
+// The descriptor is a linear (numeric) x-axis, same as the run page's stream
+// tracks — the only x-kind repBands are meaningful against, since a window's
+// x0/x1 are the track's own domain values (seconds or metres), not indices.
+// The brief's original snippet used `xDomain: [0, 1000]` as a descriptor
+// field and `baseDescriptor` as an undefined fixture; buildSpec has no such
+// field — the x domain comes from `x.values`' own extent — so baseDescriptor
+// is defined here with `x.values` spanning exactly [0, 1000] and the
+// nonexistent `xDomain` key is dropped rather than cargo-culted in.
+const baseDescriptor = {
+  id: "tr-pace", ariaLabel: "Pace",
+  x: { kind: "linear", values: [0, 1000], fmt: (v) => v + "m" },
+  y: { policy: {} },
+  series: [{ key: "pace", name: "Pace", color: "var(--series1)", values: [300, 320] }],
+};
+{
+  // two windows become two ordered, positive-width bands
+  const spec = buildSpec({
+    ...baseDescriptor,
+    repBands: [{ x0: 100, x1: 300, rep: 1 }, { x0: 400, x1: 600, rep: 2 }],
+  });
+  assert.equal(spec.repBands.length, 2);
+  assert.ok(spec.repBands[0].width > 0, "a band has width");
+  assert.ok(spec.repBands[0].x < spec.repBands[1].x, "bands keep their order");
+  assert.equal(spec.repBands[0].rep, 1);
+  // real numbers, not just "truthy": domain [0,1000] maps onto plot [44,590]
+  // (default trend pad l:44 r:10, frame w:600), so rep 1's window [100,300]
+  // resolves to x 98.6 / width 109.2 exactly — pinned so a future change to
+  // either the scale or the clipping can't silently go unnoticed
+  assert.ok(Math.abs(spec.repBands[0].x - 98.6) < 0.05, `rep1 x ${spec.repBands[0].x}`);
+  assert.ok(Math.abs(spec.repBands[0].width - 109.2) < 0.05, `rep1 width ${spec.repBands[0].width}`);
+}
+{
+  // no rep windows → no bands, and nothing else about the spec changes
+  const spec = buildSpec({ ...baseDescriptor });
+  assert.deepEqual(spec.repBands, []);
+}
+{
+  // a band running past the domain is clipped, never drawn outside the plot.
+  // (the brief's assertion compared against `spec.plot.width`, a property
+  // that doesn't exist on ChartSpec's plot — it's `w`/`h` — which would
+  // compare against NaN and always fail; fixed to the real property.)
+  const spec = buildSpec({
+    ...baseDescriptor,
+    repBands: [{ x0: 900, x1: 5000, rep: 1 }],
+  });
+  assert.ok(spec.repBands[0].x + spec.repBands[0].width <= spec.plot.x + spec.plot.w + 0.01);
+  // and it isn't clipped to NOTHING: the visible sliver from 900 to the
+  // domain edge (1000) still has real, positive width
+  assert.ok(spec.repBands[0].width > 0, "the visible sliver still renders");
+}
+{
+  // a non-linear x-kind (band/time-of-month charts) carries no value→px
+  // scale a numeric rep window could project through — repBands is empty
+  // rather than throwing or silently misplacing bands
+  const spec = buildSpec({
+    id: "monthly", ariaLabel: "monthly",
+    x: { kind: "band", n: 3 },
+    y: { policy: {} },
+    series: [{ key: "s", name: "s", color: "var(--series1)", values: [1, 2, 3] }],
+    repBands: [{ x0: 0, x1: 1, rep: 1 }],
+  });
+  assert.deepEqual(spec.repBands, [], "non-linear x-kind: no crash, no misplaced band");
+}
+
+// ── repBands through multiTrackSpec (the run page's actual wiring): one
+//    track's rep windows reach the ChartSpec exactly like any other field
+//    the page threads through per-track (spans, policy, series) ───────────
+{
+  const t = Array.from({ length: 100 }, (_, i) => i * 5);   // shared seconds axis, 0..495
+  const v = t.map(() => 3.0);
+  const specs = multiTrackSpec([
+    { id: "pace", ariaLabel: "Pace", series: [{ key: "v", name: "Pace", color: "var(--series1)", values: v }],
+      policy: {}, repBands: [{ x0: 50, x1: 150, rep: 1 }, { x0: 200, x1: 300, rep: 2 }] },
+  ], { values: t, fmt: (s) => s + "s" });
+  assert.strictEqual(specs[0].repBands.length, 2, "the track's rep windows reach its ChartSpec");
+  assert.strictEqual(specs[0].repBands[0].rep, 1);
+  assert.strictEqual(specs[0].repBands[1].rep, 2);
+}
+
 console.log("ALL PASS");

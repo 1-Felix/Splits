@@ -43,6 +43,7 @@ import block_lens
 import coach_briefing
 import course_lens
 import insight_metrics
+import interval_lens
 import plan_compliance
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
@@ -333,7 +334,8 @@ def classify(a: dict) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. FETCHERS  (each returns data already shaped to the contract, §3)
 # ──────────────────────────────────────────────────────────────────────────────
-def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[dict]:
+def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
+                      work_floor: float | None = None) -> list[dict]:
     runs = [a for a in acts if is_run(a) and act_km(a) > 0]
     runs.sort(key=act_date, reverse=True)
     out = []
@@ -347,7 +349,7 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS) -> list[di
             "hr": act_hr(a) or 0,
             "cad": act_cad(a),
             "vo2": round(act_vo2(a), 1) if act_vo2(a) else None,
-            "detail": fetch_run_detail(client, a),
+            "detail": fetch_run_detail(client, a, work_floor=work_floor),
         })
     return out
 
@@ -371,18 +373,46 @@ def _fetch_raw_detail(client, aid) -> dict | None:
     return det
 
 
-def fetch_run_detail(client, activity) -> dict | None:
+def _fetch_raw_laps(client, aid) -> list | None:
+    """RAW lap DTOs for one activity, cache-first (`.garmin_cache/laps-<id>.json`).
+    Garmin returns {'lapDTOs': [...]}; we bank the list itself — the envelope
+    carries nothing the lens needs."""
+    if not aid:
+        return None
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache = CACHE_DIR / f"laps-{aid}.json"
+    doc = None
+    if cache.exists():
+        doc = safe(lambda: json.loads(cache.read_text(encoding="utf-8")),
+                   None, f"laps-cache {aid}")
+    if not doc:
+        doc = safe(lambda: client.get_activity_splits(aid), None, f"laps {aid}")
+        if doc:
+            cache.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    if not doc:
+        return None
+    return doc.get("lapDTOs") if isinstance(doc, dict) else doc
+
+
+def fetch_run_detail(client, activity, work_floor: float | None = None) -> dict | None:
     """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
     activity id so re-syncs only fetch genuinely new runs."""
     det = _fetch_raw_detail(client, activity.get("activityId"))
-    return distill_run_detail(det, activity)
+    return distill_run_detail(det, activity, work_floor=work_floor)
 
 
-def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
+def distill_run_detail(det: dict | None, activity: dict,
+                       work_floor: float | None = None) -> dict | None:
     """Distill a RAW `get_activity_details` payload + its raw activity summary
     into the recent-run `detail` contract of garmin-data.js. Pure over its
     inputs — one distiller, two callers: fetch_run_detail (fresh from the API)
-    and the archive's distillation pass (stored payloads, no network)."""
+    and the archive's distillation pass (stored payloads, no network).
+
+    `work_floor` (add-interval-lens Task 11) is this athlete's own interval
+    calibration floor, banked by `derive_intervals` in `archive_meta` and
+    threaded down by both callers (`_interval_floor_from_archive` /
+    `_stored_interval_floor`) — never recomputed here, so this distiller
+    stays pure over its own arguments."""
     if not det:
         return None
 
@@ -403,6 +433,13 @@ def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
         temp = activity.get("minTemperature")
     load = activity.get("activityTrainingLoad")
     elev = activity.get("elevationGain")
+
+    streams = distill_run_streams(det)
+    bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
+    intervals = interval_lens.compact(
+        interval_lens.build_document(streams, activity, None, bounds=bounds,
+                                     work_floor=work_floor))
+
     return {
         "splits": splits,
         "hrSeries": [int(round(v)) for v in _downsample(hr_all, 30)],
@@ -413,6 +450,7 @@ def distill_run_detail(det: dict | None, activity: dict) -> dict | None:
         "load": round(load) if load else None,
         "elevGain": round(elev) if elev else None,
         "splitShape": _split_shape(splits),
+        "intervals": intervals,
     }
 
 
@@ -1001,6 +1039,13 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
     # pulls anyway, so wellness_step can bank them without a second round-trip.
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    # This athlete's interval calibration floor (Task 7b), as `intervals_step`
+    # just banked it — read fresh, never recomputed here (design order in
+    # `main()`: archive, intervals, THEN build_data). Without this,
+    # recentRuns[].detail.intervals would read `work_floor=None` on every
+    # run and the cockpit would show "steady" for every recent run even
+    # though this athlete's archive is long since calibrated.
+    interval_floor = safe(_interval_floor_from_archive, None, "interval floor lookup")
 
     monthly = fetch_monthly(client, acts)
     weekly_km, weekly_runs = fetch_weekly(acts)
@@ -1034,7 +1079,7 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
         "personalBests": fetch_personal_bests(client),
-        "recentRuns": fetch_recent_runs(client, acts),
+        "recentRuns": fetch_recent_runs(client, acts, work_floor=interval_floor),
         "history": {
             "vo2maxStartMonth": monthly["vo2maxStartMonth"],
             "vo2max": monthly["vo2max"],
@@ -1097,6 +1142,11 @@ def build_garmin_data_js(data: dict) -> str:
 DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
 MAPS_PER_SYNC = 10           # basemap backlog drains the same way; the full
                              # sweep is `--backfill-maps` (route-basemap D5)
+LAPS_PER_SYNC = 40           # bounded so a nightly sync stays polite to Garmin
+INTERVAL_FLOOR_DRIFT_GATE = 0.02   # add-interval-lens D6/Task 7b: a banked
+                                   # work floor that has moved more than this
+                                   # since the last pass makes every stored
+                                   # document stale, version bump or not
 
 
 def archive_step(client, acts: list[dict]) -> None:
@@ -1109,12 +1159,129 @@ def archive_step(client, acts: list[dict]) -> None:
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         distilled = _distill_pass(conn)
         streamed = _streams_pass(conn)
+        lapped = _laps_pass(client, conn, limit=LAPS_PER_SYNC)
         mapped = _maps_pass(conn, limit=MAPS_PER_SYNC)
         _record_expectations(conn)
         log(f"✓ archive: +{added} activities, {topped} details topped up"
             + (f", {distilled} runs distilled" if distilled else "")
             + (f", {streamed} runs streamed" if streamed else "")
+            + (f", {lapped} runs lapped" if lapped else "")
             + (f", {mapped} runs mapped" if mapped else ""))
+    finally:
+        conn.close()
+
+
+def derive_intervals(conn) -> dict:
+    """Score every archived run holding streams against the athlete's own pace
+    history (add-interval-lens D6, calibrated per Task 7b).
+
+    The pass ALWAYS sweeps every streamed run — scored or not — accumulating
+    `interval_lens.baseline_samples`, then computes `interval_lens.work_floor`
+    over the WHOLE pool exactly once. A percentile taken only from the runs
+    still pending a document would shrink towards nothing once most of the
+    archive is scored and drift away from what "work" really means for this
+    athlete — the sweep has to see runs already holding a document too. The
+    floor (rounded to the millimetre/s) is banked in `archive_meta` so
+    `--verify-archive` can report it.
+
+    Two things force a recompute beyond the normal version-missing set:
+    * the floor has moved by more than 2% since the last pass — every
+      existing document was scored under a floor that no longer describes
+      this athlete, so it is stale even though its lens_version has not
+      changed, and every streamed run is rescored;
+    * the floor is unavailable at all (fewer than
+      `interval_lens.WORK_FLOOR_MIN_SAMPLES` baseline samples — the live path
+      for a young archive): every run is still scored, its document just
+      records `calibrated: false`, logged plainly rather than treated as a
+      failure or a reason to skip.
+
+    Stored payloads in, no network. A per-run failure (bad stream, bad
+    payload) is deterministic, so it is logged and skipped rather than
+    retried every night — one bad run must never sink the rest."""
+    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    runs = activity_archive.streamed_runs(conn)
+
+    samples: list[float] = []
+    for aid, _ in runs:
+        streams = activity_archive.streams_payload(conn, aid)
+        if not streams:
+            continue
+        try:
+            samples.extend(interval_lens.baseline_samples(streams))
+        except Exception as e:  # noqa: BLE001 — one bad stream must not sink calibration
+            warn(f"baseline sampling failed for {aid} ({type(e).__name__}: {e})")
+
+    floor = interval_lens.work_floor(samples)
+    if floor is not None:
+        floor = round(floor, 3)
+    else:
+        warn(f"interval work floor unavailable — {len(samples)} baseline samples "
+             f"< {interval_lens.WORK_FLOOR_MIN_SAMPLES} minimum; scoring every run "
+             "uncalibrated (documents record calibrated: false)")
+
+    prev_raw = activity_archive.get_meta(conn, "interval_work_floor")
+    prev_floor = None
+    if prev_raw not in (None, "None", ""):
+        try:
+            prev_floor = float(prev_raw)
+        except ValueError:
+            prev_floor = None
+
+    moved = False
+    if floor is not None and prev_floor:
+        drift = abs(floor - prev_floor) / prev_floor
+        if drift > INTERVAL_FLOOR_DRIFT_GATE:
+            moved = True
+            warn(f"interval work floor moved {drift:.1%} ({prev_floor:.3f} → "
+                 f"{floor:.3f} m/s) — every stored document was scored under the "
+                 "old floor and is stale; recomputing the whole archive")
+
+    activity_archive.set_meta(conn, "interval_work_floor", floor)
+
+    bounds = interval_lens.zone_bounds(max_hr)
+    pending = runs if moved else activity_archive.runs_missing_intervals(
+        conn, interval_lens.INTERVAL_VERSION)
+
+    scored = 0
+    for aid, start_local in pending:
+        try:
+            doc = interval_lens.build_document(
+                activity_archive.streams_payload(conn, aid),
+                activity_archive.summary_payload(conn, aid) or {},
+                activity_archive.laps_payload(conn, aid),
+                None, bounds, floor)
+        except Exception as e:  # noqa: BLE001 — one bad stream must not sink the rest
+            warn(f"interval detection failed for {aid} ({type(e).__name__}: {e})")
+            continue
+        if not doc:
+            continue
+        activity_archive.upsert_run_intervals(conn, {
+            "activity_id": aid,
+            "lens_version": interval_lens.INTERVAL_VERSION,
+            "start_time_local": start_local,
+            "shape": doc["shape"], "label": doc.get("label"),
+            "confidence": doc.get("confidence"), "source": doc["source"],
+            "work_dist_m": (doc.get("quality") or {}).get("workDistM"),
+            "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
+            "doc_json": json.dumps(doc, ensure_ascii=False),
+        })
+        scored += 1
+    return {"scored": scored, "floor": floor}
+
+
+def intervals_step() -> None:
+    """Derive the interval documents (add-interval-lens D6). Runs AFTER the
+    archive step (it reads the streams that step wrote) and BEFORE
+    metrics/compliance/build_data; only ever inside safe() — a detection
+    problem is a warning, never a failed sync."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        stats = derive_intervals(conn)
+        floor_desc = (f"{stats['floor']:.3f} m/s" if stats["floor"] is not None
+                      else "uncalibrated")
+        log((f"✓ intervals: {stats['scored']} runs scored (floor {floor_desc})"
+             if stats["scored"] else
+             f"✓ intervals: nothing new to score (floor {floor_desc})"))
     finally:
         conn.close()
 
@@ -1318,16 +1485,45 @@ def _archive_detail_topup(client, conn, limit: int) -> int:
     return topped
 
 
+def _stored_interval_floor(conn) -> float | None:
+    """This athlete's interval calibration floor (Task 7b), as `derive_intervals`
+    last banked it in `archive_meta` — read, never recomputed, so
+    `distill_run_detail` stays pure over its own arguments. None on a fresh
+    archive or before the intervals step has ever run; callers pass that
+    straight through, which is the honest 'no rep claim yet' case."""
+    raw = activity_archive.get_meta(conn, "interval_work_floor")
+    if raw in (None, "None", ""):
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _interval_floor_from_archive() -> float | None:
+    """Same lookup as `_stored_interval_floor`, opening its own connection —
+    for callers (`build_data`) that run outside an already-open archive
+    connection. `intervals_step` runs before `build_data` in `main()` (design
+    order), so the floor it just banked is fresh by the time this reads it."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        return _stored_interval_floor(conn)
+    finally:
+        conn.close()
+
+
 def _distill_pass(conn) -> int:
     """Distill every archived run holding raw detail but no distilled copy —
     both this sync's topped-up runs and (as the recovery pass) runs archived
     before schema v4. Stored payloads in, no network; idempotent — a second
     pass finds nothing to do. Raw payloads are never modified."""
+    floor = _stored_interval_floor(conn)
     done = 0
     for aid in activity_archive.runs_missing_distilled(conn):
         distilled = distill_run_detail(
             activity_archive.detail_payload(conn, aid),
-            activity_archive.summary_payload(conn, aid) or {})
+            activity_archive.summary_payload(conn, aid) or {},
+            work_floor=floor)
         if distilled and activity_archive.write_distilled(conn, aid, distilled):
             done += 1
     return done
@@ -1342,6 +1538,19 @@ def _streams_pass(conn) -> int:
     for aid in activity_archive.runs_missing_streams(conn):
         streams = distill_run_streams(activity_archive.detail_payload(conn, aid))
         if streams and activity_archive.write_streams(conn, aid, streams):
+            done += 1
+    return done
+
+
+def _laps_pass(client, conn, limit: int | None = None) -> int:
+    """Fetch lap DTOs for archived runs whose summary claims more than one lap
+    and that we have never fetched (add-interval-lens D1). Bounded per nightly
+    sync so the backlog drains over nights; `--backfill-laps` runs it unbounded.
+    A single-lap run is skipped entirely — there is nothing to fetch."""
+    done = 0
+    for aid in activity_archive.runs_missing_laps(conn, limit=limit):
+        laps = _fetch_raw_laps(client, aid)
+        if laps and activity_archive.write_laps(conn, aid, laps):
             done += 1
     return done
 
@@ -1416,6 +1625,17 @@ def run_maps_backfill() -> None:
         log(f"✓ maps backfill: {mapped} runs mapped this pass — "
             f"{mcov['mapped']}/{mcov['streamed_runs']} GPS runs covered, "
             f"{mcov['tiles']} tiles ({mcov['tile_bytes'] / 1e6:.1f} MB)")
+    finally:
+        conn.close()
+
+
+def run_laps_backfill(client) -> None:
+    """Unbounded lap sweep — the one-time catch-up for an archive that predates
+    schema v11. Idempotent: the per-activity cache makes a re-run free."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        done = _laps_pass(client, conn, limit=None)
+        log(f"✓ laps backfill: {done} runs lapped")
     finally:
         conn.close()
 
@@ -1525,6 +1745,21 @@ def verify_archive() -> int:
             + (f", latest race {bcov['latest_race']}" if bcov["latest_race"] else "")
             + (f", {bcov['stale']} stale-version rows" if bcov["stale"] else ""))
 
+        # Intervals (add-interval-lens D6): the work floor is a property of the
+        # WHOLE archive, not this version, so it is reported here regardless of
+        # lens_version — a human needs to see what "work" currently means even
+        # between INTERVAL_VERSION bumps.
+        icov = activity_archive.intervals_coverage(conn, interval_lens.INTERVAL_VERSION)
+        floor_raw = activity_archive.get_meta(conn, "interval_work_floor")
+        if floor_raw and floor_raw != "None":
+            floor_val = float(floor_raw)
+            floor_desc = f"{floor_val:.3f} m/s ({fmt_hms(1000.0 / floor_val)}/km)"
+        else:
+            floor_desc = f"uncalibrated (< {interval_lens.WORK_FLOOR_MIN_SAMPLES} baseline samples)"
+        log(f"  intervals  : {icov['scored']}/{icov['streamed_runs']} streamed runs "
+            f"scored at v{interval_lens.INTERVAL_VERSION}, {icov['lapped']} with laps; "
+            f"shapes {icov['shapes']}, work floor {floor_desc}")
+
         # Courses are opt-in (the plan's race names one or it does not), so an
         # empty table is the normal state and never a failure.
         krcov = activity_archive.course_coverage(conn, course_lens.COURSE_LENS_VERSION)
@@ -1632,6 +1867,9 @@ def main() -> None:
                    help="fetch OSM basemap tiles for every archived GPS run "
                         "(no Garmin login; throttled per the OSM tile policy; "
                         "idempotent and resumable)")
+    p.add_argument("--backfill-laps", action="store_true",
+                   help="fetch lap DTOs for every multi-lap archived run "
+                        "(one-time catch-up for a pre-v11 archive)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1650,16 +1888,22 @@ def main() -> None:
     if args.backfill_wellness:
         run_wellness_backfill(client, since=args.since)
         return
+    if args.backfill_laps:
+        run_laps_backfill(client)
+        return
 
     # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens
-    # D8): archive, metrics, compliance, the block lens and the course lens all
-    # run BEFORE build_data so insights include today's run and the compliance,
-    # blockLens and courseLens blocks land in the contract; the briefing renders
-    # strictly AFTER the write. Every step is
+    # D8 + add-interval-lens D6): archive, intervals, metrics, compliance, the
+    # block lens and the course lens all run BEFORE build_data so insights
+    # include today's run and the compliance, blockLens and courseLens blocks
+    # land in the contract; the briefing renders strictly AFTER the write.
+    # Intervals runs right after archive (it only reads the streams that step
+    # just wrote and has no garmin-data.js key of its own yet). Every step is
     # safe()-wrapped, so garmin-data.js is written with every existing key
     # even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
+    safe(intervals_step, None, "intervals step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")

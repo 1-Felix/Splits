@@ -33,6 +33,7 @@ Halbmarathon, Sonthofen — Aug 9 2026).
 | `Dockerfile` · `docker-compose.yml` · `docker-entrypoint.sh` | **Self-host packaging** — one image (Node + Python), a one-file compose, and the entrypoint that seeds the plan and starts the server. |
 | `.github/workflows/docker-publish.yml` | CI that builds and pushes `ghcr.io/1-felix/splits` on `main` and on version tags. |
 | `tools/style-audit.mjs` | Computed-style parity and responsive layout-assertion harness; run `node tools/style-audit.mjs layout` to assert the grid reflows correctly at 1200 / 768 / 390 px. |
+| `requirements-dev.txt` | **Development-only dependencies** — `pytest` for the Python suite. Never installed into the image; the runtime stays on `requirements.txt` alone. Run the suite with `python -m pytest -q`. |
 | `CLAUDE_CODE_HANDOFF.md` | The backend brief: data contract, metric→source map, formulas, open decisions. |
 | `.env.example` | Template for Garmin credentials. Copy to `.env`. |
 

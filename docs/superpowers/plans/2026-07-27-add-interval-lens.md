@@ -997,11 +997,11 @@ def test_quality_zone_is_null_without_bounds():
     assert il.build_document(s)["quality"]["zone"] is None
 
 
-def test_zone_bounds_match_the_ingest_rule():
-    """Both producers must agree on what Z4 means."""
-    import ingest_builder as ib
-    assert il.zone_bounds(190) == ib._zone_bounds(190)
-    assert il.zone_bounds(190, 48) == ib._zone_bounds(190, 48)
+def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
+    """Karvonen when rhr is known, plain %max otherwise — the beginner-honest
+    model. (ingest_builder delegates here, so this is the only definition.)"""
+    assert il.zone_bounds(190) == [95, 114, 133, 152, 171, 190]
+    assert il.zone_bounds(190, 48) == [119, 133, 147, 162, 176, 190]
 
 
 def test_confidence_is_higher_for_a_crisp_set():
@@ -1024,9 +1024,12 @@ Constants beside the others:
 
 ```python
 CONFIDENCE_ASSERT_MIN = 0.5   # below this the UI says "possible", never asserts
-# Zone cut points as fractions — identical to ingest_builder's, so the two
-# producers cannot drift apart on what "Z4" means.
-ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90)
+# Zone boundary fractions — the values ingest_builder has always used, moved
+# here as THE definition (Task 11 rewrites ingest_builder._zone_bounds to
+# delegate), so the two producers cannot drift on what "Z4" means. Six entries:
+# _zone_of reads bounds[1:5] as the 60/70/80/90 % cut points and the trailing
+# 1.00 closes the top.
+ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)
 ```
 
 ```python
@@ -1083,10 +1086,10 @@ def _confidence(separation: float, bouts, series, cv) -> float:
 
 
 def zone_bounds(max_hr: int, rhr=None) -> list[int]:
-    """The five zone cut points — Karvonen HR-reserve when resting HR is known,
-    plain %max otherwise. Byte-for-byte the rule `ingest_builder._zone_bounds`
-    already uses, lifted here so BOTH producers score zones identically instead
-    of each inventing its own bounds."""
+    """The six zone boundaries — Karvonen HR-reserve when resting HR is known,
+    plain %max otherwise. THE single definition: `ingest_builder._zone_bounds`
+    is rewritten in Task 11 to delegate here, so the two producers cannot drift
+    apart on what "Z4" means and the formula exists exactly once."""
     if rhr and 0 < rhr < max_hr:
         return [round(rhr + f * (max_hr - rhr)) for f in ZONE_FRACTIONS]
     return [round(max_hr * f) for f in ZONE_FRACTIONS]
@@ -1919,7 +1922,7 @@ In `sync_garmin.distill_run_detail`, build the streams once and add the key:
 ```python
     streams = distill_run_streams(det)
     intervals = interval_lens.compact(
-        interval_lens.build_document(streams, activity, None))
+        interval_lens.build_document(streams, activity, None, bounds=bounds))
 ```
 
 …and add `"intervals": intervals,` to the returned dict.
@@ -1951,7 +1954,31 @@ def _columnar(run: dict) -> dict:
     return {"t": t, "d": d, "v": v, "hr": hr_col}
 ```
 
-…then in `run_detail` add `"intervals": interval_lens.compact(interval_lens.build_document(_columnar(run))),` beside `"splitShape"`.
+…then in `run_detail` add this beside `"splitShape"` — passing the athlete's own zone bounds so `quality.zone` is real rather than null:
+
+```python
+        "intervals": interval_lens.compact(interval_lens.build_document(
+            _columnar(run), bounds=_zone_bounds(max_hr, rhr))),
+```
+
+**And collapse the duplicated zone formula.** `interval_lens.zone_bounds` is now the single definition, so `ingest_builder._zone_bounds` becomes a delegation and `ZONE_FRACTIONS` moves out of `ingest_builder`:
+
+```python
+def _zone_bounds(max_hr: int, rhr=None) -> list[int]:
+    # Karvonen HR-reserve bounds when resting HR is known (design D12 — the
+    # honest model for a beginner); plain %max otherwise. The formula lives in
+    # interval_lens so BOTH pipelines score zones by one rule; this stays as the
+    # name the rest of this module already calls.
+    return interval_lens.zone_bounds(max_hr, rhr)
+```
+
+Delete `ingest_builder.ZONE_FRACTIONS` and update its remaining references (`_zone_bounds` at `:99`, and the `bounds` use at `:334`) — `_zone_of` and `_zone_seconds` keep taking the bounds list and are unchanged. Existing zone assertions in `test_ingest_builder.py` must still pass untouched: the numbers do not change, only where they are computed.
+
+For the Garmin side, `distill_run_detail` passes bounds derived from the athlete's configured max HR:
+
+```python
+    bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
+```
 
 Finally, extend `validate_data.py`'s §3 assertions so a recent run's `detail`, when it carries `intervals`, has a `shape` in the four-value vocabulary — the contract check the other keys already get.
 

@@ -49,6 +49,19 @@ export function renderChart(spec, React) {
   const svgKids = [];
   const html = [];
 
+  // ── rep bands (add-interval-lens): FIRST children, so grid, baseline
+  //    bands, series lines and dots all paint over them — a rep highlight
+  //    must never obscure the line it highlights. Geometry (x/width, already
+  //    clipped to the plot) comes from chart-core.js; this file draws it,
+  //    nothing more ──
+  (spec.repBands || []).forEach((b, i) => {
+    svgKids.push(h("rect", {
+      key: "repband-" + i, className: "rep-band",
+      x: b.x, y: plot.y, width: b.width, height: plot.h,
+      fill: "var(--accentFade)", "aria-hidden": "true",
+    }));
+  });
+
   // ── grid + axes (ticks only — never fixed-pixel decoration) ──
   spec.y.ticks.forEach((t, i) => {
     svgKids.push(h("line", { key: "gy" + i, x1: plot.x, x2: plot.x + plot.w, y1: t.y, y2: t.y, stroke: "var(--grid)", strokeWidth: 1, vectorEffect: "non-scaling-stroke" }));

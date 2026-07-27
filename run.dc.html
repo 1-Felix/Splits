@@ -321,6 +321,7 @@ class Component extends DCLogic {
       const run = st.run;
       const D = this.state.data;
       const S = this.state.streams;
+      const iv = run.intervals;   // add-interval-lens: the detected rep structure, shared by the track shading and the rep table below
       const km = run.distanceM ? run.distanceM / 1000 : 0;
       const paceS = km > 0 && run.durationS ? Math.round(run.durationS / km) : null;
       const dateISO = (run.startTimeLocal || '').slice(0, 10);
@@ -395,6 +396,16 @@ class Component extends DCLogic {
         this._xScale = cc.sharedXScale(xs);
         const xFmt = dist ? ((m) => (m / 1000).toFixed(1).replace(/\.0$/, '') + ' km') : ((s) => this.fmtHMS(s));
 
+        // rep windows for the track shading (add-interval-lens), in the
+        // axis's own units — the distance⇄time toggle already swaps `xs`
+        // above, so this must follow it: metres when distance, seconds when
+        // time, or a metres-axis chart would draw a seconds-wide band
+        const repWindows = (iv && iv.segments || [])
+          .filter((s) => s.role === 'work')
+          .map((s) => (dist
+            ? { x0: s.d0, x1: s.d1, rep: s.rep }
+            : { x0: s.t0, x1: s.t1, rep: s.rep }));
+
         const toPace = (v) => (v != null && v >= 0.6) ? Math.round(1000 / v) : null;
         const pace = (S.v || []).map(toPace);
         const gap = S.gap ? S.gap.map(toPace) : null;
@@ -438,7 +449,7 @@ class Component extends DCLogic {
 
         const ci = this.state.cross;
         const specs = cc.multiTrackSpec(
-          defs.map((t) => ({ ...t, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
+          defs.map((t) => ({ ...t, repBands: repWindows, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
           { values: xs, fmt: xFmt, cross: ci != null ? { i: ci } : null });
         pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
 
@@ -499,7 +510,6 @@ class Component extends DCLogic {
       // reps against the SET's own median (add-interval-lens) — the run median
       // is meaningless when half the run is warmup and cooldown
       pg.reps = [];
-      const iv = run.intervals;
       if (iv && iv.shape !== 'steady' && iv.segments && iv.segments.length) {
         const work = iv.segments.filter((s) => s.role === 'work');
         const recs = iv.segments.filter((s) => s.role === 'recovery');

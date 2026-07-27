@@ -81,6 +81,24 @@ const REP_DOC = {
          recoveryHrDrop: 24, reps: [] },
   quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
 };
+// add-interval-lens: REP_RUN_ID's ORIGINAL fixture carried no sample streams
+// at all (detail_streams_json was NULL) — fine for the rep TABLE (which
+// reads run.intervals.segments directly) but the track shading this task
+// adds only exists on the stream CHARTS, which don't render at all without
+// streams. The brief's Playwright snippet (`page.waitForSelector(".rep-band")`
+// on REP_RUN_ID) can't pass against the fixture as it stood — a real gap,
+// not a nitpick — so REP_STREAMS is added here: a 2100 s / ~7140 m track,
+// comfortably past the last rep's t1=2090/d1=7120 (see REP_SEGMENTS above)
+// so no rep window is clipped away, in EITHER axis mode.
+const REP_N = 1050;
+const REP_STREAMS = {
+  t: Array.from({ length: REP_N }, (_, i) => i * 2),
+  d: Array.from({ length: REP_N }, (_, i) => Math.round(i * 6.8)),
+  hr: Array.from({ length: REP_N }, (_, i) => 150 + Math.round(20 * Math.sin(i / 30))),
+  v: Array.from({ length: REP_N }, (_, i) => +(3.0 + 0.3 * Math.sin(i / 20)).toFixed(2)),
+  cad: Array.from({ length: REP_N }, (_, i) => 172 + (i % 4)),
+  elev: Array.from({ length: REP_N }, (_, i) => +(400 + 5 * Math.sin(i / 100)).toFixed(1)),
+};
 
 // LOWCONF_RUN_ID: a genuine "reps" detection, but weak (confidence 0.35 < the
 // 0.5 hedge threshold) — the honesty contract this card exists for: a session
@@ -205,14 +223,16 @@ function makeArchive(dir) {
   // (splits), so "the km splits card still renders below the rep table" is
   // an honest claim about THIS run's page, not proven only on a different
   // run. Run 7 (PLAIN_RUN_ID, already inserted above) gets no run_intervals
-  // row here — that absence is the point.
+  // row here — that absence is the point. It ALSO now carries REP_STREAMS
+  // (see the comment above that fixture) so the stream track charts — the
+  // only place rep shading renders — actually mount.
   db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
       distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
       summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
       detail_streams_json)
     VALUES (?, '2026-07-10 06:51:15', 'running', 'Track 5×1 km',
-      6560, 1850, 158, 178, 172.0, 10.0, '{}', '{}', 'x', 'x', ?, NULL)`)
-    .run(REP_RUN_ID, JSON.stringify(DETAIL));
+      6560, 1850, 158, 178, 172.0, 10.0, '{}', '{}', 'x', 'x', ?, ?)`)
+    .run(REP_RUN_ID, JSON.stringify(DETAIL), JSON.stringify(REP_STREAMS));
   db.exec(`CREATE TABLE run_intervals (
     activity_id INTEGER PRIMARY KEY, lens_version INTEGER NOT NULL,
     start_time_local TEXT NOT NULL, shape TEXT NOT NULL, label TEXT,
@@ -449,6 +469,74 @@ try {
   const repPageText = await page.evaluate(() => document.body.innerText);
   assert.ok(repPageText.includes("Splits") && repPageText.includes("km 6"),
     "the km splits card still renders its real rows alongside the rep table");
+
+  // ── add-interval-lens: the stream tracks shade the detected reps behind
+  // their lines, so the crosshair tells you which rep you're looking at.
+  // The brief's own snippet just checks `.rep-band` count >= 5 on the whole
+  // page — true here too (4 tracks × 5 reps = 20), but that alone can't
+  // catch a band painted OVER its line or one stuck to the wrong axis, so
+  // this pins the FIRST track (pace) to exactly 5, in ascending x order,
+  // all with real width — and then proves the distance⇄time toggle actually
+  // re-projects the SAME reps rather than leaving stale pixel positions
+  // behind (case-sensitive class selector throughout — never `text=`).
+  await page.waitForSelector(".rep-band", { timeout: 15000 });
+  const totalBands = await page.locator(".rep-band").count();
+  assert.ok(totalBands >= 5, "at least one band per rep renders: " + totalBands);
+  const readBands = () => page.evaluate(() => {
+    const svg = document.querySelectorAll("svg[data-chart='trend']")[0];
+    return [...svg.querySelectorAll(".rep-band")].map((r) => ({
+      x: +r.getAttribute("x"), width: +r.getAttribute("width"),
+    }));
+  });
+  const distBands = await readBands();
+  assert.equal(distBands.length, 5, "exactly one band per rep on the first (pace) track, distance mode");
+  assert.ok(distBands.every((b) => b.width > 0), "every band carries real width — none clipped to nothing");
+  for (let i = 1; i < distBands.length; i++) {
+    assert.ok(distBands[i].x > distBands[i - 1].x, "rep bands render in ascending x order");
+  }
+  // pinned to a real computed number, not just "some positive width": rep 1
+  // spans d0=1560/d1=2560 m against REP_STREAMS' own domain [0, 7133] m
+  // (round(1049*6.8)), scaled into the pace track's plot [46, 590] (frame
+  // 600, pad l:46 r:10) — 164.97px at width 76.27px
+  assert.ok(Math.abs(distBands[0].x - 164.97) < 0.5, `rep1 x ${distBands[0].x} (expected ~164.97)`);
+  assert.ok(Math.abs(distBands[0].width - 76.27) < 0.5, `rep1 width ${distBands[0].width} (expected ~76.27)`);
+  // paint order in the real DOM: the band element precedes the track's line
+  // path as a SIBLING inside the clip <g>, so it paints underneath
+  const paintOrder = await page.evaluate(() => {
+    const svg = document.querySelectorAll("svg[data-chart='trend']")[0];
+    const g = svg.querySelector("g");
+    const kids = [...g.children];
+    return { band: kids.findIndex((k) => k.classList.contains("rep-band")),
+             line: kids.findIndex((k) => k.hasAttribute("data-series-line")) };
+  });
+  assert.ok(paintOrder.band >= 0 && paintOrder.line >= 0 && paintOrder.band < paintOrder.line,
+    "the rep band paints before (beneath) the pace line in the real DOM: " + JSON.stringify(paintOrder));
+
+  // switch to time mode: the SAME reps must re-project to seconds, not sit
+  // frozen at their distance-mode pixel positions — a hardcoded unit would
+  // look right in exactly one of these two modes
+  await page.click("button.scope-chip[aria-pressed='false']");
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll(".chart-xtick")].some((e) => /^\d+:\d{2}$/.test(e.textContent)),
+    null, { timeout: 5000 });
+  const timeBands = await readBands();
+  assert.equal(timeBands.length, 5, "still exactly one band per rep in time mode");
+  assert.ok(timeBands.every((b) => b.width > 0), "every band still carries real width in time mode");
+  for (let i = 1; i < timeBands.length; i++) {
+    assert.ok(timeBands[i].x > timeBands[i - 1].x, "rep bands stay in ascending x order in time mode");
+  }
+  // pinned to a real computed number in the OTHER unit: rep 1 spans
+  // t0=600/t1=850 s against REP_STREAMS' time domain [0, 2098] s
+  // (1049*2), scaled into the same plot — 201.58px at width 64.82px, a
+  // DIFFERENT number from the distance-mode band above because seconds and
+  // metres aren't proportional across a non-uniform pace
+  assert.ok(Math.abs(timeBands[0].x - 201.58) < 0.5, `rep1 (time mode) x ${timeBands[0].x} (expected ~201.58)`);
+  assert.ok(Math.abs(timeBands[0].width - 64.82) < 0.5, `rep1 (time mode) width ${timeBands[0].width} (expected ~64.82)`);
+  assert.notDeepStrictEqual(timeBands.map((b) => b.x), distBands.map((b) => b.x),
+    "the toggle actually moves the bands — proof the window units (metres vs seconds) followed the axis: "
+    + JSON.stringify({ dist: distBands.map((b) => b.x), time: timeBands.map((b) => b.x) }));
+  // (no need to toggle back — every test below navigates to a different
+  // run via page.goto, which resets component state)
 
   // fix-round finding 2: a genuine but WEAK detection (confidence 0.35 < 0.5)
   // renders as reps, but hedges honestly as "possible structure" — untested

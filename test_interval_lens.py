@@ -139,22 +139,48 @@ def test_rep_boundaries_land_near_the_truth():
 
 
 def test_chatter_does_not_shred_one_rep():
-    """Hysteresis earns its place here: without it, a wobbling rep becomes 3.
+    """Hysteresis earns its place here: without it, a wobbling rep fragments.
 
-    The original i%7 dip-to-3.2 fixture from the brief was vacuous: a period-7,
-    single-sample dip is exactly the impulsive noise SMOOTH_WINDOW_S=15's
-    rolling median is built to erase (fewer than half the samples in any
-    15-wide window are the dip), so it never survives to reach find_bouts —
-    the smoothed series is a flat 4.0 throughout, and even a single threshold
-    (no entry/exit gap at all) produces the same one bout. This version dips
-    to a speed long enough (40 s blocks, so the median preserves it) and
-    tuned (3.30 mps) to sit strictly between `leave` and `enter` for this
-    lo/hi — above leave, so a real rep never reads as ending, but below
-    enter, so a naive single-threshold walk re-triggers on every up-swing and
-    fragments the one rep into three.
+    The dip is DERIVED from the live thresholds, not hardcoded: it must sit
+    above `leave` (so a real rep never reads as ending) and below `enter` (so
+    a naive single-threshold walk re-triggers on the up-swing and fragments
+    the rep). A literal here silently rots — ENTER_FRAC/EXIT_FRAC are
+    versioned tunables, and a fix-round review caught a hardcoded 3.30 mps
+    that sat only 0.025 mps above `leave`: retuning EXIT_FRAC from 0.45 to
+    0.47 alone flipped that version of this test.
+
+    Deriving is two passes, not one. Pass 1: a plain two-block PROBE fixture
+    (no dip at all) bootstraps a candidate from clean (lo, hi) = (2.6, 4.0).
+    Pass 2: the dip's own samples change what split_classes finds on the REAL
+    fixture below (here they join the *high* cluster and pull hi down from
+    4.0), so the precondition is asserted against the REAL, post-embedding
+    (lo, hi) split_classes returns for the actual wobble — not the probe's —
+    because that is what find_bouts will actually use. A single short dip
+    block flanked by two long peak blocks (rather than several short
+    alternations) keeps that perturbation small and the margin wide: this
+    construction holds across EXIT_FRAC 0.30-0.58 (verified separately), well
+    past the 0.40-0.55 band a future retune is likely to land in.
+
+    Note the brief's original i%7 single-sample dip was vacuous: a period-7
+    dip is exactly what SMOOTH_WINDOW_S=15's rolling median erases, so it
+    never reached find_bouts and passed with hysteresis on or off.
     """
-    wobble = [(40, 4.0), (40, 3.30)] * 3
-    spans = [(600, 2.6)] + wobble + [(300, 2.6)]
+    peak_s, dip_s = 100, 40
+    probe = [(600, 2.6), (2 * peak_s, 4.0), (300, 2.6)]
+    lo0, hi0, _ = il.split_classes(il.smooth(il.speed_series(make_streams(probe))))
+    enter0 = lo0 + il.ENTER_FRAC * (hi0 - lo0)
+    leave0 = lo0 + il.EXIT_FRAC * (hi0 - lo0)
+    dip = (enter0 + leave0) / 2
+
+    spans = [(600, 2.6), (peak_s, 4.0), (dip_s, dip), (peak_s, 4.0), (300, 2.6)]
+    s = make_streams(spans)
+    series = il.smooth(il.speed_series(s))
+    classes = il.split_classes(series)
+    assert classes is not None, "fixture should be structured"
+    lo, hi, _ = classes
+    enter, leave = lo + il.ENTER_FRAC * (hi - lo), lo + il.EXIT_FRAC * (hi - lo)
+    assert leave < dip < enter, "dip must sit strictly between the REAL thresholds"
+
     assert len(_bouts(spans)) == 1
 
 
@@ -167,3 +193,12 @@ def test_bouts_shorter_than_the_minimum_are_dropped():
 def test_bouts_closer_than_the_minimum_recovery_merge():
     spans = [(600, 2.6), (200, 4.0), (10, 2.4), (200, 4.0), (300, 2.6)]
     assert len(_bouts(spans)) == 1
+
+
+def test_open_bout_auto_closes_at_the_last_sample():
+    """An athlete who stops their watch mid-rep must not lose the rep: the
+    recording ends while still inside a work bout, with no trailing recovery
+    to close it via a `leave` crossing — the walk must auto-close the bout at
+    the final sample instead of discarding it."""
+    spans = [(600, 2.6), (250, 4.0)]
+    assert _bouts(spans) == [(600, 849)]

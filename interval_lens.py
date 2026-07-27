@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-INTERVAL_VERSION = 1
+INTERVAL_VERSION = 2   # 2: paceS is raw pace and gapS is real (final review I4);
+                       #    ragged pyramid labels collapse to "N reps" (I6)
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
@@ -66,13 +67,45 @@ _LAP_ROLES = {
 
 
 def speed_series(streams: dict) -> list[float | None]:
-    """A 1 Hz speed grid over the run's elapsed span, last-value-held across
-    sample gaps. Grade-adjusted speed wins over raw speed when the payload
-    carries it (design D5): on a hill, a rep up and a rep down are the same
-    effort, and raw pace would read the set as a fade. Samples below
-    MOVING_MPS_MIN become None — a pause is absent data, not a slow rep."""
+    """The DETECTION signal: a 1 Hz speed grid over the run's elapsed span,
+    last-value-held across sample gaps. Grade-adjusted speed wins over raw
+    speed when the payload carries it (design D5): on a hill, a rep up and a
+    rep down are the same effort, and raw pace would split one set into a
+    fade. Samples below MOVING_MPS_MIN become None — a pause is absent data,
+    not a slow rep.
+
+    This series decides WHERE the reps are; it is NOT what a rep's reported
+    pace should come from. `raw_speed_series` and `gap_speed_series` below are
+    the two REPORTING grids — see their docstrings."""
+    return _series(streams, streams.get("gap") or streams.get("v") or [])
+
+
+def raw_speed_series(streams: dict) -> list[float | None]:
+    """What the watch actually recorded — the number that belongs in a
+    segment's `paceS`. Falls back to `gap` only when a payload carries no raw
+    speed at all, which is better than reporting nothing.
+
+    Detection and reporting were the same grid until the final review: 161 of
+    165 archived runs carry `gap`, so `paceS` held grade-adjusted pace under a
+    raw-pace label while the column labelled GAP was empty on every row of
+    every rep table. The two were effectively swapped."""
+    return _series(streams, streams.get("v") or streams.get("gap") or [])
+
+
+def gap_speed_series(streams: dict) -> list[float | None]:
+    """Grade-adjusted speed ONLY — the number that belongs in a segment's
+    `gapS`. Empty when the payload carries no `gap` (a treadmill, and 4 of the
+    archive's 165 runs), and the consumers then report `gapS: None`: a run with
+    no grade adjustment has no grade-adjusted pace, and echoing raw pace into
+    the GAP column would claim an adjustment that was never made."""
+    return _series(streams, streams.get("gap") or [])
+
+
+def _series(streams: dict, src: list) -> list[float | None]:
+    """The shared 1 Hz resampler behind all three grids above: same span, same
+    indexing, same hold and same moving floor, so index i means second i in
+    every one of them and a caller can read the three side by side."""
     t = streams.get("t") or []
-    src = streams.get("gap") or streams.get("v") or []
     if len(t) < 2 or len(src) != len(t):
         return []
     t0 = int(t[0])
@@ -222,6 +255,16 @@ def _pace_s_per_km(mps: float) -> int:
     return int(round(1000.0 / mps)) if mps and mps > 0 else 0
 
 
+def _window_pace(series: list, a: int, b: int):
+    """Mean pace over [a, b) of a 1 Hz speed grid, or None when that grid does
+    not exist (an absent `gap` stream) or holds no moving samples there. None,
+    not 0 — a missing metric must render as an em dash, never as a number."""
+    if not series:
+        return None
+    mps = _mean(series[a:b])
+    return _pace_s_per_km(mps) if mps else None
+
+
 def _mean(vals) -> float | None:
     vals = [v for v in vals if v is not None]
     return sum(vals) / len(vals) if vals else None
@@ -318,29 +361,47 @@ def _round_dist(metres: float) -> str:
     return f"{metres / 1000:.2g} km"
 
 
-def set_stats(bouts, series, dist_at, hr: list | None) -> dict:
+def set_stats(bouts, series, dist_at, hr: list | None,
+              raw: list | None = None, gaps: list | None = None) -> dict:
     """The set's own numbers — consistency, fade, and what the recoveries cost.
+
+    `series` is the DETECTION grid (grade-adjusted where the run carries it,
+    design D5). `raw` is the raw-speed grid and is what a rep's reported
+    `paceS` comes from; `gaps` is the grade-adjusted grid and gives each rep
+    its `gapS`. `raw` defaults to `series` so a caller with only one grid (a
+    test, a payload with no `v`) keeps the old behaviour.
+
+    The split matters for `fadePct` and `paceCvPct`, which stay on the
+    DETECTION signal: a set of reps run up and back down a drag is not a fade,
+    and saying so is the whole reason D5 exists. The reported paces are the raw
+    ones because that is what the athlete ran and what the rep table shows next
+    to them.
 
     `found` vs `prescribed` is the honesty contract (design D4): prescribed is
     None while detection is blind, and once Change 2 fills the prior these two
     are allowed to disagree. A bailed session reports 3 of 4."""
+    raw = series if raw is None else raw
     reps = []
     for a, b in bouts:
-        mps = _mean(series[a:b])
         reps.append({
             "durS": b - a,
             "distM": round(dist_at(b) - dist_at(a)),
-            "paceS": _pace_s_per_km(mps or 0),
+            "paceS": _window_pace(raw, a, b) or 0,
+            "gapS": _window_pace(gaps, a, b),
             "hr": int(round(_mean(hr[a:b]))) if hr and b <= len(hr) and _mean(hr[a:b]) else None,
         })
     paces = [r["paceS"] for r in reps if r["paceS"]]
     nominal, varied = _rep_variation([r["distM"] for r in reps])
 
+    # consistency and fade ride on the detection signal, the reported mean on
+    # the raw one — see the docstring
+    effort = [p for p in (_window_pace(series, a, b) for a, b in bouts) if p]
     mean_pace = _mean(paces)
     cv = None
-    if mean_pace and len(paces) > 1:
-        var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
-        cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
+    mean_effort = _mean(effort)
+    if mean_effort and len(effort) > 1:
+        var = sum((p - mean_effort) ** 2 for p in effort) / len(effort)
+        cv = round(100.0 * (var ** 0.5) / mean_effort, 1)
 
     recoveries = [bouts[i + 1][0] - bouts[i][1] for i in range(len(bouts) - 1)]
     drops = []
@@ -358,8 +419,8 @@ def set_stats(bouts, series, dist_at, hr: list | None) -> dict:
         "varied": varied,
         "paceS": int(round(mean_pace)) if mean_pace else None,
         "paceCvPct": cv,
-        "fadePct": round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
-                   if len(paces) > 1 and paces[0] else None,
+        "fadePct": round(100.0 * (effort[-1] - effort[0]) / effort[0], 1)
+                   if len(effort) > 1 and effort[0] else None,
         "recoveryS": int(round(_mean(recoveries))) if recoveries else None,
         "recoveryHrDrop": int(round(_mean(drops))) if drops else None,
         "reps": reps,
@@ -399,10 +460,17 @@ def laps_are_structured(summary: dict, laps: list[dict]) -> bool:
     return bool(summary.get("workoutId")) and len(intensities) > 1
 
 
-def segments_from_laps(laps: list[dict]) -> list[dict]:
+def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]:
     """Lap DTOs → segments, taken VERBATIM (design D1). The watch is not
     guessing: boundaries, roles and per-lap statistics all come from the
-    device, and nothing here re-derives them from the stream."""
+    device, and nothing here re-derives them from the stream.
+
+    `gaps` is the one exception, and it is an addition rather than a
+    re-derivation: a lapDTO carries no grade-adjusted speed, so without it the
+    GAP column is empty on precisely the runs that earn a lap-sourced document
+    — the athlete's genuine workout days. The lap clock is cumulative from the
+    activity start, which is the same origin as the 1 Hz grid, so a lap's
+    [t0, t1) indexes straight into it."""
     segs = []
     t0 = 0.0
     d0 = 0.0
@@ -420,7 +488,7 @@ def segments_from_laps(laps: list[dict]) -> list[dict]:
             "d0": int(round(d0)), "d1": int(round(d0 + dist)),
             "durS": int(round(dur)), "distM": int(round(dist)),
             "paceS": _pace_s_per_km(speed),
-            "gapS": None,
+            "gapS": _window_pace(gaps, int(round(t0)), int(round(t0 + dur))),
             "hr": int(lap["averageHR"]) if lap.get("averageHR") else None,
             "cad": int(round(lap["averageRunCadence"] * 2))
                    if lap.get("averageRunCadence") else None,
@@ -433,10 +501,16 @@ def segments_from_laps(laps: list[dict]) -> list[dict]:
     return segs
 
 
-def _segments_from_bouts(bouts, series, dist_at, hr, total_s) -> list[dict]:
+def _segments_from_bouts(bouts, series, dist_at, hr, total_s,
+                         raw=None, gaps=None) -> list[dict]:
     """Bouts → the full segment list, with the gaps between them named. The
     first gap is a warmup and the last a cooldown; everything between is a
-    recovery, because that is what it was."""
+    recovery, because that is what it was.
+
+    `raw`/`gaps` are the two reporting grids (see `set_stats`): `paceS` comes
+    from raw speed, `gapS` from grade-adjusted speed, and `gapS` stays None
+    when the run carries no `gap` stream at all."""
+    raw = series if raw is None else raw
     edges = []
     cursor = 0
     for i, (a, b) in enumerate(bouts):
@@ -454,14 +528,13 @@ def _segments_from_bouts(bouts, series, dist_at, hr, total_s) -> list[dict]:
             continue
         if role == "work":
             rep += 1
-        mps = _mean(series[a:b])
         seg = {
             "idx": idx + 1, "role": role,
             "t0": a, "t1": b,
             "d0": int(round(dist_at(a))), "d1": int(round(dist_at(b))),
             "durS": b - a, "distM": int(round(dist_at(b) - dist_at(a))),
-            "paceS": _pace_s_per_km(mps or 0),
-            "gapS": None,
+            "paceS": _window_pace(raw, a, b) or 0,
+            "gapS": _window_pace(gaps, a, b),
             "hr": int(round(_mean(hr[a:b]))) if hr and _mean(hr[a:b]) else None,
             "cad": None,
         }
@@ -471,7 +544,8 @@ def _segments_from_bouts(bouts, series, dist_at, hr, total_s) -> list[dict]:
     return segs
 
 
-def _progression_segments(series: list, dist_at, hr: list, total_s: int) -> list[dict]:
+def _progression_segments(series: list, dist_at, hr: list, total_s: int,
+                          raw=None, gaps=None) -> list[dict]:
     """A progression's ramp as five `step` segments, one per detected pace
     tier, in time order — tiling the run's full span edge to edge with no
     gaps, the same property `_segments_from_bouts` guarantees for rep runs, so
@@ -481,18 +555,18 @@ def _progression_segments(series: list, dist_at, hr: list, total_s: int) -> list
     values `_is_progression` measures its monotone rise against) so that t0/t1
     tile the run exactly; the two agree whenever the run has no pauses, which
     `_is_progression`'s own MIN_MOVING_SAMPLES floor already requires close to."""
+    raw = series if raw is None else raw
     step = total_s // 5
     edges = [(i * step, total_s if i == 4 else (i + 1) * step) for i in range(5)]
     segs = []
     for idx, (a, b) in enumerate(edges):
-        mps = _mean(series[a:b])
         segs.append({
             "idx": idx + 1, "role": "step",
             "t0": a, "t1": b,
             "d0": int(round(dist_at(a))), "d1": int(round(dist_at(b))),
             "durS": b - a, "distM": int(round(dist_at(b) - dist_at(a))),
-            "paceS": _pace_s_per_km(mps or 0),
-            "gapS": None,
+            "paceS": _window_pace(raw, a, b) or 0,
+            "gapS": _window_pace(gaps, a, b),
             "hr": int(round(_mean(hr[a:b]))) if hr and _mean(hr[a:b]) else None,
             "cad": None,
         })
@@ -570,14 +644,23 @@ def build_document(streams: dict | None, summary: dict | None = None,
     engine never opens a database, so it cannot derive its own. Device laps
     need no such floor (the watch is not guessing) and are always calibrated."""
     summary = summary or {}
-    series_raw = speed_series(streams or {})
+    streams = streams or {}
+    series_raw = speed_series(streams)
     if not series_raw:
         return None
+
+    # Three grids over one clock: the DETECTION signal (grade-adjusted where
+    # the run carries it, design D5) decides where the reps are; the raw and
+    # grade-adjusted grids report what each of them cost. They were one grid
+    # until the final review, which is how `paceS` came to hold GAP while the
+    # column labelled GAP held nothing at all.
+    raw_grid = smooth(raw_speed_series(streams))
+    gap_grid = smooth(gap_speed_series(streams))
 
     base = {"version": INTERVAL_VERSION, "guidedBy": None}
 
     if laps and laps_are_structured(summary, laps):
-        segments = segments_from_laps(laps)
+        segments = segments_from_laps(laps, gap_grid)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -604,14 +687,15 @@ def build_document(streams: dict | None, summary: dict | None = None,
                     if len(paces) > 1 and paces[0] else None,
                 "recoveryS": None, "recoveryHrDrop": None,
                 "reps": [{"durS": s["durS"], "distM": s["distM"],
-                          "paceS": s["paceS"], "hr": s["hr"]} for s in work],
+                          "paceS": s["paceS"], "gapS": s["gapS"],
+                          "hr": s["hr"]} for s in work],
             },
             "quality": _quality(segments, bounds),
         }
 
     series = smooth(series_raw)
-    dist_at = distance_fn(streams or {})
-    hr = _hr_grid(streams or {}, len(series))
+    dist_at = distance_fn(streams)
+    hr = _hr_grid(streams, len(series))
     classes = split_classes(series)
     bouts = find_bouts(series, dist_at, classes[0], classes[1]) if classes else []
     expect = (prior or {}).get("count")
@@ -628,7 +712,8 @@ def build_document(streams: dict | None, summary: dict | None = None,
     shape = classify(bouts, series, dist_at, expect)
     if shape in ("steady", "progression"):
         bouts = []
-    stats = set_stats(bouts, series, dist_at, hr) if shape == "reps" else None
+    stats = (set_stats(bouts, series, dist_at, hr, raw_grid, gap_grid)
+             if shape == "reps" else None)
     if shape == "steady":
         segments = []
     elif shape == "progression":
@@ -636,9 +721,11 @@ def build_document(streams: dict | None, summary: dict | None = None,
         # five `step` tiers instead (design contract), not the single
         # whole-run bout-shaped segment `_segments_from_bouts` would produce
         # from an empty bout list.
-        segments = _progression_segments(series, dist_at, hr, len(series))
+        segments = _progression_segments(series, dist_at, hr, len(series),
+                                         raw_grid, gap_grid)
     else:
-        segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series))
+        segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series),
+                                        raw_grid, gap_grid)
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,

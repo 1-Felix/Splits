@@ -39,6 +39,50 @@ def test_speed_series_prefers_grade_adjusted():
     assert il.speed_series(s)[50] == 4.0
 
 
+def make_dual_streams(spans, hr=150):
+    """spans: [(duration_s, raw_mps, gap_mps)] — a run whose raw and
+    grade-adjusted speeds genuinely DIFFER, which is the normal case: 161 of
+    the archive's 165 runs carry a `gap` stream and it is not a copy of `v`.
+    `make_streams(gap=True)` copies `v` into `gap`, so it cannot tell the two
+    apart and cannot catch a producer that reports one under the other's
+    name."""
+    t, d, v, g, hrs = [], [], [], [], []
+    clock, dist = 0, 0.0
+    for dur, raw, gap in spans:
+        for _ in range(dur):
+            t.append(clock)
+            d.append(round(dist))
+            v.append(raw)
+            g.append(gap)
+            hrs.append(hr)
+            clock += 1
+            dist += raw          # distance follows the RAW speed, as on a watch
+    return {"t": t, "d": d, "v": v, "gap": g, "hr": hrs}
+
+
+def test_detection_reads_gap_but_reporting_reads_both_grids():
+    """FINAL REVIEW I4: `speed_series` prefers `gap` (design D5, correct), and
+    the segment builders then reported that same series as `paceS` while
+    hardcoding `gapS: None`. So `paceS` held grade-adjusted pace under a raw
+    label and the column labelled GAP was empty on every row of every rep
+    table — the two were effectively swapped. Three grids now, one clock."""
+    s = make_streams([(100, 3.0)], gap=True)
+    s["gap"] = [4.0] * 100
+    assert il.speed_series(s)[50] == 4.0, "detection: grade-adjusted wins (D5)"
+    assert il.raw_speed_series(s)[50] == 3.0, "reporting: paceS is what the watch saw"
+    assert il.gap_speed_series(s)[50] == 4.0, "reporting: gapS is the adjustment"
+
+
+def test_gap_grid_is_empty_without_a_gap_stream():
+    """A treadmill, and 4 of the archive's 165 runs. No grade adjustment
+    exists, so none is reported — echoing raw pace into the GAP column would
+    claim an adjustment that never happened."""
+    s = make_streams([(100, 3.0)])
+    assert il.gap_speed_series(s) == []
+    assert il.raw_speed_series(s)[50] == 3.0
+    assert il.speed_series(s)[50] == 3.0, "detection falls back to raw speed"
+
+
 def test_speed_series_holds_across_sample_gaps():
     """Garmin samples every ~2 s; the grid must hold the last reading, not hole.
     The span must clear MIN_SPAN_S or the guard returns [] and this proves
@@ -566,6 +610,115 @@ def test_document_shape_for_a_rep_session():
     assert doc["quality"]["workDistM"] > 4500
 
 
+_PROGRESSION_SPANS = [(400, 2.8), (400, 2.87), (400, 2.94), (400, 3.01), (400, 3.08)]
+
+_DUAL_REP_SPANS = ([(600, 2.6, 2.6)] + [(250, 4.0, 4.4), (60, 2.2, 2.2)] * 5
+                   + [(300, 2.6, 2.6)])
+
+
+def test_every_segment_carries_a_real_gap_distinct_from_its_pace():
+    """FINAL REVIEW I4: `gapS` was hardcoded None at all three producing
+    sites, and nothing populated it — measured on the real archive, 229
+    segments and 0 with a non-null `gapS`, so the GAP column rendered an em
+    dash on every row of every rep table, permanently. Meanwhile `paceS`
+    carried the grade-adjusted number.
+
+    Both values are pinned to the fixture's OWN streams (4.0 m/s raw = 250
+    s/km, 4.4 m/s adjusted = 227 s/km), so reporting one under the other's
+    name fails here rather than looking plausible."""
+    doc = il.build_document(make_dual_streams(_DUAL_REP_SPANS), work_floor=3.0)
+    assert doc["shape"] == "reps" and doc["set"]["found"] == 5
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 5
+    for seg in work:
+        assert seg["paceS"] == 250, f"raw pace, from v=4.0 m/s: {seg['paceS']}"
+        assert seg["gapS"] == 227, f"grade-adjusted, from gap=4.4 m/s: {seg['gapS']}"
+    # every OTHER segment too — a warmup with no GAP is just as much a hole
+    assert all(s["gapS"] is not None for s in doc["segments"]), \
+        "every segment the run has data for reports GAP, not only the work ones"
+    # and the set's reps carry the same pair
+    assert [r["paceS"] for r in doc["set"]["reps"]] == [250] * 5
+    assert [r["gapS"] for r in doc["set"]["reps"]] == [227] * 5
+    assert doc["set"]["paceS"] == 250, "the set's headline pace is the RAW one"
+
+
+def test_a_run_without_a_gap_stream_reports_no_gap_rather_than_a_copy():
+    """The honest fallback (4 of 165 archived runs, and every treadmill run,
+    and every one of the second athlete's — Health Connect carries no grade
+    adjustment). `gapS` must be null, not a duplicate of `paceS`: the run page
+    renders null as an em dash, and a duplicated number would silently claim
+    the run was flat."""
+    spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)]
+    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "reps"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert all(s["paceS"] == 250 for s in work), "raw pace still reported"
+    assert all(s["gapS"] is None for s in doc["segments"]), \
+        "no gap stream → no grade-adjusted pace, not a copy of the raw one"
+    assert all(r["gapS"] is None for r in doc["set"]["reps"])
+
+
+def test_fade_is_measured_on_effort_while_the_reported_pace_is_raw():
+    """The other half of the split, and the reason the two grids are not
+    interchangeable. This set climbs a steady drag: the raw pace decays rep by
+    rep (4.4 → 3.6 m/s) while the grade-adjusted effort never moves. Design D5
+    is explicit that "using raw pace would split one set into a fade", so
+    `fadePct` and `paceCvPct` ride on the DETECTION signal — but `paceS` is
+    still what the athlete actually ran, because that is the number sitting
+    next to GAP in the rep table."""
+    spans = [(600, 2.6, 2.6)]
+    for raw in (4.4, 4.2, 4.0, 3.8, 3.6):
+        spans += [(250, raw, 4.2), (60, 2.2, 2.2)]
+    spans += [(300, 2.6, 2.6)]
+    doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "reps" and doc["set"]["found"] == 5
+    st = doc["set"]
+    assert st["fadePct"] == 0.0, \
+        f"constant effort up a drag is not a fade: {st['fadePct']}%"
+    assert st["paceCvPct"] == 0.0, f"…and not inconsistent either: {st['paceCvPct']}"
+    raws = [r["paceS"] for r in st["reps"]]
+    assert raws[-1] - raws[0] > 40, \
+        f"the RAW paces still tell the honest slowdown story: {raws}"
+    assert all(abs(r["gapS"] - 238) <= 2 for r in st["reps"]), \
+        f"every rep's grade-adjusted pace is the same 4.2 m/s: {[r['gapS'] for r in st['reps']]}"
+    assert abs(st["paceS"] - sum(raws) / len(raws)) <= 1, \
+        "the headline pace is the mean of the RAW rep paces"
+
+
+def test_progression_steps_carry_both_paces_too():
+    """`_progression_segments` was the third site hardcoding `gapS: None`.
+    The ramp is the suite's own `_PROGRESSION_SPANS` (below) — a fixture
+    already proven to classify as `progression` — with a grade adjustment
+    added on top, so this test only introduces the one variable it is about."""
+    spans = [(dur, mps, round(mps * 1.1, 3)) for dur, mps in _PROGRESSION_SPANS]
+    doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "progression"
+    for seg in doc["segments"]:
+        assert seg["paceS"] and seg["gapS"]
+        assert seg["gapS"] < seg["paceS"], \
+            "grade-adjusted is faster here by construction — the two are not the same number"
+
+
+def test_lap_sourced_segments_gain_gap_from_the_stream():
+    """A lapDTO carries no grade-adjusted speed, so taking laps VERBATIM (D1)
+    left the GAP column empty on exactly the runs that earn a lap-sourced
+    document — the athlete's real workout days. The lap clock shares its
+    origin with the 1 Hz grid, so the adjustment is read from the stream over
+    each lap's own window while `paceS` still comes from the DTO."""
+    s = make_dual_streams(_DUAL_REP_SPANS)
+    laps = [_lap(1560, 600, "WARMUP"), _lap(1000, 250, "ACTIVE"),
+            _lap(132, 60, "REST"), _lap(1000, 250, "ACTIVE"),
+            _lap(1000, 360, "COOLDOWN")]
+    doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
+    assert doc["source"] == "laps"
+    work = [seg for seg in doc["segments"] if seg["role"] == "work"]
+    assert [seg["paceS"] for seg in work] == [250, 250], \
+        "pace still comes from the DTO's own averageSpeed, not re-derived"
+    assert all(seg["gapS"] == 227 for seg in work), \
+        f"GAP read from the stream over each lap's window: {[s['gapS'] for s in work]}"
+    assert all(r["gapS"] == 227 for r in doc["set"]["reps"])
+
+
 def test_steady_run_still_gets_a_document():
     """'Looked, found nothing' must never look like 'never looked'."""
     doc = il.build_document(make_streams([(2400, 3.0)]))
@@ -790,9 +943,6 @@ def test_lap_sourced_documents_are_always_calibrated():
 # — verified directly. The design contract requires a `step` segment per
 # detected pace tier so a consumer can read the ramp the way it reads a rep
 # table.
-
-_PROGRESSION_SPANS = [(400, 2.8), (400, 2.87), (400, 2.94), (400, 3.01), (400, 3.08)]
-
 
 def test_progression_emits_five_step_segments_in_time_order():
     doc = il.build_document(make_streams(_PROGRESSION_SPANS))

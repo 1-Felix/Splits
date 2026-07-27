@@ -47,40 +47,8 @@ const DETAIL = {
 // DETAIL (splits) so the "km splits card still renders below the rep table"
 // claim is genuinely exercised, not merely matched against the "SPLITS"
 // header wordmark that appears on every page regardless.
-//
-// gapS is populated (not null) on every work segment: GAP is the engine's own
-// grade-adjusted signal, not decoration — a rep up a drag and a rep down it
-// can carry the same raw pace deviation for very different real effort, and
-// GAP is what tells them apart. Each work rep's gapS runs 4 s/km faster than
-// its raw paceS, simulating a net-downhill grade adjustment.
 const PLAIN_RUN_ID = 7;
 const REP_RUN_ID = 9001;
-const REP_SEGMENTS = [];
-let t = 600, d = 1560, rep = 0;
-REP_SEGMENTS.push({ idx: 1, role: "warmup", t0: 0, t1: 600, d0: 0, d1: 1560,
-                    durS: 600, distM: 1560, paceS: 385, gapS: null, hr: 132, cad: null });
-for (let i = 0; i < 5; i++) {
-  rep += 1;
-  REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "work", rep,
-    t0: t, t1: t + 250, d0: d, d1: d + 1000, durS: 250, distM: 1000,
-    paceS: 330 + i * 3, gapS: 330 + i * 3 - 4, hr: 168 + i, cad: null });
-  t += 250; d += 1000;
-  if (i < 4) {
-    REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "recovery",
-      t0: t, t1: t + 60, d0: d, d1: d + 140, durS: 60, distM: 140,
-      paceS: 430, gapS: null, hr: 144, cad: null });
-    t += 60; d += 140;
-  }
-}
-const REP_DOC = {
-  version: 1, shape: "reps", source: "stream", confidence: 0.86,
-  label: "5×1 km", guidedBy: null,
-  segments: REP_SEGMENTS,
-  set: { found: 5, prescribed: null, nominalDistM: 1000, varied: false,
-         paceS: 336, paceCvPct: 1.8, fadePct: 2.4, recoveryS: 60,
-         recoveryHrDrop: 24, reps: [] },
-  quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
-};
 // add-interval-lens: REP_RUN_ID's ORIGINAL fixture carried no sample streams
 // at all (detail_streams_json was NULL) — fine for the rep TABLE (which
 // reads run.intervals.segments directly) but the track shading this task
@@ -88,16 +56,72 @@ const REP_DOC = {
 // streams. The brief's Playwright snippet (`page.waitForSelector(".rep-band")`
 // on REP_RUN_ID) can't pass against the fixture as it stood — a real gap,
 // not a nitpick — so REP_STREAMS is added here: a 2100 s / ~7140 m track,
-// comfortably past the last rep's t1=2090/d1=7120 (see REP_SEGMENTS above)
+// comfortably past the last rep's t1=2090/d1=7120 (see REP_SEGMENTS below)
 // so no rep window is clipped away, in EITHER axis mode.
+//
+// FINAL REVIEW I4: `gap` is part of this fixture's streams now, because it is
+// part of a real Garmin run's (161 of the archive's 165 carry one) and because
+// the segments' gapS below is DERIVED from it rather than invented. The
+// previous fixture wrote "paceS − 4" into gapS and the page test then pinned
+// 5:26 to that made-up number — which could never fail, since the engine
+// hardcoded `gapS: None` at every producing site and emitted 0 non-null gapS
+// across 229 real segments. Setting gapS to 999 inside the engine left all 68
+// assertions passing. The engine's side of that is now proven in
+// test_interval_lens.py (mutation-checked); this fixture's job is that the
+// PAGE renders the document's own value, so the value has to come from the
+// run's own data and the expectation has to be computed from it, not typed in.
 const REP_N = 1050;
 const REP_STREAMS = {
   t: Array.from({ length: REP_N }, (_, i) => i * 2),
   d: Array.from({ length: REP_N }, (_, i) => Math.round(i * 6.8)),
   hr: Array.from({ length: REP_N }, (_, i) => 150 + Math.round(20 * Math.sin(i / 30))),
   v: Array.from({ length: REP_N }, (_, i) => +(3.0 + 0.3 * Math.sin(i / 20)).toFixed(2)),
+  // a net-downhill grade adjustment: consistently faster than raw speed, and
+  // varying on its own, so a GAP column that echoed paceS would be visible
+  gap: Array.from({ length: REP_N }, (_, i) => +(3.12 + 0.22 * Math.sin(i / 17)).toFixed(2)),
   cad: Array.from({ length: REP_N }, (_, i) => 172 + (i % 4)),
   elev: Array.from({ length: REP_N }, (_, i) => +(400 + 5 * Math.sin(i / 100)).toFixed(1)),
+};
+
+// the page's own pace formatter (run.dc.html: fmtPace), so an expectation is
+// never a typed-in string
+const fmtPaceMSS = (sec) =>
+  Math.floor(sec / 60) + ":" + String(Math.round(sec % 60)).padStart(2, "0");
+
+// mean grade-adjusted pace over [t0, t1) of REP_STREAMS' OWN gap samples —
+// the same reduction `interval_lens._window_pace` performs, so the fixture
+// carries a number the run's data actually supports
+function gapPaceOver(t0, t1) {
+  const vals = REP_STREAMS.gap.filter((_, i) => REP_STREAMS.t[i] >= t0 && REP_STREAMS.t[i] < t1);
+  return Math.round(1000 / (vals.reduce((a, b) => a + b, 0) / vals.length));
+}
+
+const REP_SEGMENTS = [];
+let t = 600, d = 1560, rep = 0;
+REP_SEGMENTS.push({ idx: 1, role: "warmup", t0: 0, t1: 600, d0: 0, d1: 1560,
+                    durS: 600, distM: 1560, paceS: 385, gapS: gapPaceOver(0, 600),
+                    hr: 132, cad: null });
+for (let i = 0; i < 5; i++) {
+  rep += 1;
+  REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "work", rep,
+    t0: t, t1: t + 250, d0: d, d1: d + 1000, durS: 250, distM: 1000,
+    paceS: 330 + i * 3, gapS: gapPaceOver(t, t + 250), hr: 168 + i, cad: null });
+  t += 250; d += 1000;
+  if (i < 4) {
+    REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "recovery",
+      t0: t, t1: t + 60, d0: d, d1: d + 140, durS: 60, distM: 140,
+      paceS: 430, gapS: gapPaceOver(t, t + 60), hr: 144, cad: null });
+    t += 60; d += 140;
+  }
+}
+const REP_DOC = {
+  version: 2, shape: "reps", source: "stream", confidence: 0.86,
+  label: "5×1 km", guidedBy: null,
+  segments: REP_SEGMENTS,
+  set: { found: 5, prescribed: null, nominalDistM: 1000, varied: false,
+         paceS: 336, paceCvPct: 1.8, fadePct: 2.4, recoveryS: 60,
+         recoveryHrDrop: 24, reps: [] },
+  quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
 };
 
 // LOWCONF_RUN_ID: a genuine "reps" detection, but weak (confidence 0.35 < the
@@ -474,17 +498,25 @@ try {
   assert.match(firstRowText, /5:3\d/,
     "the first rep shows ITS OWN pace (330 s = 5:30), not a placeholder or the wrong segment");
   // fix-round finding 1: time and GAP are computed but were never rendered.
-  // Pin both to the FIRST work segment's real values: durS 250 s -> "4:10",
-  // gapS 326 s/km -> "5:26" (paceS 330 minus the fixture's -4 s/km grade
-  // adjustment) — not merely that the cells exist.
+  // Pin the time to the FIRST work segment's real durS (250 s -> "4:10").
   assert.match(firstRowText, /4:10/,
     "the first rep shows its real elapsed time (durS 250s), not a placeholder");
-  assert.match(firstRowText, /5:26/,
-    "the first rep shows its real grade-adjusted pace (gapS 326), distinct from raw pace");
   assert.match(await page.locator(".rep-time").first().innerText(), /4:10/,
     "the time cell specifically carries the real value");
-  assert.match(await page.locator(".rep-gap").first().innerText(), /5:26/,
-    "the GAP cell specifically carries the real grade-adjusted value");
+  // FINAL REVIEW I4: the GAP expectation is COMPUTED from the document the
+  // fixture serves (itself derived from REP_STREAMS.gap), never typed in, and
+  // it is asserted to differ from the raw pace on the same row — a page that
+  // echoed paceS into the GAP column, or an engine that fell back to raw
+  // speed, would read identically otherwise.
+  const rep1 = REP_SEGMENTS.find((s) => s.role === "work");
+  const expectGap = fmtPaceMSS(rep1.gapS);
+  const expectPace = fmtPaceMSS(rep1.paceS);
+  assert.notStrictEqual(expectGap, expectPace,
+    "fixture precondition: this run's GAP and raw pace are genuinely different numbers");
+  assert.strictEqual((await page.locator(".rep-gap").first().innerText()).trim(), expectGap,
+    "the GAP cell carries the document's own grade-adjusted pace");
+  assert.strictEqual((await page.locator(".rep-pace").first().innerText()).trim(), expectPace,
+    "…and the pace cell carries the raw one, on the same row");
   // the recovery between reps is shown, and there is one fewer of them —
   // nothing trails the final rep
   assert.equal(await page.locator(".rep-rec").count(), 4);

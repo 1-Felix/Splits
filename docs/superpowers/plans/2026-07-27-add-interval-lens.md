@@ -1328,6 +1328,221 @@ from 'never looked'."
 
 ---
 
+### Task 7b: Engine — calibrate "work" against the athlete's own pace history
+
+**Why this task exists.** The engine as built passes 54 synthetic tests and fails on
+real data: run over the athlete's real 165-run archive it classified **102 runs (62 %)
+as interval sessions**, 96 % of them with nonsense labels like
+`0.327-0.968-0.907-0.959-0.981-0.782 km`. Nobody runs that session — those are
+fragments of continuous running.
+
+The cause is structural. `split_classes` runs 2-means, which **always** returns two
+classes, so every run gets a "fast half". The engine only ever asks *"is this stretch
+faster than the rest of this run?"* — never *"is this stretch actually fast?"* An easy
+run's quick patches (~5:50/km for this athlete) and a genuine threshold rep (5:25–5:40)
+are indistinguishable to any within-run rule. Five candidate within-run discriminators
+were measured against the archive (pace CV, work fraction, work/rest contrast, bout
+distance CV, distribution bimodality) — **none separated**, and three were inverted.
+
+The missing input is the athlete's **own habitual pace**, which the archive already
+holds. A prototype was validated against real data before this task was written:
+
+| floor | reps | steady | block | the known `5x1km` run |
+|---|---|---|---|---|
+| p90 | 23 | 131 | 8 | found 6 (warm-up fragment survives) |
+| **p93** | **19** | **138** | **5** | **found 5 ✓** |
+| p95 | 17 | 138 | 7 | found 5 ✓ |
+| p97 | 9 | 149 | 4 | found None — loses real workouts |
+
+At p93 (2.700 m/s = 370 s/km = 6:10/km for this athlete) detection drops from 62 % to
+**12 %** of runs, and nearly every survivor is a genuinely-named workout day
+(`2km wu, 5x1km`, `pYRAMIDE`, `HM2-Training`, `Hügel` hill sessions, `Tempo`). Correct
+labels appear for the first time: `5×1 km`, `3×800 m`.
+
+**Files:**
+- Modify: `interval_lens.py`
+- Modify: `test_interval_lens.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 2–7.
+- Produces: `baseline_samples(streams: dict, stride: int = BASELINE_STRIDE) -> list[float]`,
+  `work_floor(samples: list[float], percentile: float = WORK_FLOOR_PCT) -> float | None`,
+  and a new keyword parameter `work_floor` on `build_document`. The document gains a
+  top-level `calibrated: bool`.
+
+**Purity rule — do not break it.** `interval_lens` never opens a database. The
+*caller* (a later task wires `sync_garmin` and `ingest_builder`) accumulates samples
+across the archive and passes the resulting float in. These two functions exist so
+both callers derive it identically.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_baseline_samples_subsamples_the_moving_grid():
+    """One run contributes a thinned sample of its moving speeds — thinned
+    because a full-resolution accumulation over years of runs is needless."""
+    s = make_streams([(600, 3.0)])
+    out = il.baseline_samples(s, stride=5)
+    assert 100 < len(out) < 140          # ~600/5, allowing for the grid's +1
+    assert all(v == 3.0 for v in out)
+
+
+def test_baseline_samples_excludes_pauses():
+    """A pause is absent data — it must not drag the athlete's baseline down."""
+    s = make_streams([(300, 3.0), (300, 0.0), (300, 3.0)])
+    assert all(v >= il.MOVING_MPS_MIN for v in il.baseline_samples(s))
+
+
+def test_work_floor_is_the_percentile_of_the_history():
+    samples = [float(i) for i in range(1, 1001)]        # 1..1000
+    assert abs(il.work_floor(samples, 0.93) - 930) <= 1
+
+
+def test_work_floor_needs_enough_history():
+    """An unstable percentile is worse than none — Max's archive starts small."""
+    assert il.work_floor([3.0] * (il.WORK_FLOOR_MIN_SAMPLES - 1)) is None
+    assert il.work_floor([3.0] * il.WORK_FLOOR_MIN_SAMPLES) is not None
+
+
+def test_calibration_rejects_a_bout_that_is_merely_faster_than_its_own_run():
+    """THE POINT OF THIS TASK. A warm-up surge inside an easy run is faster
+    than that run's average but is not fast for this athlete. Uncalibrated it
+    becomes a rep; calibrated it does not."""
+    spans = [(600, 2.30)] + [(250, 2.62), (60, 2.20)] * 3 + [(300, 2.30)]
+    s = make_streams(spans)
+    floor = 2.70                                    # this athlete's p93
+
+    uncalibrated = il.build_document(s)
+    calibrated = il.build_document(s, work_floor=floor)
+
+    assert uncalibrated["shape"] == "reps"          # the old, wrong behaviour
+    assert calibrated["shape"] == "steady"          # nothing here is genuinely fast
+    assert calibrated["calibrated"] is True
+
+
+def test_calibration_keeps_a_genuine_set():
+    """The same floor must not eat real reps — 4.0 m/s is well above it."""
+    spans = [(600, 2.30)] + [(250, 4.0), (60, 2.20)] * 5 + [(300, 2.30)]
+    doc = il.build_document(make_streams(spans), work_floor=2.70)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+
+
+def test_uncalibrated_documents_make_no_rep_claim():
+    """Without a baseline the engine cannot tell fast from merely-faster, so it
+    must not claim a set at all. Honest silence beats a confident lie."""
+    spans = [(600, 2.30)] + [(250, 2.62), (60, 2.20)] * 3 + [(300, 2.30)]
+    doc = il.build_document(make_streams(spans))     # no work_floor
+    assert doc["calibrated"] is False
+
+
+def test_lap_sourced_documents_are_always_calibrated():
+    """Device laps need no baseline — the watch is not guessing."""
+    s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 250, "ACTIVE"),
+            _lap(150, 60, "REST"), _lap(1000, 250, "ACTIVE"),
+            _lap(1000, 360, "COOLDOWN")]
+    doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
+    assert doc["source"] == "laps"
+    assert doc["calibrated"] is True
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `.venv/Scripts/python.exe -m pytest test_interval_lens.py -q`
+Expected: FAIL — `AttributeError: module 'interval_lens' has no attribute 'baseline_samples'`
+
+- [ ] **Step 3: Write the implementation**
+
+Constants beside the others:
+
+```python
+# Cross-run calibration (Task 7b). "Work" is not "faster than the rest of this
+# run" — 2-means always yields a fast half, so that definition turns every easy
+# run into a workout (measured: 62 % of a real archive). It is "genuinely fast
+# FOR THIS ATHLETE", measured against their own history.
+WORK_FLOOR_PCT = 0.93         # validated against a real 165-run archive; p90
+                              # kept a warm-up fragment, p97 lost real workouts
+BASELINE_STRIDE = 5           # 1-in-5 sampling — 100k+ points is ample
+WORK_FLOOR_MIN_SAMPLES = 20_000   # ~30 runs; below this the percentile is noise
+```
+
+```python
+def baseline_samples(streams: dict, stride: int = BASELINE_STRIDE) -> list[float]:
+    """One run's contribution to the athlete's pace history — the moving speeds
+    of its 1 Hz grid, thinned by `stride`. Callers accumulate these across the
+    archive; pauses are already excluded by speed_series."""
+    series = speed_series(streams)
+    return [v for i, v in enumerate(series) if v is not None and i % stride == 0]
+
+
+def work_floor(samples: list[float], percentile: float = WORK_FLOOR_PCT) -> float | None:
+    """The speed above which this athlete is genuinely working, from their own
+    history. None when there is too little history to be stable — an unstable
+    percentile is worse than none, and the caller must then make no rep claim."""
+    if len(samples) < WORK_FLOOR_MIN_SAMPLES:
+        return None
+    ordered = sorted(samples)
+    return ordered[int(percentile * (len(ordered) - 1))]
+```
+
+In `build_document`, add the parameter and thread it through the STREAM path only:
+
+```python
+def build_document(streams: dict | None, summary: dict | None = None,
+                   laps: list[dict] | None = None,
+                   prior: dict | None = None,
+                   bounds: list[int] | None = None,
+                   work_floor: float | None = None) -> dict | None:
+```
+
+The lap path sets `"calibrated": True` unconditionally (the watch is not guessing).
+
+The stream path, immediately after `find_bouts` and before `classify`:
+
+```python
+    # Cross-run calibration (Task 7b): a bout must be genuinely fast for THIS
+    # athlete, not merely faster than the rest of its own run. Without a floor
+    # we cannot tell those apart, so we make no rep claim at all.
+    calibrated = work_floor is not None
+    if calibrated:
+        bouts = [(a, b) for a, b in bouts
+                 if (_mean(series[a:b]) or 0) >= work_floor]
+    else:
+        bouts = []
+    shape = classify(bouts, series, dist_at, expect)
+```
+
+and `"calibrated": calibrated,` in the returned document.
+
+- [ ] **Step 4: Run to verify they pass**
+
+Run: `.venv/Scripts/python.exe -m pytest test_interval_lens.py -q`
+Expected: all pass. Several EXISTING tests will now fail because they call
+`build_document` with no `work_floor` and expect `shape == "reps"`. **Do not weaken
+them** — pass an explicit `work_floor` appropriate to each fixture's speeds (the
+fixtures use 4.0 m/s work against 2.2–2.6 m/s recovery, so `work_floor=3.0` is a
+natural choice that is clearly below the work speed and clearly above the rest).
+Update each such test and say in your report exactly which ones you touched and why.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add interval_lens.py test_interval_lens.py
+git commit -m "feat(interval-lens): calibrate work against the athlete's pace history
+
+2-means always yields a fast half, so 'faster than the rest of this run'
+turned 62% of a real 165-run archive into interval sessions, with labels like
+0.327-0.968-0.907 km. A bout must now clear a percentile of the athlete's own
+history (p93). On the real archive that is 62% -> 12%, and the known
+'2km wu, 5x1km' run detects exactly 5 reps.
+
+Without a baseline the engine makes no rep claim: honest silence beats a
+confident lie, and Max's archive starts too small to calibrate."
+```
+
+---
+
 ### Task 8: Storage — schema v11
 
 **Files:**

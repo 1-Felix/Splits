@@ -317,11 +317,18 @@ def laps_are_autolap(laps: list[dict]) -> bool:
     """True when every full lap is one kilometre (or one mile). Garmin's
     auto-lap fires on distance and carries NO intent — treating it as structure
     turns every long easy run into a rep session. The final lap is always a
-    partial and is excluded from the test."""
+    partial and is excluded from the test.
+
+    Three matching FULL laps (after dropping the partial) is the floor: two
+    full laps landing on 1 km each is exactly what a real 2×1 km session looks
+    like, so requiring only two would flag genuine short interval sessions as
+    auto-lap and discard real structure. Three is the smallest run of them
+    that means "the watch is lapping on distance" rather than "this athlete
+    happened to run two even reps."""
     dists = [l.get("distance") for l in laps if l.get("distance")]
-    if len(dists) < 3:
-        return False
-    body = dists[:-1]
+    body = dists[:-1]                  # the final lap is always a partial
+    if len(body) < 3:
+        return False                   # too few full laps to call it a pattern
     return any(all(abs(d - unit) / unit <= AUTOLAP_TOLERANCE for d in body)
                for unit in AUTOLAP_UNITS)
 

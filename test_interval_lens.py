@@ -420,3 +420,58 @@ def test_segments_from_laps_carry_roles():
         ["warmup", "work", "recovery", "work", "cooldown"]
     assert segs[1]["rep"] == 1 and segs[3]["rep"] == 2
     assert segs[1]["paceS"] == 330
+
+
+def test_workout_run_with_varied_intensities_is_structured():
+    """Fix round 1, finding 1: D1's SECOND route to structure — a workout run
+    with varied lap intensities but NO explicit hasIntensityIntervals flag —
+    had no positive test. `test_structured_needs_intensity_or_the_flag` sets
+    hasIntensityIntervals and short-circuits before ever reaching the
+    workoutId/intensity-count line. Distances here are deliberately
+    non-uniform (2000/1000/200) so laps_are_autolap does not veto."""
+    summary = {"workoutId": 99}
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 330, "ACTIVE"),
+            _lap(200, 90, "REST"), _lap(1000, 332, "ACTIVE")]
+    assert il.laps_are_structured(summary, laps) is True
+
+
+def test_short_real_session_is_not_flagged_autolap():
+    """Fix round 1, finding 4 (design fix): a genuine 2-rep session — two 1 km
+    reps plus a partial recovery lap — must NOT be vetoed as auto-lap just
+    because its only two FULL laps happen to agree on distance. Requiring
+    three full laps (not two) before calling it a pattern is what lets this
+    stay structured."""
+    laps = [_lap(1000, 330, "ACTIVE"), _lap(1000, 330, "ACTIVE"),
+            _lap(200, 90, "REST")]
+    assert il.laps_are_autolap(laps) is False
+    assert il.laps_are_structured({"workoutId": 5}, laps) is True
+
+
+def test_segments_from_laps_chain_cumulative_boundaries():
+    """Fix round 1, finding 2: the cumulative t0/t1/d0/d1 bookkeeping in
+    segments_from_laps was entirely unasserted — removing both accumulator
+    updates (`t0 += dur`, `d0 += dist`) still left the suite green. Assert the
+    chain directly: each segment's t0/d0 must equal the previous segment's
+    t1/d1, and the final d1/t1 must equal the summed lap distance/duration.
+    All lap durations and distances below are whole numbers so the sums are
+    exact, with no rounding drift to account for."""
+    laps = [_lap(600, 200, "WARMUP"), _lap(1000, 330, "ACTIVE"),
+            _lap(200, 90, "REST"), _lap(1000, 332, "ACTIVE"),
+            _lap(500, 180, "COOLDOWN")]
+    segs = il.segments_from_laps(laps)
+    for prev, cur in zip(segs, segs[1:]):
+        assert cur["t0"] == prev["t1"]
+        assert cur["d0"] == prev["d1"]
+    assert segs[-1]["d1"] == sum(l["distance"] for l in laps)
+    assert segs[-1]["t1"] == sum(l["duration"] for l in laps)
+
+
+def test_unrecognised_intensity_defaults_to_work():
+    """Fix round 1, finding 3: only the ABSENT intensityType case exercised
+    the _LAP_ROLES default; a real-but-unmapped label (e.g. a Garmin variant
+    not in our map) was never tried. It must default to 'work', not
+    'recovery' — mapping an unrecognised label to recovery would silently
+    shrink the rep set."""
+    laps = [_lap(1000, 330, "SPRINT")]
+    segs = il.segments_from_laps(laps)
+    assert segs[0]["role"] == "work"

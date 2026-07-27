@@ -91,7 +91,7 @@
       </div>
     </div>
     <sc-for list="{{ pg.verdict }}" as="v" hint-placeholder-count="0">
-      <div style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-top:var(--sp-3);line-height:1.45">⚡ {{ v.t }}</div>
+      <div class="coach-verdict" style="font-size:var(--fs-sm);font-weight:600;color:var(--accent);margin-top:var(--sp-3);line-height:1.45">⚡ {{ v.t }}</div>
     </sc-for>
     <sc-for list="{{ pg.zones }}" as="zr" hint-placeholder-count="0">
       <div style="display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-3)">
@@ -335,9 +335,19 @@ class Component extends DCLogic {
       pg.pace = this.fmtPace(paceS);
 
       // the verdict — the same coach-read line the drill-downs render (6.2)
+      //
+      // coachRead reads the interval structure off `detail.intervals`, but the
+      // Garmin archive's distilled detail can never grow one: _distill_pass
+      // only fills rows whose detail_distilled_json is NULL and that side has
+      // no distill version marker, so 0 of 165 archived details carry the key.
+      // The full document is already in scope here as `iv` (the API serves it
+      // beside `detail`), so hand coachRead the structure it is looking for —
+      // otherwise this page renders a rep table beneath a sentence produced by
+      // the thirds heuristic the rep table exists to replace.
       let verdict = '';
       if (this._cr && this._cr.coachRead && D && run.detail) {
-        const rr = { date: dateISO, type: 'Run', km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail: run.detail };
+        const detail = iv ? Object.assign({}, run.detail, { intervals: iv }) : run.detail;
+        const rr = { date: dateISO, type: 'Run', km: +km.toFixed(1), pace: paceS, hr: run.avgHr || 0, detail };
         verdict = this._cr.coachRead(rr, D.weekPlan || [], (D.profile && D.profile.maxHR) || 0) || '';
       }
       pg.verdict = verdict ? [{ t: verdict }] : [];

@@ -294,6 +294,22 @@ async function waitReady(base, errRef) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-runpage-"));
 const emptyDir = await mkdtemp(join(tmpdir(), "splits-runpage-empty-"));
 makeArchive(dataDir);
+// FINAL REVIEW I3: the coach verdict at the top of /run/:id only renders once
+// `running-data.js` resolves, and that module imports the two DATA files
+// serve.mjs serves from SPLITS_DATA_DIR. Without them the import rejects, the
+// page's `data` state stays null and the verdict is silently absent — so
+// every assertion about the verdict sentence would have been unreachable.
+// Deliberately minimal: an EMPTY weekPlan, so coachRead takes no plan-day
+// branch and the interval structure is the only thing that can shape the line.
+await writeFile(join(dataDir, "garmin-data.js"),
+  "export const garminData = " + JSON.stringify({
+    today: "2026-07-27",
+    profile: { name: "Testa", maxHR: 190 },
+    recentRuns: [], hrZones: [], predictions: {}, history: {},
+    heatmapKm: Array.from({ length: 365 }, () => 0),
+  }) + ";\nexport default garminData;\n");
+await writeFile(join(dataDir, "plan-data.js"),
+  "export const planData = {};\nexport default planData;\n");
 // a present-but-unopenable db = a real OUTAGE (503 → "Archive offline"); a
 // missing file would be "not provisioned" (404) and show different copy
 await writeFile(join(emptyDir, "activity-archive.db"), "not a sqlite file");
@@ -438,6 +454,22 @@ try {
   assert.equal(await page.locator(".rep-row").count(), 5, "five reps render");
   assert.match(await page.locator(".rep-title").innerText(), /5×1 km/,
     "the rep card titles itself with the detected label");
+  // FINAL REVIEW I3: the cockpit verdict at the top of this page must describe
+  // the SAME session the rep table below it describes. coachRead reads the
+  // structure off `detail.intervals`, and the Garmin archive's distilled
+  // detail can never grow that key (_distill_pass only fills NULL rows and has
+  // no version marker — measured: 0 of 165 archived details carry it), so this
+  // page used to render a 5×1 km rep table beneath a sentence produced by the
+  // first-third-vs-last-third heuristic the whole feature exists to replace.
+  // Pinned to the document's own numbers: label "5×1 km" and set.paceS 336 →
+  // 5:36, not merely "some interval-ish words".
+  const repVerdict = await page.locator(".coach-verdict").innerText();
+  assert.match(repVerdict, /5×1 km/,
+    "the verdict names the detected session: " + repVerdict);
+  assert.match(repVerdict, /5:36/,
+    "…at the set's own median pace (set.paceS 336): " + repVerdict);
+  assert.ok(!/split/i.test(repVerdict),
+    "…and not a splitShape thirds verdict: " + repVerdict);
   const firstRowText = await page.locator(".rep-row").first().innerText();
   assert.match(firstRowText, /5:3\d/,
     "the first rep shows ITS OWN pace (330 s = 5:30), not a placeholder or the wrong segment");

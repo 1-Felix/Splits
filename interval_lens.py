@@ -36,6 +36,17 @@ BLOCK_MIN_M = 1500
 VARIED_TOLERANCE = 0.20       # rep distances differing by >20 % → varied
 PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 ROUND_DIST_TOLERANCE = 0.12   # relative error within which a rep snaps to a named distance
+AUTOLAP_TOLERANCE = 0.05      # laps all within ±5 % of 1 km / 1 mile = auto-lap
+AUTOLAP_UNITS = (1000.0, 1609.34)
+
+# Garmin intensityType → our role vocabulary. Anything unrecognised is work:
+# an unlabelled lap inside a structured workout is far more likely a rep than
+# a rest, and calling it a rest would silently shrink the set.
+_LAP_ROLES = {
+    "WARMUP": "warmup", "COOLDOWN": "cooldown",
+    "REST": "recovery", "RECOVERY": "recovery",
+    "ACTIVE": "work", "INTERVAL": "work",
+}
 
 
 def speed_series(streams: dict) -> list[float | None]:
@@ -300,3 +311,63 @@ def set_stats(bouts, series, dist_at, hr: list | None) -> dict:
         "recoveryHrDrop": int(round(_mean(drops))) if drops else None,
         "reps": reps,
     }
+
+
+def laps_are_autolap(laps: list[dict]) -> bool:
+    """True when every full lap is one kilometre (or one mile). Garmin's
+    auto-lap fires on distance and carries NO intent — treating it as structure
+    turns every long easy run into a rep session. The final lap is always a
+    partial and is excluded from the test."""
+    dists = [l.get("distance") for l in laps if l.get("distance")]
+    if len(dists) < 3:
+        return False
+    body = dists[:-1]
+    return any(all(abs(d - unit) / unit <= AUTOLAP_TOLERANCE for d in body)
+               for unit in AUTOLAP_UNITS)
+
+
+def laps_are_structured(summary: dict, laps: list[dict]) -> bool:
+    """Do these laps encode real structure (design D1)? Either Garmin says so
+    outright, or the run came from a workout AND its laps carry more than one
+    intensity. Auto-lap vetoes both — a 1 km-lapped workout run still tells us
+    nothing about where the reps were."""
+    if not laps or len(laps) < 2 or laps_are_autolap(laps):
+        return False
+    if summary.get("hasIntensityIntervals"):
+        return True
+    intensities = {l.get("intensityType") for l in laps if l.get("intensityType")}
+    return bool(summary.get("workoutId")) and len(intensities) > 1
+
+
+def segments_from_laps(laps: list[dict]) -> list[dict]:
+    """Lap DTOs → segments, taken VERBATIM (design D1). The watch is not
+    guessing: boundaries, roles and per-lap statistics all come from the
+    device, and nothing here re-derives them from the stream."""
+    segs = []
+    t0 = 0.0
+    d0 = 0.0
+    rep = 0
+    for idx, lap in enumerate(laps):
+        dur = float(lap.get("duration") or 0)
+        dist = float(lap.get("distance") or 0)
+        role = _LAP_ROLES.get(lap.get("intensityType"), "work")
+        if role == "work":
+            rep += 1
+        speed = lap.get("averageSpeed") or (dist / dur if dur else 0)
+        seg = {
+            "idx": idx + 1, "role": role,
+            "t0": int(round(t0)), "t1": int(round(t0 + dur)),
+            "d0": int(round(d0)), "d1": int(round(d0 + dist)),
+            "durS": int(round(dur)), "distM": int(round(dist)),
+            "paceS": _pace_s_per_km(speed),
+            "gapS": None,
+            "hr": int(lap["averageHR"]) if lap.get("averageHR") else None,
+            "cad": int(round(lap["averageRunCadence"] * 2))
+                   if lap.get("averageRunCadence") else None,
+        }
+        if role == "work":
+            seg["rep"] = rep
+        segs.append(seg)
+        t0 += dur
+        d0 += dist
+    return segs

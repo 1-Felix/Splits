@@ -357,3 +357,58 @@ def test_label_for_pyramid_reads_as_the_pyramid():
     through set_stats, never asserting on label_for's own pyramid string."""
     bouts = [(0, 1000), (1000, 3000), (3000, 4000)]     # 1 km, 2 km, 1 km
     assert il.label_for("reps", bouts, _flat_dist_at) == "1-2-1 km"
+
+
+def _lap(dist, dur, intensity=None, hr=150):
+    lap = {"distance": dist, "duration": dur, "averageHR": hr,
+           "averageSpeed": dist / dur if dur else 0}
+    if intensity:
+        lap["intensityType"] = intensity
+    return lap
+
+
+def test_kilometre_autolap_is_not_structure():
+    """19 laps on a 19 km easy run is auto-lap, not a 19-rep session."""
+    laps = [_lap(1000, 330) for _ in range(18)] + [_lap(420, 140)]
+    assert il.laps_are_autolap(laps) is True
+
+
+def test_mile_autolap_is_not_structure():
+    laps = [_lap(1609.34, 530) for _ in range(6)] + [_lap(300, 100)]
+    assert il.laps_are_autolap(laps) is True
+
+
+def test_real_reps_are_not_autolap():
+    laps = [_lap(2000, 700), _lap(1000, 330), _lap(200, 90), _lap(1000, 332)]
+    assert il.laps_are_autolap(laps) is False
+
+
+def test_structured_needs_intensity_or_the_flag():
+    summary = {"hasIntensityIntervals": True, "workoutId": 42}
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 330, "ACTIVE"),
+            _lap(200, 90, "REST"), _lap(1000, 332, "ACTIVE")]
+    assert il.laps_are_structured(summary, laps) is True
+
+
+def test_autolap_beats_the_workout_flag():
+    """A workout run whose laps are all 1 km still carries no rep structure."""
+    summary = {"workoutId": 42}
+    laps = [_lap(1000, 330) for _ in range(8)]
+    assert il.laps_are_structured(summary, laps) is False
+
+
+def test_uniform_intensity_is_not_structure():
+    summary = {"workoutId": 7}
+    laps = [_lap(1200, 400, "ACTIVE"), _lap(1300, 430, "ACTIVE")]
+    assert il.laps_are_structured(summary, laps) is False
+
+
+def test_segments_from_laps_carry_roles():
+    laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 330, "ACTIVE"),
+            _lap(200, 90, "REST"), _lap(1000, 332, "ACTIVE"),
+            _lap(1000, 360, "COOLDOWN")]
+    segs = il.segments_from_laps(laps)
+    assert [s["role"] for s in segs] == \
+        ["warmup", "work", "recovery", "work", "cooldown"]
+    assert segs[1]["rep"] == 1 and segs[3]["rep"] == 2
+    assert segs[1]["paceS"] == 330

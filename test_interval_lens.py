@@ -87,10 +87,21 @@ def test_split_classes_finds_two_speeds():
     assert 3.8 < hi < 4.1
 
 
-def test_steady_run_has_no_separation():
-    """The whole point: an easy run must fall through as unstructured."""
-    s = il.smooth(il.speed_series(make_streams([(1800, 3.0)])))
-    assert il.split_classes(s) is None
+def test_near_steady_run_falls_below_the_separation_floor():
+    """The guard that keeps an ordinary easy run from reading as a workout.
+    Real variance (so 2-means actually partitions and we reach the threshold
+    comparison), but nowhere near a work/rest gap."""
+    spans = [(1, 3.0 + (0.06 if i % 2 else -0.06)) for i in range(1800)]
+    s = il.smooth(il.speed_series(make_streams(spans)))
+    classes = il.split_classes(s)
+    assert classes is None
+
+
+def test_a_perfectly_flat_series_cannot_be_partitioned():
+    """The degenerate bailout: with zero variation there are not two classes to
+    find. Distinct from the separation floor above — this returns at the
+    empty-partition guard, before any threshold is compared."""
+    assert il.split_classes([3.0] * 600) is None
 
 
 def test_gentle_drift_is_not_structure():

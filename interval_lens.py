@@ -94,7 +94,7 @@ def distance_fn(streams: dict) -> Callable[[int], float]:
     return lambda s: grid[min(max(int(s), 0), span)]
 
 
-def split_classes(series: list):
+def split_classes(series: list) -> tuple[float, float, float] | None:
     """1-D 2-means over the moving samples → (lo_mps, hi_mps, separation), or
     None when the run has no two-class structure at all.
 

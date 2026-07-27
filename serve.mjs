@@ -254,9 +254,13 @@ async function openArchive() {
 }
 
 // Promoted columns only — raw summary_json / detail_json are never selected,
-// so no response can leak Garmin's raw shapes into the browser.
-const ARCHIVE_SUMMARY_COLS = `activity_id, start_time_local, type_key, name,
-  distance_m, duration_s, avg_hr, avg_cadence, elevation_gain_m`;
+// so no response can leak Garmin's raw shapes into the browser. Qualified
+// with `a.` (add-interval-lens): the list query below LEFT JOINs run_intervals,
+// and both tables carry a start_time_local column, so every use-site needs
+// the alias — see ARCHIVE_LIST_SQL and getArchiveActivity, both of which
+// alias their FROM as `activities a` to match.
+const ARCHIVE_SUMMARY_COLS = `a.activity_id, a.start_time_local, a.type_key, a.name,
+  a.distance_m, a.duration_s, a.avg_hr, a.avg_cadence, a.elevation_gain_m`;
 
 function archiveSummaryRow(r) {
   return {
@@ -269,35 +273,67 @@ function archiveSummaryRow(r) {
     avgHr: r.avg_hr,
     avgCadence: r.avg_cadence,
     elevationGainM: r.elevation_gain_m,
+    // add-interval-lens: shape + label ride on the list so /archive can chip
+    // a page of rows without N document fetches. Omitted (not null) for a
+    // run with no run_intervals row — same rule as `map` below.
+    ...(r.interval_shape ? { intervalShape: r.interval_shape } : {}),
+    ...(r.interval_label ? { intervalLabel: r.interval_label } : {}),
   };
 }
+
+// add-interval-lens: shape + label ride on the list so /archive can chip a
+// page of rows without N document fetches. LEFT JOIN — a run with no document
+// is a run with no structure detected yet, not a missing row.
+const ARCHIVE_LIST_SQL = `SELECT ${ARCHIVE_SUMMARY_COLS},
+  i.shape AS interval_shape, i.label AS interval_label
+  FROM activities a LEFT JOIN run_intervals i ON i.activity_id = a.activity_id`;
 
 function listArchiveActivities(db, params) {
   const where = [];
   const args = [];
   const type = params.get("type");
-  if (type) { where.push("type_key = ?"); args.push(type); }
+  // add-interval-lens: every condition is qualified with `a.` — run_intervals
+  // (joined below as `i`) also carries a start_time_local column, so an
+  // unqualified reference is ambiguous the moment both tables are in scope.
+  // The COUNT query is aliased `activities a` too, purely to keep this WHERE
+  // string usable in both places without a second copy.
+  if (type) { where.push("a.type_key = ?"); args.push(type); }
   const year = params.get("year");
-  if (year) { where.push("substr(start_time_local, 1, 4) = ?"); args.push(year); }
+  if (year) { where.push("substr(a.start_time_local, 1, 4) = ?"); args.push(year); }
   const from = params.get("from");
-  if (from) { where.push("substr(start_time_local, 1, 10) >= ?"); args.push(from); }
+  if (from) { where.push("substr(a.start_time_local, 1, 10) >= ?"); args.push(from); }
   const to = params.get("to");
-  if (to) { where.push("substr(start_time_local, 1, 10) <= ?"); args.push(to); }
+  if (to) { where.push("substr(a.start_time_local, 1, 10) <= ?"); args.push(to); }
   // name search (archive-browser): parameterized substring match; %/_/\ in the
   // query are escaped so they match themselves — never SQL, never wildcards
   const q = params.get("q");
   if (q) {
-    where.push("name LIKE ? ESCAPE '\\'");
+    where.push("a.name LIKE ? ESCAPE '\\'");
     args.push("%" + q.replace(/[\\%_]/g, "\\$&") + "%");
   }
   const cond = where.length ? "WHERE " + where.join(" AND ") : "";
   const limit = Math.min(Math.max(Number(params.get("limit")) || ARCHIVE_PAGE_DEFAULT, 1), ARCHIVE_PAGE_MAX);
   const offset = Math.max(Number(params.get("offset")) || 0, 0);
-  const total = db.prepare(`SELECT COUNT(*) AS n FROM activities ${cond}`).get(...args).n;
-  const rows = db.prepare(
-    `SELECT ${ARCHIVE_SUMMARY_COLS} FROM activities ${cond}
-     ORDER BY start_time_local DESC, activity_id DESC LIMIT ? OFFSET ?`
-  ).all(...args, limit, offset);
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM activities a ${cond}`).get(...args).n;
+  // the LEFT JOIN needs `a.` on the ORDER BY too: run_intervals also carries
+  // a start_time_local column, so the unqualified name is ambiguous once
+  // both tables are in scope.
+  let rows;
+  try {
+    rows = db.prepare(
+      `${ARCHIVE_LIST_SQL} ${cond}
+       ORDER BY a.start_time_local DESC, a.activity_id DESC LIMIT ? OFFSET ?`
+    ).all(...args, limit, offset);
+  } catch (e) {
+    // a pre-v11 archive has no run_intervals table — that means no structure
+    // detected yet, not an outage; the fallback below is the plain promoted-
+    // column query, so intervalShape/intervalLabel simply stay omitted
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+    rows = db.prepare(
+      `SELECT ${ARCHIVE_SUMMARY_COLS} FROM activities a ${cond}
+       ORDER BY a.start_time_local DESC, a.activity_id DESC LIMIT ? OFFSET ?`
+    ).all(...args, limit, offset);
+  }
   return {
     activities: rows.map(archiveSummaryRow),
     total,
@@ -406,7 +442,7 @@ function listArchiveBlocks(db) {
 function getArchiveActivity(db, id) {
   const r = db.prepare(
     `SELECT ${ARCHIVE_SUMMARY_COLS}, max_hr, detail_distilled_json
-     FROM activities WHERE activity_id = ?`).get(id);
+     FROM activities a WHERE a.activity_id = ?`).get(id);
   if (!r) return null;
   // planned-vs-actual and this run's best efforts are plain SELECTs over rows
   // the sync already scored (run-detail D5) — renamed, never derived. Guarded:
@@ -453,6 +489,15 @@ function getArchiveActivity(db, id) {
               cropX: t.crop_x, cropY: t.crop_y, cropSize: t.crop_size };
     }
   } catch { /* no activity_maps table in this archive */ }
+  // the run's interval document (add-interval-lens): stored TEXT parsed once
+  // and returned as the object it is. A pre-v11 archive has no table — that
+  // means no structure, not an outage. OMITTED (not null) when absent.
+  let intervals;
+  try {
+    const iv = db.prepare(
+      "SELECT doc_json FROM run_intervals WHERE activity_id = ?").get(id);
+    if (iv && iv.doc_json) intervals = JSON.parse(iv.doc_json);
+  } catch { /* no run_intervals table in this archive */ }
   return {
     ...archiveSummaryRow(r),
     maxHr: r.max_hr,
@@ -461,6 +506,7 @@ function getArchiveActivity(db, id) {
     plan,
     bests,
     ...(map ? { map } : {}),
+    ...(intervals ? { intervals } : {}),
   };
 }
 

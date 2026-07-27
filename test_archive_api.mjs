@@ -76,6 +76,24 @@ const BLOCK_DOC_AUTUMN = JSON.stringify({
   weeks: [], summary: { raceName: "Autumn 10K", raceDate: "2024-10-01", isComplete: true },
 });
 
+// run_intervals fixtures (add-interval-lens, schema v11): REP_RUN_ID is a
+// brand-new fixture activity carrying a full document; PLAIN_RUN_ID REUSES
+// an existing fixture activity (run 20, above) that gets no run_intervals
+// row at all — a real 200 with the field genuinely absent, never a 404
+// masquerading as an absent field.
+const REP_RUN_ID = 9001;
+const PLAIN_RUN_ID = 20;
+const REP_DOC = {
+  version: 1, shape: "reps", source: "stream", confidence: 0.86,
+  label: "5×1 km", guidedBy: null,
+  segments: [{ idx: 1, role: "warmup", t0: 0, t1: 600, d0: 0, d1: 1560,
+               durS: 600, distM: 1560, paceS: 385, gapS: null, hr: 132, cad: null }],
+  set: { found: 5, prescribed: null, nominalDistM: 1000, varied: false,
+         paceS: 334, paceCvPct: 1.8, fadePct: 2.4, recoveryS: 60,
+         recoveryHrDrop: 24, reps: [] },
+  quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
+};
+
 function makeArchive(dir) {
   const db = new DatabaseSync(join(dir, "activity-archive.db"));
   db.exec(`CREATE TABLE activities (
@@ -203,6 +221,22 @@ function makeArchive(dir) {
     1, COURSE_LENS_DOC, "2026-07-26T10:00:00", "2026-07-26T22:00:00", "2026-07-26T22:00:00");
   db.prepare("INSERT INTO course_maps VALUES (?,?,?,?,?,?,?,?,?,?)").run(
     493447940, 13, 4300, 2860, 4302, 2862, 12.5, 8.25, 700.0, "2026-07-26T22:00:00");
+
+  // run_intervals rows (schema v11, add-interval-lens): one run with a full
+  // document. This is a NEW fixture activity, dated newer than everything
+  // above, so it also rides the newest page of the plain listing. Run 20
+  // (already inserted, above) deliberately gets no row here — that is
+  // PLAIN_RUN_ID's whole point.
+  ins.run(REP_RUN_ID, "2026-07-10 06:51:15", "running", "Track 5×1 km",
+    6560.0, 1850.0, 158, 178, 172.0, 10.0, raw, raw, null, null);
+  db.exec(`CREATE TABLE run_intervals (
+    activity_id INTEGER PRIMARY KEY, lens_version INTEGER NOT NULL,
+    start_time_local TEXT NOT NULL, shape TEXT NOT NULL, label TEXT,
+    confidence REAL, source TEXT NOT NULL, work_dist_m REAL, work_dur_s REAL,
+    doc_json TEXT NOT NULL, computed_at TEXT NOT NULL)`);
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    REP_RUN_ID, 1, "2026-07-10 06:51:15", "reps", "5×1 km", 0.86, "stream",
+    5000, 1250, JSON.stringify(REP_DOC), "2026-07-27T09:00:00");
   db.close();
 }
 
@@ -310,12 +344,26 @@ try {
 
   // ── listing: newest-first promoted rows ────────────────────────────────────
   const all = await (await list(B)).json();
-  assert.strictEqual(all.total, 7, "all activities listed");
-  assert.deepStrictEqual(all.activities.map((a) => a.activityId), [20, 50, 40, 30, 15, 60, 10], "newest first");
-  const first = all.activities[0];
+  assert.strictEqual(all.total, 8, "all activities listed");
+  assert.deepStrictEqual(all.activities.map((a) => a.activityId),
+    [9001, 20, 50, 40, 30, 15, 60, 10], "newest first");
+  // add-interval-lens: the newest row (REP_RUN_ID) has a document, so its
+  // list row carries intervalShape/intervalLabel on top of the promoted cols
+  const withDoc = all.activities[0];
+  assert.strictEqual(withDoc.activityId, REP_RUN_ID);
+  assert.deepStrictEqual(Object.keys(withDoc).sort(),
+    ["activityId", "avgCadence", "avgHr", "distanceM", "durationS", "elevationGainM",
+     "intervalLabel", "intervalShape", "name", "startTimeLocal", "type"],
+    "a run with a document rides intervalShape/intervalLabel on top of the promoted columns");
+  assert.strictEqual(withDoc.intervalShape, "reps");
+  assert.strictEqual(withDoc.intervalLabel, "5×1 km");
+  // the very next row (PLAIN_RUN_ID = 20) has NO run_intervals row — the
+  // fields are omitted, not just absent because the whole run is missing
+  const first = all.activities[1];
+  assert.strictEqual(first.activityId, PLAIN_RUN_ID);
   assert.deepStrictEqual(Object.keys(first).sort(),
     ["activityId", "avgCadence", "avgHr", "distanceM", "durationS", "elevationGainM", "name", "startTimeLocal", "type"],
-    "promoted-column fields only");
+    "promoted-column fields only — no interval fields for a run without a document");
   assert.strictEqual(first.distanceM, 21100.0);
 
   // filters
@@ -346,12 +394,13 @@ try {
   // pagination: bounded pages, offset cursor
   const page1 = await (await list(B, "?type=running&limit=2")).json();
   assert.strictEqual(page1.activities.length, 2);
+  assert.deepStrictEqual(page1.activities.map((a) => a.activityId), [9001, 20]);
   assert.strictEqual(page1.nextOffset, 2, "more rows → cursor to the next page");
   const page2 = await (await list(B, "?type=running&limit=2&offset=2")).json();
-  assert.deepStrictEqual(page2.activities.map((a) => a.activityId), [40, 15]);
+  assert.deepStrictEqual(page2.activities.map((a) => a.activityId), [50, 40]);
   assert.strictEqual(page2.nextOffset, 4, "still more rows → cursor advances");
   const page3 = await (await list(B, "?type=running&limit=2&offset=4")).json();
-  assert.deepStrictEqual(page3.activities.map((a) => a.activityId), [10]);
+  assert.deepStrictEqual(page3.activities.map((a) => a.activityId), [15, 10]);
   assert.strictEqual(page3.nextOffset, null, "last page → no cursor");
   const clamped = await (await list(B, "?limit=5000")).json();
   assert.strictEqual(clamped.limit, 100, "page size clamped to the server maximum");
@@ -372,12 +421,29 @@ try {
   const strength = await (await byId(B, 30)).json();
   assert.strictEqual(strength.detail, null, "non-run → null detail");
 
+  // ── interval lens (add-interval-lens): the stored document, verbatim ──────
+  const repRun = await (await byId(B, REP_RUN_ID)).json();
+  assert.strictEqual(repRun.activityId, REP_RUN_ID);
+  assert.deepStrictEqual(repRun.intervals, REP_DOC,
+    "the interval document is served byte-for-byte, parsed once from doc_json");
+  assert.strictEqual(repRun.intervals.shape, "reps");
+  assert.strictEqual(repRun.intervals.label, "5×1 km");
+  assert.ok(Array.isArray(repRun.intervals.segments), "segments survive the API");
+  assert.strictEqual(repRun.intervals.set.found, 5, "nested fields ride through untouched");
+
+  // a run with no document: the field is OMITTED, not null — same rule as
+  // map. PLAIN_RUN_ID genuinely exists (200, real promoted fields) — this
+  // isn't a 404 masquerading as an absent field.
+  const plainRun = await (await byId(B, PLAIN_RUN_ID)).json();
+  assert.strictEqual(plainRun.activityId, PLAIN_RUN_ID, "the plain run genuinely exists");
+  assert.ok(!("intervals" in plainRun), "a run with no run_intervals row omits the field");
+
   // unknown ids → 404
   assert.strictEqual((await byId(B, 999999)).status, 404, "unknown id → 404");
   assert.strictEqual((await byId(B, "not-a-number")).status, 404, "malformed id → 404");
 
   // raw payloads never leave the server
-  for (const r of [await list(B), await byId(B, 10), await byId(B, 30)]) {
+  for (const r of [await list(B), await byId(B, 10), await byId(B, 30), await byId(B, REP_RUN_ID)]) {
     assert.ok(!(await r.clone().text()).includes(RAW_MARKER), "raw summary/detail JSON must never be serialized");
   }
 
@@ -490,6 +556,14 @@ try {
   assert.strictEqual((await fetch(Bbare + "/api/archive/tiles/15/17000/11300.png")).status, 404,
     "pre-v8 archive: tile → 404, not a 503");
 
+  // a pre-v11 archive (no run_intervals table at all): both the listing and
+  // by-id keep serving 200s — no structure detected yet, never an outage
+  assert.ok(!("intervals" in bareRun), "pre-v11 archive: by-id omits intervals too");
+  const bareList = await (await list(Bbare)).json();
+  assert.strictEqual(bareList.total, 1, "an archive without run_intervals still lists");
+  assert.ok(!("intervalShape" in bareList.activities[0]), "pre-v11 archive: no intervalShape field");
+  assert.ok(!("intervalLabel" in bareList.activities[0]), "pre-v11 archive: no intervalLabel field");
+
   // ── block-lens endpoints (add-block-lens 2.x) ─────────────────────────────
   // listing: newest race first, promoted columns + the EMBEDDED summary slice
   const blocks = (await (await fetch(B + "/api/archive/blocks")).json()).blocks;
@@ -597,7 +671,7 @@ try {
 
   // ── SPLITS_ARCHIVE_DIR: archive from a local dir, data files elsewhere ────
   const overridden = await (await list(Boverride, "?type=running")).json();
-  assert.strictEqual(overridden.total, 5, "archive read from SPLITS_ARCHIVE_DIR");
+  assert.strictEqual(overridden.total, 6, "archive read from SPLITS_ARCHIVE_DIR");
 
   // ── read-only: the database file is byte-identical after everything ───────
   assert.ok(dbBytesBefore.equals(await readFile(dbPath)), "no request may write to the archive");

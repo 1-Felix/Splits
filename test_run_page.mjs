@@ -37,6 +37,42 @@ const DETAIL = {
   tempC: 19, te: 3.2, load: 140, elevGain: 60, splitShape: "even",
 };
 
+// add-interval-lens: run 7 ("Fixture Tempo", above) is PLAIN_RUN_ID — it gets
+// no run_intervals row at all, so its splits card must still render while no
+// rep table appears. REP_RUN_ID is a brand-new fixture activity carrying a
+// full document with all five work segments AND the four recoveries between
+// them populated (Task 12's fixture only ever populated the warmup segment,
+// since that task just tested passthrough — this page renders reps and
+// recoveries, so both must be real here).
+const PLAIN_RUN_ID = 7;
+const REP_RUN_ID = 9001;
+const REP_SEGMENTS = [];
+let t = 600, d = 1560, rep = 0;
+REP_SEGMENTS.push({ idx: 1, role: "warmup", t0: 0, t1: 600, d0: 0, d1: 1560,
+                    durS: 600, distM: 1560, paceS: 385, gapS: null, hr: 132, cad: null });
+for (let i = 0; i < 5; i++) {
+  rep += 1;
+  REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "work", rep,
+    t0: t, t1: t + 250, d0: d, d1: d + 1000, durS: 250, distM: 1000,
+    paceS: 330 + i * 3, gapS: null, hr: 168 + i, cad: null });
+  t += 250; d += 1000;
+  if (i < 4) {
+    REP_SEGMENTS.push({ idx: REP_SEGMENTS.length + 1, role: "recovery",
+      t0: t, t1: t + 60, d0: d, d1: d + 140, durS: 60, distM: 140,
+      paceS: 430, gapS: null, hr: 144, cad: null });
+    t += 60; d += 140;
+  }
+}
+const REP_DOC = {
+  version: 1, shape: "reps", source: "stream", confidence: 0.86,
+  label: "5×1 km", guidedBy: null,
+  segments: REP_SEGMENTS,
+  set: { found: 5, prescribed: null, nominalDistM: 1000, varied: false,
+         paceS: 336, paceCvPct: 1.8, fadePct: 2.4, recoveryS: 60,
+         recoveryHrDrop: 24, reps: [] },
+  quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
+};
+
 function makeArchive(dir) {
   const db = new DatabaseSync(join(dir, "activity-archive.db"));
   db.exec(`CREATE TABLE activities (
@@ -97,6 +133,24 @@ function makeArchive(dir) {
     "base64");
   const tins = db.prepare("INSERT INTO map_tiles (z, x, y, png, fetched_at) VALUES (?, ?, ?, ?, 'x')");
   for (let x = 34320; x <= 34322; x++) for (let y = 22950; y <= 22952; y++) tins.run(16, x, y, PNG1);
+  // ── add-interval-lens: REP_RUN_ID carries a full run_intervals document —
+  // five work segments, four recoveries between them. Run 7 (PLAIN_RUN_ID,
+  // already inserted above) gets no row here — that absence is the point.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-10 06:51:15', 'running', 'Track 5×1 km',
+      6560, 1850, 158, 178, 172.0, 10.0, '{}', '{}', 'x', 'x', NULL, NULL)`)
+    .run(REP_RUN_ID);
+  db.exec(`CREATE TABLE run_intervals (
+    activity_id INTEGER PRIMARY KEY, lens_version INTEGER NOT NULL,
+    start_time_local TEXT NOT NULL, shape TEXT NOT NULL, label TEXT,
+    confidence REAL, source TEXT NOT NULL, work_dist_m REAL, work_dur_s REAL,
+    doc_json TEXT NOT NULL, computed_at TEXT NOT NULL)`);
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    REP_RUN_ID, 1, "2026-07-10 06:51:15", "reps", "5×1 km", 0.86, "stream",
+    5000, 1250, JSON.stringify(REP_DOC), "2026-07-27T09:00:00");
   db.close();
 }
 
@@ -258,6 +312,32 @@ try {
   await page.waitForFunction(() =>
     document.querySelectorAll("svg[data-chart='trace'] image").length === 9,
     null, { timeout: 5000 });
+
+  // ── add-interval-lens: reps render as reps, measured against the SET's own
+  // median (not the run's) — recoveries shown between them ─────────────────
+  await page.goto(B + `/run/${REP_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rep-table", { timeout: 15000 });
+  assert.equal(await page.locator(".rep-row").count(), 5, "five reps render");
+  assert.match(await page.locator(".rep-title").innerText(), /5×1 km/,
+    "the rep card titles itself with the detected label");
+  assert.match(await page.locator(".rep-row").first().innerText(), /5:3\d/,
+    "the first rep shows ITS OWN pace (330 s = 5:30), not a placeholder or the wrong segment");
+  // the recovery between reps is shown, and there is one fewer of them —
+  // nothing trails the final rep
+  assert.equal(await page.locator(".rep-rec").count(), 4);
+  assert.match(await page.locator(".rep-rec").first().innerText(), /60 s recovery/,
+    "the recovery row shows its real duration, not a placeholder");
+  assert.ok((await page.locator("text=Splits").count()) > 0,
+    "the per-km splits card still renders BELOW the rep table on the same page");
+
+  // a steady run (no run_intervals row at all — PLAIN_RUN_ID reuses run 7)
+  // shows no rep table at all, and the km splits card is unaffected
+  await page.goto(B + `/run/${PLAIN_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".card");
+  assert.equal(await page.locator(".rep-table").count(), 0, "no structure detected — no rep table");
+  const plainText = await page.evaluate(() => document.body.innerText);
+  assert.ok(plainText.includes("Splits") && plainText.includes("km 6"),
+    "the km splits card still renders its real per-km rows — 'km 6' is DETAIL's last split");
 
   // ── degradation: archive offline / unknown run — chrome still renders ─────
   await page.goto(Bmissing + "/run/7", { waitUntil: "domcontentloaded" });

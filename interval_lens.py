@@ -17,8 +17,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-INTERVAL_VERSION = 2   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 3   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
+                       # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
+                       #    rep floor the stream path always has, and shares its
+                       #    labelling logic — a trailing partial lap no longer
+                       #    reads as a rep, and a varied lap-sourced set no
+                       #    longer loses its label (production defect, 2026-07-27)
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
@@ -328,15 +333,20 @@ def _rep_variation(dists: list) -> tuple[int, bool]:
     return nominal, varied
 
 
-def label_for(shape: str, bouts, dist_at) -> str | None:
-    """The one-line session name — '5×1 km', '20 min block'. None when the run
-    has no shape worth naming."""
-    if shape == "block" and bouts:
-        a, b = bouts[0]
-        return f"{int(round((b - a) / 60))} min block"
-    if shape != "reps" or not bouts:
-        return None
-    dists = [dist_at(b) - dist_at(a) for a, b in bouts]
+def _reps_label(dists: list[float]) -> str:
+    """The `reps` half of the one-line session name, given its rep distances
+    IN ORDER — the ONE place both producers name a set, so a varied lap-
+    sourced set (design D1, ground truth from the watch) cannot be named by
+    different rules than a varied stream-detected one. Before this was
+    extracted, `build_document`'s laps branch hand-rolled its own `N×D`
+    string and returned `None` for every varied set — it never received the
+    collapse-to-'N reps' fix below, so a real `5×1 km` with one trailing
+    lap-artifact fragment displayed as unlabelled 'reps' on the athlete's own
+    dashboard (production defect, 2026-07-27).
+
+    `dists` must be in the reps' own chronological order — `varied` sets are
+    enumerated positionally ('1-2-1 km' is a pyramid; '2-1-1 km' is not the
+    same session) — so a caller must not sort them first."""
     nominal, varied = _rep_variation(dists)
     if varied:
         # Enumerating every rep is only informative when the set could
@@ -350,11 +360,24 @@ def label_for(shape: str, bouts, dist_at) -> str | None:
         # is worse than the thirds verdict it replaced. Display only — the
         # detection, the segments and every `set` number are untouched, so
         # "N reps" never hides a rep the engine found.
-        if len(bouts) > VARIED_MAX_ENUMERATE or not all(_snaps_to_round(d) for d in dists):
-            return f"{len(bouts)} reps"
-        parts = "-".join(f"{(dist_at(b) - dist_at(a)) / 1000:.3g}" for a, b in bouts)
+        if len(dists) > VARIED_MAX_ENUMERATE or not all(_snaps_to_round(d) for d in dists):
+            return f"{len(dists)} reps"
+        parts = "-".join(f"{d / 1000:.3g}" for d in dists)
         return f"{parts} km"
-    return f"{len(bouts)}×{_round_dist(nominal)}"
+    return f"{len(dists)}×{_round_dist(nominal)}"
+
+
+def label_for(shape: str, bouts, dist_at) -> str | None:
+    """The one-line session name — '5×1 km', '20 min block'. None when the run
+    has no shape worth naming. The `reps` naming rules live in `_reps_label`,
+    shared with the laps path in `build_document` (see its docstring)."""
+    if shape == "block" and bouts:
+        a, b = bouts[0]
+        return f"{int(round((b - a) / 60))} min block"
+    if shape != "reps" or not bouts:
+        return None
+    dists = [dist_at(b) - dist_at(a) for a, b in bouts]
+    return _reps_label(dists)
 
 
 _ROUND_TARGETS = ((200, "200 m"), (300, "300 m"), (400, "400 m"), (500, "500 m"),
@@ -527,6 +550,69 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     return segs
 
 
+def _apply_lap_work_floor(segments: list[dict]) -> list[dict]:
+    """Fix for the production defect of 2026-07-27: `segments_from_laps` maps
+    every `ACTIVE`/`INTERVAL` lap to a `work` rep verbatim (design D1 — the
+    watch is not guessing about ROLES), but it is still just a lap boundary,
+    and a lap can be a trailing artifact — the athlete pressing stop, or the
+    watch's own end-of-activity lap — a fraction of a second and a few metres
+    long. Nothing before this function told that apart from a real rep, so a
+    9 m fragment sat beside five genuine 1 km reps and the whole set read
+    `varied`, which in turn nulled its label (see `_reps_label`).
+
+    Applies the SAME `WORK_MIN_S` / `WORK_MIN_M` floor `find_bouts` has always
+    applied to the stream path — one engine, one definition of what counts as
+    a rep, not two. A `warmup`/`recovery`/`cooldown` lap is untouched however
+    short: those roles carry no minimum on the stream path either (a 20 s
+    recovery is still a recovery), so filtering them here would be inventing a
+    rule the design never had.
+
+    A lap that fails the floor is RE-ROLED, never removed: `segments_from_laps`
+    guarantees every segment's `t0/t1/d0/d1` chains to the next with no gap,
+    and consumers (the rep-shaded stream chart, `_quality`'s summation) rely
+    on that full-span coverage. Deleting the segment would open a hole in the
+    run nothing else in the contract allows; re-roling keeps the athlete's
+    recorded time and distance in the document while correctly excluding it
+    from `work`, `quality` and the rep count. The new role mirrors the
+    vocabulary `_segments_from_bouts` already uses for the stream path's own
+    gaps: `warmup` before the first surviving rep, `cooldown` after the last,
+    `recovery` in between (and when no rep survives at all — there is then no
+    'between' to speak of, but the run has already been demoted to `steady`
+    or `block` by the caller, so the exact word does not affect any number).
+
+    `idx` never changes — segments are re-roled in place order, never
+    deleted. `rep` is renumbered 1..N over the SURVIVING work segments only,
+    in order, so a demoted lap in the middle of a set does not leave a hole
+    in the numbering."""
+    survivors = {i for i, s in enumerate(segments)
+                 if s["role"] == "work"
+                 and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}
+    ordered = sorted(survivors)
+    first = ordered[0] if ordered else None
+    last = ordered[-1] if ordered else None
+
+    out = []
+    rep = 0
+    for i, seg in enumerate(segments):
+        seg = dict(seg)
+        if seg["role"] == "work":
+            if i in survivors:
+                rep += 1
+                seg["rep"] = rep
+            else:
+                seg.pop("rep", None)
+                if first is None:
+                    seg["role"] = "recovery"
+                elif i < first:
+                    seg["role"] = "warmup"
+                elif i > last:
+                    seg["role"] = "cooldown"
+                else:
+                    seg["role"] = "recovery"
+        out.append(seg)
+    return out
+
+
 def _segments_from_bouts(bouts, series, dist_at, hr, total_s,
                          raw=None, gaps=None) -> list[dict]:
     """Bouts → the full segment list, with the gaps between them named. The
@@ -686,7 +772,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
     base = {"version": INTERVAL_VERSION, "guidedBy": None}
 
     if laps and laps_are_structured(summary, laps):
-        segments = segments_from_laps(laps, gap_grid)
+        segments = _apply_lap_work_floor(segments_from_laps(laps, gap_grid))
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -696,12 +782,27 @@ def build_document(streams: dict | None, summary: dict | None = None,
             cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
         shape = "reps" if len(work) >= 2 else ("block" if work else "steady")
         nominal, varied = _rep_variation([s["distM"] for s in work])
+        if shape == "reps":
+            label = _reps_label([s["distM"] for s in work])
+        elif shape == "block":
+            # Same wording as label_for's block branch, over the ONE
+            # surviving work segment's own duration.
+            label = f"{int(round(work[0]['durS'] / 60))} min block"
+        else:
+            label = None
+        # Contract (design): "a steady run still gets a document, no
+        # segments" — the same rule the stream path already honours. Before
+        # the work floor this branch could only reach "steady" with zero
+        # ACTIVE laps in the first place; now a session whose every lap-
+        # tagged rep is a sub-floor fragment can land here too, so the rule
+        # has to be enforced explicitly rather than falling out for free.
+        if shape == "steady":
+            segments = []
         return {
             **base,
             "shape": shape, "source": "laps", "confidence": 1.0,
             "calibrated": True,
-            "label": (f"{len(work)}×{_round_dist(nominal)}"
-                      if shape == "reps" and not varied else None),
+            "label": label,
             "segments": segments,
             "set": None if shape != "reps" else {
                 "found": len(work), "prescribed": None,

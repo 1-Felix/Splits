@@ -371,6 +371,27 @@ def _fetch_raw_detail(client, aid) -> dict | None:
     return det
 
 
+def _fetch_raw_laps(client, aid) -> list | None:
+    """RAW lap DTOs for one activity, cache-first (`.garmin_cache/laps-<id>.json`).
+    Garmin returns {'lapDTOs': [...]}; we bank the list itself — the envelope
+    carries nothing the lens needs."""
+    if not aid:
+        return None
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache = CACHE_DIR / f"laps-{aid}.json"
+    doc = None
+    if cache.exists():
+        doc = safe(lambda: json.loads(cache.read_text(encoding="utf-8")),
+                   None, f"laps-cache {aid}")
+    if not doc:
+        doc = safe(lambda: client.get_activity_splits(aid), None, f"laps {aid}")
+        if doc:
+            cache.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    if not doc:
+        return None
+    return doc.get("lapDTOs") if isinstance(doc, dict) else doc
+
+
 def fetch_run_detail(client, activity) -> dict | None:
     """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
     activity id so re-syncs only fetch genuinely new runs."""
@@ -1097,6 +1118,7 @@ def build_garmin_data_js(data: dict) -> str:
 DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
 MAPS_PER_SYNC = 10           # basemap backlog drains the same way; the full
                              # sweep is `--backfill-maps` (route-basemap D5)
+LAPS_PER_SYNC = 40           # bounded so a nightly sync stays polite to Garmin
 
 
 def archive_step(client, acts: list[dict]) -> None:
@@ -1109,11 +1131,13 @@ def archive_step(client, acts: list[dict]) -> None:
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         distilled = _distill_pass(conn)
         streamed = _streams_pass(conn)
+        lapped = _laps_pass(client, conn, limit=LAPS_PER_SYNC)
         mapped = _maps_pass(conn, limit=MAPS_PER_SYNC)
         _record_expectations(conn)
         log(f"✓ archive: +{added} activities, {topped} details topped up"
             + (f", {distilled} runs distilled" if distilled else "")
             + (f", {streamed} runs streamed" if streamed else "")
+            + (f", {lapped} runs lapped" if lapped else "")
             + (f", {mapped} runs mapped" if mapped else ""))
     finally:
         conn.close()
@@ -1346,6 +1370,19 @@ def _streams_pass(conn) -> int:
     return done
 
 
+def _laps_pass(client, conn, limit: int | None = None) -> int:
+    """Fetch lap DTOs for archived runs whose summary claims more than one lap
+    and that we have never fetched (add-interval-lens D1). Bounded per nightly
+    sync so the backlog drains over nights; `--backfill-laps` runs it unbounded.
+    A single-lap run is skipped entirely — there is nothing to fetch."""
+    done = 0
+    for aid in activity_archive.runs_missing_laps(conn, limit=limit):
+        laps = _fetch_raw_laps(client, aid)
+        if laps and activity_archive.write_laps(conn, aid, laps):
+            done += 1
+    return done
+
+
 def _maps_pass(conn, limit: int | None = None) -> int:
     """Fetch OSM basemap tiles for archived runs holding GPS streams but no
     map row (route-basemap D5/D6) — the only network this pipeline touches
@@ -1416,6 +1453,17 @@ def run_maps_backfill() -> None:
         log(f"✓ maps backfill: {mapped} runs mapped this pass — "
             f"{mcov['mapped']}/{mcov['streamed_runs']} GPS runs covered, "
             f"{mcov['tiles']} tiles ({mcov['tile_bytes'] / 1e6:.1f} MB)")
+    finally:
+        conn.close()
+
+
+def run_laps_backfill(client) -> None:
+    """Unbounded lap sweep — the one-time catch-up for an archive that predates
+    schema v11. Idempotent: the per-activity cache makes a re-run free."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        done = _laps_pass(client, conn, limit=None)
+        log(f"✓ laps backfill: {done} runs lapped")
     finally:
         conn.close()
 
@@ -1632,6 +1680,9 @@ def main() -> None:
                    help="fetch OSM basemap tiles for every archived GPS run "
                         "(no Garmin login; throttled per the OSM tile policy; "
                         "idempotent and resumable)")
+    p.add_argument("--backfill-laps", action="store_true",
+                   help="fetch lap DTOs for every multi-lap archived run "
+                        "(one-time catch-up for a pre-v11 archive)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1649,6 +1700,9 @@ def main() -> None:
         return
     if args.backfill_wellness:
         run_wellness_backfill(client, since=args.since)
+        return
+    if args.backfill_laps:
+        run_laps_backfill(client)
         return
 
     # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens

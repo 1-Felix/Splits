@@ -1,11 +1,17 @@
 """Unit tests for sync_garmin detail helpers (no Garmin network)."""
 import importlib.util
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("sync_garmin", REPO / "sync_garmin.py")
 sg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sg)
+
+_aspec = importlib.util.spec_from_file_location(
+    "activity_archive", REPO / "activity_archive.py")
+arch = importlib.util.module_from_spec(_aspec)
+_aspec.loader.exec_module(arch)
 
 
 def test_downsample():
@@ -293,6 +299,39 @@ def test_history_cache_corrupt_is_refetched():
         assert any(a["activityId"] == 1 for a in acts)
     finally:
         sg.CACHE_DIR = orig
+
+
+def _run_summary(aid, lap_count, start):
+    return {"activityId": aid, "startTimeLocal": start,
+            "activityType": {"typeKey": "running"}, "activityName": f"run {aid}",
+            "distance": 8000.0, "duration": 2400.0, "lapCount": lap_count}
+
+
+def test_laps_pass_skips_single_lap_runs():
+    """The 42 single-lap runs in the archive must never cost a request."""
+    tmp = Path(tempfile.mkdtemp())
+    conn = arch.open_archive(tmp)
+    arch.upsert_activities(conn, [
+        _run_summary(1, 1, "2026-07-10 06:00:00"),
+        _run_summary(2, 13, "2026-07-11 06:00:00"),
+    ])
+    asked = []
+
+    class FakeClient:
+        def get_activity_splits(self, aid):
+            asked.append(aid)
+            return {"lapDTOs": [{"distance": 1000, "duration": 330}]}
+
+    original = sg.CACHE_DIR
+    sg.CACHE_DIR = tmp / "cache"
+    try:
+        sg._laps_pass(FakeClient(), conn, limit=None)
+    finally:
+        sg.CACHE_DIR = original
+    assert asked == [2]
+    assert arch.laps_payload(conn, 2)[0]["distance"] == 1000
+    assert arch.laps_payload(conn, 1) is None
+    conn.close()
 
 
 if __name__ == "__main__":

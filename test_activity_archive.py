@@ -1356,6 +1356,82 @@ def test_stale_interval_rows_count_as_missing():
     conn.close()
 
 
+def _stamp(conn, activity_id, computed_at=None, laps_fetched_at=None):
+    """Pin the two timestamps the lap-staleness clause compares. Both columns
+    are written by `_now()` at 1 s resolution in production, so a test that
+    relied on wall-clock ordering could only probe one side of the boundary
+    (and only by sleeping); setting them explicitly is what makes all three
+    orderings below reachable."""
+    if computed_at is not None:
+        conn.execute("UPDATE run_intervals SET computed_at = ? WHERE activity_id = ?",
+                     (computed_at, activity_id))
+    if laps_fetched_at is not None:
+        conn.execute("UPDATE activities SET laps_fetched_at = ? WHERE activity_id = ?",
+                     (laps_fetched_at, activity_id))
+    conn.commit()
+
+
+def test_laps_arriving_after_a_document_make_it_pending_again():
+    """FINAL REVIEW I2: `_laps_pass` is capped per night, so the lap backlog
+    drains over days while the intervals pass scores everything at once. A
+    document computed BEFORE its run's laps landed never saw the device's own
+    boundaries — design D1's "device laps win outright" was silently bypassed
+    for exactly the runs it was written for."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    assert arch.runs_missing_intervals(conn, 1) == [], "current + no laps: settled"
+
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250,
+                               "intensityType": "ACTIVE"}])
+    _stamp(conn, 1, computed_at="2026-07-11T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert [r[0] for r in arch.runs_missing_intervals(conn, 1)] == [1], \
+        "laps that arrived AFTER the document was computed make it stale"
+    conn.close()
+
+
+def test_a_rescored_run_leaves_the_pending_set():
+    """The clause must not become a nightly rescoring loop: once the run has
+    been scored with its laps in hand, it settles — whatever the engine then
+    decided about them. Most of the archive's lapped runs are Garmin auto-lap
+    and will keep `source: 'stream'` for ever; a naive `laps_json IS NOT NULL
+    AND source <> 'laps'` predicate would rescore all of them every night."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250}])
+
+    # rescored after the laps landed — and the engine still said "stream"
+    # (auto-lap, or laps carrying no intensity labels)
+    _stamp(conn, 1, computed_at="2026-07-13T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert arch.runs_missing_intervals(conn, 1) == [], \
+        "a stream verdict reached WITH the laps in hand is final, not pending"
+
+    # a lap-sourced document is never pending on lap grounds at all
+    arch.upsert_run_intervals(conn, _interval_row(source="laps"))
+    _stamp(conn, 1, computed_at="2026-07-11T06:00:00+02:00",
+           laps_fetched_at="2026-07-12T06:00:00+02:00")
+    assert arch.runs_missing_intervals(conn, 1) == [], \
+        "source='laps' already encodes that the device data won"
+    conn.close()
+
+
+def test_lap_staleness_compares_instants_not_strings():
+    """The two stamps carry UTC offsets, and Germany's offset moves twice a
+    year. 02:30+01:00 is LATER than 03:00+02:00; a lexicographic compare of
+    the raw strings gets that backwards and would recompute a document that
+    already saw its laps (or, in the mirror case, skip one that did not)."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250}])
+    _stamp(conn, 1, computed_at="2026-10-25T02:30:00+01:00",     # 01:30 UTC
+           laps_fetched_at="2026-10-25T03:00:00+02:00")          # 01:00 UTC
+    assert arch.runs_missing_intervals(conn, 1) == [], (
+        "the document was computed 30 min AFTER the laps arrived in real time; "
+        "only a naive string compare would call it stale")
+    conn.close()
+
+
 def test_interval_document_round_trips():
     conn = _seeded()
     arch.upsert_run_intervals(conn, _interval_row(

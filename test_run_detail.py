@@ -583,6 +583,76 @@ def test_a_floor_drift_under_the_gate_only_scores_the_new_run():
     conn.close()
 
 
+def _structured_laps():
+    """The lap DTOs Garmin returns for a real workout: explicit intensity
+    roles, and boundaries the stream detector cannot reproduce — the warmup is
+    460 s here against the 600 s `_rep_streams()` actually contains, which is
+    what makes "the device's boundaries won" checkable rather than assumed.
+    Not auto-lap (the full laps are not all ~1 km), so the ±5 % veto does not
+    fire."""
+    laps = [{"distance": 1200.0, "duration": 460.0, "intensityType": "WARMUP"}]
+    for _ in range(5):
+        laps.append({"distance": 1000.0, "duration": 250.0,
+                     "intensityType": "ACTIVE", "averageSpeed": 4.0})
+        laps.append({"distance": 132.0, "duration": 60.0, "intensityType": "REST"})
+    laps.append({"distance": 780.0, "duration": 300.0, "intensityType": "COOLDOWN"})
+    return laps
+
+
+def test_laps_arriving_a_night_later_flip_the_document_to_the_device():
+    """FINAL REVIEW I2, end to end over the two passes that actually disagree
+    about speed.
+
+    `_laps_pass` is capped at LAPS_PER_SYNC per night, so a real 123-run lap
+    backlog drains over ~4 nights; `intervals_step` scores every streamed run
+    on night 1. Before this fix nothing invalidated a document when its laps
+    landed afterwards, so ~83 runs — including most of the archive's genuine
+    `hasIntensityIntervals` workout days — kept the weaker stream verdict
+    permanently and design D1 ("device laps win outright") never applied to
+    them."""
+    conn = arch.open_archive(Path(tempfile.mkdtemp()))
+    pad_ids = _seed_calibrated_archive(conn)
+    summary = dict(_run_summary(5, 13, "2026-07-10 06:00:00"),
+                   hasIntensityIntervals=True)
+    arch.upsert_activities(conn, [summary])
+    arch.write_streams(conn, 5, _rep_streams())
+
+    # ── night 1: the streams are scored; this run's laps are still queued ──
+    assert sg.derive_intervals(conn)["scored"] == len(pad_ids) + 1
+    night1 = arch.interval_document(conn, 5)
+    assert night1["source"] == "stream", "no laps yet — the stream is all we have"
+    assert night1["segments"][0]["durS"] == 600, "the stream's own warmup boundary"
+
+    # ── the lap backfill reaches this run ─────────────────────────────────
+    assert arch.write_laps(conn, 5, _structured_laps()) is True
+    pending = [aid for aid, _ in arch.runs_missing_intervals(
+        conn, sg.interval_lens.INTERVAL_VERSION)]
+    assert pending == [5], f"only the run whose laps landed is pending: {pending}"
+
+    # `computed_at` and `laps_fetched_at` both have 1 s resolution; without
+    # this the two stamps can share a second and the "settles" assertion at
+    # the bottom becomes a coin flip. The FLIP itself does not need it.
+    import time
+    time.sleep(1.1)
+
+    # ── night 2: the same engine, now with the device's own boundaries ────
+    assert sg.derive_intervals(conn)["scored"] == 1, \
+        "one run rescored — not a full-archive recompute"
+    night2 = arch.interval_document(conn, 5)
+    assert night2["source"] == "laps", \
+        "design D1: structured device laps win outright once they exist"
+    assert night2["confidence"] == 1.0, "the watch is not guessing"
+    assert night2["segments"][0]["durS"] == 460, \
+        "the boundaries are the DEVICE's, not a re-derivation from the stream"
+    assert night2["shape"] == "reps" and night2["set"]["found"] == 5
+    assert [s["role"] for s in night2["segments"][:3]] == ["warmup", "work", "recovery"], \
+        "roles come from intensityType verbatim"
+
+    # ── night 3: settled. The clause must not rescore this run for ever ───
+    assert sg.derive_intervals(conn)["scored"] == 0
+    conn.close()
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

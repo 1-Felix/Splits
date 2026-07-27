@@ -647,9 +647,35 @@ def runs_missing_laps(conn: sqlite3.Connection, limit: int | None = None) -> lis
 
 
 def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple]:
-    """(activity_id, start_time_local) of every archived run holding streams but
-    no run_intervals row at `version` — rows at a stale version count as
-    missing, which is how an INTERVAL_VERSION bump self-heals."""
+    """(activity_id, start_time_local) of every archived run whose interval
+    document is absent, stale-versioned, or older than the run's own lap data.
+
+    Version staleness is how an INTERVAL_VERSION bump self-heals.
+
+    The lap clause exists because the two acquisition passes run at different
+    SPEEDS. `_laps_pass` is capped at LAPS_PER_SYNC per night, so a 123-run lap
+    backlog drains over several nights, while the intervals pass scores every
+    streamed run on the FIRST night. Keying only on `lens_version` meant the
+    ~83 runs whose laps arrived later kept the weaker stream verdict for ever —
+    and those include most of the runs Garmin flags `hasIntensityIntervals`,
+    i.e. exactly the real workout days design D1 ("device laps win outright")
+    was written for. A document computed before its laps landed is stale even
+    though nothing about the engine changed.
+
+    Two guards keep that clause from becoming a nightly rescoring loop:
+    `i.source <> 'laps'` (a lap-sourced document has plainly already seen them)
+    and the timestamp comparison, which retires a run from the pending set as
+    soon as it has been rescored once with the laps in hand. Comparing
+    `laps_json IS NOT NULL AND source <> 'laps'` alone — the obvious form —
+    would leave every lapped-but-unstructured run (auto-lap 1 km splits: most
+    of the archive) pending FOREVER, rescored every night for an answer that
+    cannot change and drowning the pass's log line.
+
+    Both columns are `_now()` strings, so `datetime()` normalises their UTC
+    offsets before comparing — a plain string compare would misorder across a
+    DST change. `<=` rather than `<` because both stamps have 1 s resolution:
+    on a tie the run is rescored once more and then settles, which is the safe
+    direction (the unsafe one is never noticing the laps at all)."""
     return conn.execute(
         f"""SELECT a.activity_id, a.start_time_local
             FROM activities a
@@ -657,7 +683,10 @@ def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple
               ON i.activity_id = a.activity_id AND i.lens_version = ?
             WHERE a.detail_streams_json IS NOT NULL
               AND {_RUN_TYPE_SQL}
-              AND i.activity_id IS NULL
+              AND (i.activity_id IS NULL
+                   OR (a.laps_fetched_at IS NOT NULL
+                       AND i.source <> 'laps'
+                       AND datetime(i.computed_at) <= datetime(a.laps_fetched_at)))
             ORDER BY a.start_time_local""",
         (version,),
     ).fetchall()

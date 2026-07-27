@@ -15,6 +15,8 @@ documents are a disposable cache and the bump self-heals every row.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 INTERVAL_VERSION = 1
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
@@ -34,17 +36,18 @@ def speed_series(streams: dict) -> list[float | None]:
     if len(t) < 2 or len(src) != len(t):
         return []
     t0 = int(t[0])
-    elapsed_span = int(t[-1]) - t0
-    if elapsed_span < MIN_SPAN_S:
+    span = int(t[-1]) - t0
+    if span < MIN_SPAN_S:
         return []
-    grid_size = elapsed_span + 1
-    grid: list = [None] * grid_size
+    # Grid size is span + 1: inclusive of the endpoint sample, index i ↔ second i
+    # (matches distance_fn's grid sizing so both index the same way)
+    grid: list = [None] * (span + 1)
     for i, ts in enumerate(t):
         k = int(ts) - t0
-        if 0 <= k < grid_size and src[i] is not None:
+        if 0 <= k <= span and src[i] is not None:
             grid[k] = float(src[i])
     held = None
-    for k in range(grid_size):
+    for k in range(span + 1):
         if grid[k] is None:
             grid[k] = held
         else:
@@ -52,7 +55,7 @@ def speed_series(streams: dict) -> list[float | None]:
     return [v if (v is not None and v >= MOVING_MPS_MIN) else None for v in grid]
 
 
-def smooth(series: list, window: int = SMOOTH_WINDOW_S) -> list:
+def smooth(series: list, window: int = SMOOTH_WINDOW_S) -> list[float | None]:
     """Rolling median over the 1 Hz grid. A median (not a mean) because one
     GPS spike must not drag the window, and the window is sized against the
     30 s minimum bout so a real rep edge survives it."""
@@ -66,7 +69,7 @@ def smooth(series: list, window: int = SMOOTH_WINDOW_S) -> list:
     return out
 
 
-def distance_fn(streams: dict):
+def distance_fn(streams: dict) -> Callable[[int], float]:
     """second → cumulative metres, on the same 1 Hz grid as speed_series. Used
     to enforce the minimum-distance rule on a bout and to measure reps."""
     t = streams.get("t") or []

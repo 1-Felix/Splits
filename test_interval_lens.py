@@ -40,9 +40,16 @@ def test_speed_series_prefers_grade_adjusted():
 
 
 def test_speed_series_holds_across_sample_gaps():
-    """Garmin samples every ~2 s; the grid must hold the last reading, not hole."""
-    s = {"t": [0, 2, 4, 6], "d": [0, 6, 12, 18], "v": [3.0, 3.0, 3.0, 3.0]}
-    assert all(v == 3.0 for v in il.speed_series(s))
+    """Garmin samples every ~2 s; the grid must hold the last reading, not hole.
+    The span must clear MIN_SPAN_S or the guard returns [] and this proves
+    nothing — `all()` over an empty list is vacuously true."""
+    n = 31                                   # 0,2,…,60 → span 60, clears the guard
+    s = {"t": [i * 2 for i in range(n)],
+         "d": [round(i * 2 * 3.0) for i in range(n)],
+         "v": [3.0] * n}
+    out = il.speed_series(s)
+    assert len(out) == 61                    # one entry per second, endpoint included
+    assert all(v == 3.0 for v in out)        # every in-between second was held
 
 
 def test_standing_still_is_none_not_zero():

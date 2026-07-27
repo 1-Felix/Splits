@@ -332,6 +332,7 @@ from pathlib import Path
 import activity_archive as arch
 import ingest_builder as ib
 import insight_metrics as im
+import interval_lens
 
 
 def _tmpdir() -> Path:
@@ -810,6 +811,109 @@ def test_max_gets_interval_structure():
     assert detail["intervals"]["shape"] == "reps"
     assert detail["intervals"]["label"] == "4×1 km"
     assert detail["intervals"]["set"]["found"] == 4
+
+
+def test_the_archive_pass_banks_a_run_intervals_row():
+    """FINAL REVIEW I1: `upsert_run_intervals` had exactly one caller in the
+    tree — `sync_garmin.derive_intervals` — and an ingest-fed instance never
+    runs `sync_garmin`. So `/api/archive/activities/:id` never returned
+    `intervals` for the second athlete and the rep table, the rep bands and
+    the `/archive` shape chip were STRUCTURALLY unreachable for him: four
+    tasks of UI he could not see however well the detection worked. The
+    design says the opposite ("`ingest_builder` … writing the same document
+    to his own archive").
+
+    `calibration` is passed explicitly because this fixture is one 47-minute
+    run — nowhere near `WORK_FLOOR_MIN_SAMPLES` — so a floor derived from it
+    would be None and every document would honestly read "steady", which
+    would make the row's CONTENT untestable even once the row exists."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    ib.build_archive(tmp, [run], PROFILE, calibration=(190, None, 3.0))
+    conn = _db(tmp)
+    rows = conn.execute(
+        "SELECT activity_id, lens_version, start_time_local, shape, label, "
+        "       source, confidence, work_dist_m, work_dur_s, doc_json "
+        "FROM run_intervals").fetchall()
+    conn.close()
+    assert len(rows) == 1, "the archive pass must bank one document per run"
+    (aid, version, start, shape, label, source, conf, dist, dur, doc_json) = rows[0]
+    assert aid == ib.derive_activity_id("iv"), "keyed to the run's own archive id"
+    assert version == interval_lens.INTERVAL_VERSION
+    assert start == run["startTimeLocal"]
+    assert (shape, label, source) == ("reps", "4×1 km", "stream"), \
+        "Samsung writes no laps — the stream decides, and it found the real set"
+    assert 0 < conf <= 1.0
+    doc = json.loads(doc_json)
+    # the FULL document, not compact(): /run/:id renders `segments`, and a
+    # compact document would leave the rep table and the rep bands empty
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 4, f"four work segments ride in doc_json: {len(doc['segments'])} segs"
+    assert dist == doc["quality"]["workDistM"] and dur == doc["quality"]["workDurS"], \
+        "the promoted columns mirror the document the API serves"
+    assert abs(dist - 4000) <= 40, f"4 × 1 km of work, not {dist} m"
+
+
+def test_the_archive_pass_is_write_once_and_self_heals_intervals():
+    """The row follows the same rule as every other derived artifact here:
+    written when missing, left alone when current, replaced when the lens
+    version moves. Without the version half, an INTERVAL_VERSION bump would
+    heal Felix's archive and silently strand Max's."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    cal = (190, None, 3.0)
+    ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    aid = ib.derive_activity_id("iv")
+
+    def stored():
+        conn = _db(tmp)
+        row = conn.execute("SELECT lens_version, computed_at, shape FROM "
+                           "run_intervals WHERE activity_id = ?", (aid,)).fetchone()
+        conn.close()
+        return row
+
+    first = stored()
+    import time
+    time.sleep(1.1)              # computed_at has 1 s resolution — churn would show
+    ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    assert stored() == first, "a current row is never rewritten"
+
+    real = interval_lens.INTERVAL_VERSION
+    interval_lens.INTERVAL_VERSION = real + 1
+    try:
+        ib.build_archive(tmp, [run], PROFILE, calibration=cal)
+    finally:
+        interval_lens.INTERVAL_VERSION = real
+    healed = stored()
+    assert healed[0] == real + 1, "a version bump recomputes the document"
+    conn = _db(tmp)
+    count = conn.execute("SELECT COUNT(*) FROM run_intervals").fetchone()[0]
+    conn.close()
+    assert count == 1, "the stale row is REPLACED, never duplicated"
+
+
+def test_a_pruned_duplicate_takes_its_interval_document_with_it():
+    """A run that lost a duplicate group leaves `activities`; its document
+    must leave with it, or `/archive` keeps showing a shape chip for a run
+    that no longer exists."""
+    tmp = _tmpdir()
+    run = _interval_run()
+    cal = (190, None, 3.0)
+    ib.build_archive(tmp, [run, STEADY_RUN], PROFILE, calibration=cal)
+    ids = {uid: ib.derive_activity_id(uid) for uid in ("iv", "sp")}
+
+    def banked():
+        conn = _db(tmp)
+        rows = {r[0] for r in conn.execute("SELECT activity_id FROM run_intervals")}
+        conn.close()
+        return rows
+
+    assert banked() == set(ids.values()), "both runs start with a document"
+    # the duplicate loser is gone from the banked set AND named in prune_uids —
+    # exactly what `main()` passes after `dedupe_overlapping` drops it
+    ib.build_archive(tmp, [STEADY_RUN], PROFILE, calibration=cal, prune_uids=["iv"])
+    assert banked() == {ids["sp"]}, \
+        "the pruned run's document left with it; the survivor's stayed"
 
 
 def test_compact_summary_omits_segments():

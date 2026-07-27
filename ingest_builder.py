@@ -246,6 +246,29 @@ def _zone_seconds(hr_samples: list[dict], bounds: list[int]) -> list[float]:
     return secs
 
 
+def interval_document(run: dict, max_hr: int, rhr=None,
+                      work_floor: float | None = None):
+    """The FULL interval document for one banked run — the same engine, the
+    same inputs and the same document `sync_garmin.derive_intervals` produces
+    for the Garmin athlete (design: one engine, two producers). `source` is
+    always "stream": Samsung writes no ExerciseLap, so there is nothing to
+    override with.
+
+    `run_detail` banks this document's `compact()` form (no segments) inside
+    the distilled detail for the cockpit; `build_archive` banks THIS one in
+    `run_intervals`, which is what `/api/archive/activities/:id` serves. Both
+    surfaces therefore describe one derivation, never two.
+
+    None when the run carries no usable speed series — the same rule
+    `run_detail` already applies (design: "a run with no SpeedRecord gets no
+    document at all")."""
+    cols = _columnar(run)
+    if not cols:
+        return None
+    return interval_lens.build_document(
+        cols, bounds=_zone_bounds(max_hr, rhr), work_floor=work_floor)
+
+
 def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None):
     """The recent-run drill-down `detail`, shaped exactly like the Garmin
     distiller's contract (splits / hrSeries / driftBpm / zoneMin / splitShape;
@@ -272,8 +295,8 @@ def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None
         "load": None,
         "elevGain": round(elev) if elev is not None else None,
         "splitShape": _split_shape(splits),
-        "intervals": interval_lens.compact(interval_lens.build_document(
-            _columnar(run), bounds=_zone_bounds(max_hr, rhr), work_floor=work_floor)),
+        "intervals": interval_lens.compact(
+            interval_document(run, max_hr, rhr, work_floor)),
     }
 
 
@@ -825,6 +848,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
             if aid is None:
                 continue
             conn.execute("DELETE FROM run_metrics WHERE activity_id = ?", (aid,))
+            conn.execute("DELETE FROM run_intervals WHERE activity_id = ?", (aid,))
             conn.execute("DELETE FROM activities WHERE activity_id = ?", (aid,))
             conn.commit()
             print(f"  – pruned archived duplicate {aid} ({uid})", flush=True)
@@ -856,6 +880,38 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                 elif changed and not missing[1]:
                     conn.execute("UPDATE activities SET detail_distilled_json = NULL"
                                  " WHERE activity_id = ?", (aid,))
+                    conn.commit()
+            # the interval document — the row /api/archive/activities/:id
+            # serves as `intervals`, and the row /archive reads its shape chip
+            # from. `upsert_run_intervals` had exactly ONE caller before this
+            # (sync_garmin), which no ingest-fed instance ever runs, so the rep
+            # table, the rep bands and the archive chip were structurally
+            # unreachable for the second athlete however good the detection was.
+            # Gated on the same stale/changed/missing rule as the distilled
+            # detail, so the steady state stays write-once.
+            has_intervals = conn.execute(
+                "SELECT 1 FROM run_intervals WHERE activity_id = ? AND lens_version = ?",
+                (aid, interval_lens.INTERVAL_VERSION)).fetchone()
+            if stale or changed or not has_intervals:
+                doc = interval_document(run, max_hr, rhr, work_floor)
+                if doc:
+                    activity_archive.upsert_run_intervals(conn, {
+                        "activity_id": aid,
+                        "lens_version": interval_lens.INTERVAL_VERSION,
+                        "start_time_local": run["startTimeLocal"],
+                        "shape": doc["shape"], "label": doc.get("label"),
+                        "confidence": doc.get("confidence"),
+                        "source": doc["source"],
+                        "work_dist_m": (doc.get("quality") or {}).get("workDistM"),
+                        "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
+                        "doc_json": json.dumps(doc, ensure_ascii=False),
+                    })
+                elif changed:
+                    # a re-pushed run that lost its speed samples must lose its
+                    # document too, or /run/:id renders reps that no longer
+                    # have a stream behind them
+                    conn.execute("DELETE FROM run_intervals WHERE activity_id = ?",
+                                 (aid,))
                     conn.commit()
             has_metrics = conn.execute(
                 "SELECT 1 FROM run_metrics WHERE activity_id = ? AND metrics_version = ?",

@@ -46,6 +46,18 @@ function makeArchive(dir) {
   for (let i = 0; i < 5; i++) {
     ins.run(id++, `2026-0${i + 1}-15 18:00:00`, "strength_training", "Gym", null, 3600, 110, 140, null, null);
   }
+  // add-interval-lens: activity_id 123 ("Base Run 24", i=23 → 2026-12-24) is
+  // the newest of all 60 fixture rows, so it lands first on the unfiltered
+  // first page — a run_intervals row here gives the shape-chip assertion a
+  // real, deterministic row to render from (not a hopeful "some row somewhere").
+  db.exec(`CREATE TABLE run_intervals (
+    activity_id INTEGER PRIMARY KEY, lens_version INTEGER NOT NULL,
+    start_time_local TEXT NOT NULL, shape TEXT NOT NULL, label TEXT,
+    confidence REAL, source TEXT NOT NULL, work_dist_m REAL, work_dur_s REAL,
+    doc_json TEXT NOT NULL, computed_at TEXT NOT NULL)`);
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    123, 1, "2026-12-24 07:30:00", "reps", "5×1 km", 0.86, "stream",
+    5000, 1250, "{}", "2026-07-27T09:00:00");
   db.close();
 }
 
@@ -100,6 +112,11 @@ try {
     [...document.querySelectorAll(".arch-row > span:nth-child(2)")].map((e) => e.textContent));
   const sorted = [...dates].sort().reverse();
   assert.deepStrictEqual(dates, sorted, "rows are newest-first");
+
+  // ── shape chips let you find your interval sessions by eye ────────────────
+  step = "shape chips";
+  assert.ok(await page.locator(".arch-shape").count() > 0, "shape chips render");
+  assert.match(await page.locator(".arch-shape").first().innerText(), /×|block|progression/);
 
   step = "load more";
   await page.click("text=Load more");

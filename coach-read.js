@@ -30,6 +30,24 @@ export function coachRead(run, weekPlan, maxHR) {
     return `Easy on paper — ${temp} °C pushed HR to threshold (${run.hr} avg, +${drift} drift). Bank recovery.`;
   if (intentEasy && drift >= 12)
     return `Big cardiac drift (+${drift}) — heat, dehydration, or too hot a start.`;
+  // add-interval-lens: when the run had real structure, name it. splitShape's
+  // first-third-vs-last-third guess is meaningless on a rep session — warmup
+  // and cooldown cancel out and every interval workout reads "even".
+  const iv = run.detail && run.detail.intervals;
+  if (iv && iv.shape === 'reps' && iv.set) {
+    const parts = [iv.label || (iv.set.found + ' reps')];
+    if (iv.set.paceS) parts.push('@ ' + fmtPace(iv.set.paceS));
+    if (iv.set.prescribed != null && iv.set.found !== iv.set.prescribed) {
+      parts.push('(' + iv.set.found + ' of ' + iv.set.prescribed + ')');
+    } else if (iv.set.fadePct != null && Math.abs(iv.set.fadePct) >= 3) {
+      parts.push(iv.set.fadePct > 0 ? 'fading ' + iv.set.fadePct.toFixed(1) + '%'
+                                    : 'negative ' + Math.abs(iv.set.fadePct).toFixed(1) + '%');
+    }
+    return parts.join(' ') + '.';
+  }
+  if (iv && iv.shape === 'block' && iv.label) {
+    return 'Sustained ' + iv.label + '.';
+  }
   if (d.splitShape === "negative")
     return "Negative split — controlled, finished stronger than you started.";
   if (intentEasy && d.splitShape === "positive")

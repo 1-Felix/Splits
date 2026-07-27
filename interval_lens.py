@@ -23,6 +23,8 @@ INTERVAL_VERSION = 1
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
 MOVING_MPS_MIN = 0.5       # below this the athlete is stopped, not recovering
 MIN_SPAN_S = 60            # shorter than this and there is nothing to segment
+SEPARATION_MIN = 0.12      # work must be >=12 % faster than rest to be structure
+MIN_MOVING_SAMPLES = 60    # fewer than a minute of moving data decides nothing
 
 
 def speed_series(streams: dict) -> list[float | None]:
@@ -90,3 +92,33 @@ def distance_fn(streams: dict) -> Callable[[int], float]:
         else:
             held = grid[k]
     return lambda s: grid[min(max(int(s), 0), span)]
+
+
+def split_classes(series: list):
+    """1-D 2-means over the moving samples → (lo_mps, hi_mps, separation), or
+    None when the run has no two-class structure at all.
+
+    Two means rather than a threshold on the median because on a session that
+    is half reps the median sits BETWEEN work and rest and belongs to neither.
+    `separation` is the relative speed gap; below SEPARATION_MIN the run is
+    steady and detection stops here — this is the guard that keeps an easy run
+    from reading as fartlek."""
+    vals = sorted(v for v in series if v is not None)
+    if len(vals) < MIN_MOVING_SAMPLES:
+        return None
+    lo, hi = vals[0], vals[-1]
+    if hi <= 0:
+        return None
+    for _ in range(25):
+        mid = (lo + hi) / 2
+        low = [v for v in vals if v <= mid]
+        high = [v for v in vals if v > mid]
+        if not low or not high:
+            return None
+        new_lo, new_hi = sum(low) / len(low), sum(high) / len(high)
+        converged = abs(new_lo - lo) < 1e-6 and abs(new_hi - hi) < 1e-6
+        lo, hi = new_lo, new_hi
+        if converged:
+            break
+    sep = (hi - lo) / hi
+    return (lo, hi, sep) if sep >= SEPARATION_MIN else None

@@ -78,3 +78,29 @@ def test_smooth_preserves_a_real_edge():
 def test_distance_fn_reads_cumulative_metres():
     at = il.distance_fn(make_streams([(100, 3.0)]))
     assert at(100) - at(0) == 297  # 99 whole-second steps of 3 m, rounded
+
+
+def test_split_classes_finds_two_speeds():
+    s = il.smooth(il.speed_series(make_streams([(300, 2.5), (300, 4.0)])))
+    lo, hi, sep = il.split_classes(s)
+    assert 2.4 < lo < 2.7
+    assert 3.8 < hi < 4.1
+
+
+def test_steady_run_has_no_separation():
+    """The whole point: an easy run must fall through as unstructured."""
+    s = il.smooth(il.speed_series(make_streams([(1800, 3.0)])))
+    assert il.split_classes(s) is None
+
+
+def test_gentle_drift_is_not_structure():
+    """A run that drifts 5 % over an hour is not an interval session."""
+    spans = [(600, 3.0), (600, 2.95), (600, 2.9)]
+    s = il.smooth(il.speed_series(make_streams(spans)))
+    assert il.split_classes(s) is None
+
+
+def test_separation_is_the_relative_speed_gap():
+    s = il.smooth(il.speed_series(make_streams([(300, 2.0), (300, 4.0)])))
+    _, _, sep = il.split_classes(s)
+    assert 0.45 < sep < 0.55  # (4 − 2) / 4

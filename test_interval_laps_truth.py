@@ -47,3 +47,41 @@ def test_every_fixture_workout_is_read_as_structured():
         summary, laps = load_workout(date)
         assert il.laps_are_structured(summary, laps) is True, \
             f"{date} must take the lap path"
+
+
+@pytest.mark.parametrize("date,found,label", [
+    ("2026-04-10", 3, "3×2 km"),      # was 5×2 km — warmup and cooldown counted
+    ("2026-03-20", 5, "5×1 km"),      # was "7 reps" — both 2 km bookends counted
+    ("2025-12-12", 6, "6×300 m"),     # was 7×300 m — a jog-in counted
+    ("2026-05-29", 4, "4×1 km"),      # was 5×1 km — a post-cooldown lap counted
+    ("2025-10-17", 6, None),          # was "8 reps"; label asserted separately
+])
+def test_real_workouts_recover_their_true_rep_count(date, found, label):
+    doc = build(date)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == found, f"{date}: {WORKOUTS[date]['name']}"
+    if label is not None:
+        assert doc["label"] == label
+
+
+@pytest.mark.parametrize("date,found,label", [
+    ("2025-11-21", 8, "8×200 m"),     # eight genuine 90 s hill reps
+    ("2026-06-26", 3, "1-2-1 km"),    # the pyramid: no repeated step
+    ("2026-07-10", 5, "5×1 km"),      # already correct before this change
+])
+def test_correct_workouts_are_left_alone(date, found, label):
+    doc = build(date)
+    assert doc["set"]["found"] == found, f"{date} must not change"
+    assert doc["label"] == label
+
+
+def test_no_real_workout_loses_span_coverage():
+    """Across every fixture: demotion never deletes."""
+    for date in WORKOUTS:
+        doc = build(date)
+        segs = doc["segments"]
+        if not segs:
+            continue
+        assert len(segs) == len(load_workout(date)[1]), f"{date}: a lap vanished"
+        for a, b in zip(segs, segs[1:]):
+            assert a["t1"] == b["t0"] and a["d1"] == b["d0"], f"{date}: gap"

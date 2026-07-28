@@ -376,7 +376,7 @@ def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
         return repeated
     # every work step distinct — a genuinely varied session (a pyramid). The
     # only thing still disqualifying is carrying no step at all.
-    return {s for s in counts}
+    return set(counts)
 
 
 def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:

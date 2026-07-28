@@ -120,14 +120,21 @@ re-role implementation beneath them.
 `shape = "reps" if len(work) >= 2 else ("block" if work else "steady")` with no
 minimum on the block case, while the stream path has always applied
 `BLOCK_MIN_S` (300 s) / `BLOCK_MIN_M` (1500 m). The laps branch gains the same
-test.
+test — **on the same OR basis**: `classify()` reads
+`if b - a >= BLOCK_MIN_S or dist >= BLOCK_MIN_M`, so either arm alone makes a
+block, and the laps branch must match it or the two producers disagree about
+what a block is. (Corrected after Task 3's review, which caught this section
+claiming parity while the implementation used AND.)
 
 This matters more after §2, which makes the single-surviving-work-lap case
 common. Measured blast radius — exactly two runs flip to `steady`, both
 correctly:
 
-- `2024-07-22 Run Walk Run®`, 205 m / 62 s — **closes P2.7a**;
-- `2024-07-13 Einstufungslauf`, 801 m / 300 s, currently asserting `5 min block`.
+- `2024-07-22 Run Walk Run®`, 205 m / 62 s — fails both arms. **Closes P2.7a.**
+
+`2024-07-13 Einstufungslauf` (801 m / **exactly** 300 s) was expected to flip
+too, and does not: its duration sits precisely on `BLOCK_MIN_S`, so the OR's
+duration arm carries it and it stays a `block`. One flip, not two.
 
 All six genuine tempo blocks (2000–3040 m) are untouched.
 

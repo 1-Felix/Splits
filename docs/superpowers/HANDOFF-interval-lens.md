@@ -1,18 +1,102 @@
 # Interval lens — handoff
 
-**Merged:** 2026-07-27, `46e8100` on `main` (37 commits from `feat/interval-lens`).
-**Suite at merge:** 402 Python passed / 2 skipped, 27 `.mjs` suites ALL PASS.
-**Design:** `docs/superpowers/specs/2026-07-27-interval-lens-design.md`
-**Plan:** `docs/superpowers/plans/2026-07-27-add-interval-lens.md`
-**Full execution ledger** (every task, every finding, every deferral):
-`.superpowers/sdd/2026-07-27-add-interval-lens/progress.md` — gitignored, local only.
-
 This file is the list of what is **not** done. Everything here was found, understood
 and deliberately deferred; none of it is a surprise waiting to be discovered.
 
+## Live state — 2026-07-28
+
+| | |
+|---|---|
+| `main` | `636474b` (feature merge `9f3ac32`) |
+| `INTERVAL_VERSION` | **4** — all 168 documents recomputed at v4 in production |
+| Deployed | NUC, same day. `verify_archive` exit 0, no orphaned processes |
+| Suite | **458 Python passed / 2 skipped**; `test_run_page.mjs`, `test_archive_page.mjs`, `test_coach_read.mjs` ALL PASS |
+| Shapes in production | `reps 24 / steady 130 / block 12 / progression 2` · sources `stream 145 / laps 23` · floor `2.700` |
+| Athletes | Felix (Garmin, 168 runs, 0 uncalibrated) · Max (Health Connect, archive days old, uncalibrated) |
+
+**Two changes have shipped against this lens.** Both designs and plans are in
+`docs/superpowers/`; their SDD ledgers were deleted on completion, so **git
+history is the record** — `git log --oneline f28f48e..636474b` is change 2.
+
+| | shipped | design / plan |
+|---|---|---|
+| Change 1 — the lens itself | 2026-07-27, `46e8100`, 37 commits | `specs/2026-07-27-interval-lens-design.md` · `plans/2026-07-27-add-interval-lens.md` |
+| Change 2 — the workout step decides what is a rep | 2026-07-28, `9f3ac32`, 17 commits | `specs/2026-07-28-interval-lens-workout-steps-design.md` · `plans/2026-07-28-interval-lens-workout-steps.md` |
+
+*(Confusingly, the change-1 plan's own text calls the prescription parser
+"Change 2". That one has NOT shipped — see "What to do next" below. The
+numbering in this table is by what actually landed.)*
+
+## Working on this in a fresh session
+
+```bash
+# Python — NOTE: plain `python` on this machine has NO pytest
+rm -rf __pycache__ && .venv/Scripts/python.exe -m pytest -q      # 458 passed / 2 skipped
+.venv/Scripts/python.exe -m pytest test_interval_lens.py test_interval_laps_truth.py -v
+
+# Browser / JS suites (Playwright + a real Chromium, both installed)
+node test_run_page.mjs        # /run/:id — rep card, headers, calibrated notice
+node test_archive_page.mjs
+node test_coach_read.mjs
+node tools/style-audit.mjs layout    # does NOT cover /run — see N7
+
+# NUC (production)
+ssh felix@192.168.0.37
+docker top splits                                     # ALWAYS check for orphans first
+cd ~/dev/docker-compose-files/splits
+docker compose pull splits && docker compose up -d splits
+curl -s -X POST http://localhost:5732/api/sync        # serve.mjs owns the sync lock
+```
+
+**Deploying is CI-mediated.** `.github/workflows/docker-publish.yml` builds
+`ghcr.io/1-felix/splits:latest` on **push to `main`** only. So: merge → wait for
+the run (`gh run watch <id> --exit-status`) → `docker compose pull` on the NUC.
+There is no direct-push deploy path.
+
+### Four hazards, all of which have bitten
+
+1. **Never wrap `ssh … docker …` in a client-side `timeout`.** It kills the SSH
+   client, not the remote process; the orphan keeps a write-capable SQLite
+   handle and the next writer dies with `database is locked`. Use background
+   execution. The image has neither `ps` nor `kill`, and the orphan runs as
+   root — `docker top splits` from the host to find it, `docker compose restart
+   splits` to clear it. Full detail in "NUC operations" below.
+2. **`rm -rf __pycache__` before believing any unexpected red.** A stale `.pyc`
+   whose `(mtime, size)` matched has twice made a must-fail test *pass*. Git's
+   index shares that stat cache, so `git checkout -- <file>` silently no-ops
+   after a length-preserving edit — `rm` the file first.
+3. **The local `activity-archive.db` has NO lap payloads** (548 activities, 0
+   with `laps_json`). `test_interval_truth.py` therefore cannot reach the lap
+   path at all. Any conclusion drawn locally about a run that is *lap-sourced in
+   production* is worthless — that mistake has been made twice (see P2.3 and
+   §5.3 of the change-2 design). Lap-path coverage lives in
+   `tests/fixtures/lap_workouts.json` + `test_interval_laps_truth.py`, which pin
+   all 23 structured lap-sourced workouts. **Extend the fixture; do not lean on
+   the archive.**
+4. **`plan-data.js` and `garmin-data.js` in the repo are LIVE symlinks** to the
+   homeserver volume. Edits touch production data.
+
+## What to do next
+
+The lens is complete as a *detector*. The next real work is the piece it was
+built to enable — **the prescription parser, P3.1 + P3.2 below**: parse
+`plan-data.js`'s `segments[].val` strings (`4×1 km @ 5:25–5:35`), fill
+`build_document`'s `prior` (always `None` today per design D8), and report
+rep-level `plan_compliance`. `build_document` already takes `prior` and every
+document carries `guidedBy: null`, so the contract needs no reshaping.
+
+**P3.1 is a blocker and must land first** — the rep floor breaks the honesty
+contract at 2-of-4, which is exactly the bailed session the guardrail exists
+for. Note it interacts with P2.7b: whatever `expect_reps` logic lands must
+apply to **both** paths, not just the stream one.
+
+Everything else here is optional. If you want a small, high-value one instead,
+**N1** (the rep card mis-pairs recoveries after a mid-set demotion) is the most
+likely next user-visible breakage.
+
 ---
 
-## UPDATE 2026-07-28 — "the workout step decides what is a rep" shipped
+## Change 2 — "the workout step decides what is a rep" (2026-07-28)
 
 **Merged:** `9f3ac32` on `main` (17 commits). **Deployed and verified on the NUC
 the same day**; all 168 documents recomputed at `INTERVAL_VERSION` 4,
@@ -68,7 +152,7 @@ production is worthless (see P2.3 above, and §5.3 of the design).
 
 ---
 
-## What shipped
+## Change 1 — what the lens itself shipped (2026-07-27)
 
 `interval_lens.py` decides what structure a run had — `reps` / `block` /
 `progression` / `steady` — from its sample streams, preferring Garmin lap data
@@ -431,20 +515,52 @@ you have to `rm` the file before it will restore.
 ## How to work on any of this
 
 The document is a **disposable, versioned cache**. Change a threshold, bump
-`INTERVAL_VERSION`, and the next sync recomputes all 165 documents — seconds,
+`INTERVAL_VERSION`, and the next sync recomputes all 168 documents — seconds,
 no migration. That is the design working as intended; use it freely.
 
 Two things worth doing before any engine change:
 
-1. **Run the archive sweep.** Score every run read-only and check the shape
-   distribution against the merge baseline (`steady 138 / reps 19 / block 5 /
-   progression 2`, floor 2.700). Synthetic tests pass while the engine is wrong
-   on real data — that is exactly how the 62 % over-detection survived 54 green
-   unit tests.
+1. **Run the archive sweep, read-only, against production.** Score every run and
+   check the distribution against the current baseline — `reps 24 / steady 130 /
+   block 12 / progression 2`, sources `stream 145 / laps 23`, floor `2.700`.
+   Synthetic tests pass while the engine is wrong on real data: that is exactly
+   how the 62 % over-detection survived 54 green unit tests, and how the
+   ACTIVE-lap contamination survived 402.
+
+   Copy to the NUC, then `docker cp … splits:/tmp/` and
+   `docker exec splits python /tmp/sweep.py`:
+
+   ```python
+   import json, sqlite3, collections
+   c = sqlite3.connect('file:/data/activity-archive.db?mode=ro', uri=True)   # READ-ONLY
+   c.row_factory = sqlite3.Row
+   rows = [json.loads(r[0]) for r in c.execute('SELECT doc_json FROM run_intervals')]
+   print(collections.Counter(d['shape'] for d in rows))
+   print(collections.Counter(d['source'] for d in rows))
+   q = ("SELECT a.start_time_local ts, a.name, i.doc_json "
+        "FROM run_intervals i JOIN activities a USING(activity_id) "
+        "WHERE json_extract(i.doc_json,'$.source')='laps' "
+        "ORDER BY a.start_time_local")
+   for r in c.execute(q):
+       d = json.loads(r['doc_json']); st = d.get('set') or {}
+       print(r['ts'][:10], d['shape'], d.get('label'), st.get('found'),
+             st.get('paceCvPct'), st.get('fadePct'), r['name'][:40])
+   ```
+
+   Change 2's verified output is quoted in full in the "Live state" block at the
+   top of this file — diff against it.
 
 2. **Mutation-test the change.** Break the thing you just wrote and confirm the
    suite goes red. This branch found **24 defects, every single one a test that
    did not exercise what it claimed** — assertions satisfied by empty results,
    by absent elements, by a case-insensitive locator matching a page wordmark,
-   by comparing a value to a re-derivation of itself. The suite kills 24 of 33
-   mutations today; the survivors are listed in P2.5 and P2.6.
+   by comparing a value to a re-derivation of itself.
+
+   Change 2 found five more the same way, every one in code that had already
+   passed a task review: a rule that demoted every rep when step indices sat
+   only on non-work laps; an `AND` where the stream path uses `OR`; a block
+   floor arm that could be deleted with the suite still green; a header
+   alignment assertion that could not fail, because a `flex:1` spacer absorbed
+   the very delta it measured; and a "both producers agree" test that only ever
+   exercised one of them. **Mutation-testing is not optional here.** Change 1's
+   surviving mutations are listed in P2.5 and P2.6.

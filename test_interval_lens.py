@@ -776,6 +776,42 @@ def test_lap_sourced_segments_gain_gap_from_the_stream():
     assert all(r["gapS"] == 227 for r in doc["set"]["reps"])
 
 
+def test_lap_gap_comes_from_the_device_when_it_carries_one():
+    """`segments_from_laps` derived gapS by windowing the stream's gap grid,
+    on the docstring's claim that "a lapDTO carries no grade-adjusted speed".
+    It does: avgGradeAdjustedSpeed is present on 553 of the archive's 565
+    laps. The device value is also immune to M3 — lap `duration` is MOVING
+    time, so on a paused run the accumulated t0 drifts off the stream's
+    elapsed axis and the windowed lookup reads the wrong slice."""
+    lap = _lap(1000, 300, "ACTIVE")
+    lap["avgGradeAdjustedSpeed"] = 4.0          # 250 s/km
+    segs = il.segments_from_laps([lap], gaps=[2.0] * 400)   # 500 s/km if windowed
+    assert segs[0]["gapS"] == 250, "the device's own number, not the stream's"
+
+
+def test_lap_gap_falls_back_to_the_stream_grid():
+    lap = _lap(1000, 300, "ACTIVE")              # no avgGradeAdjustedSpeed
+    segs = il.segments_from_laps([lap], gaps=[4.0] * 400)
+    assert segs[0]["gapS"] == 250
+
+
+def test_lap_gap_is_none_when_neither_source_has_one():
+    lap = _lap(1000, 300, "ACTIVE")
+    assert il.segments_from_laps([lap], gaps=None)[0]["gapS"] is None
+
+
+def test_lap_gap_of_exactly_zero_falls_back_rather_than_reporting_zero():
+    """A standing-rest lap can legitimately average 0 m/s grade-adjusted
+    speed, but `_pace_s_per_km(0)` cannot turn that into a sane pace — it is
+    the sentinel for "no data" everywhere else in this module. So a device
+    value of exactly 0 is treated as ABSENT, and the lookup falls back to the
+    windowed stream grid, same as a missing field would."""
+    lap = _lap(1000, 300, "ACTIVE")
+    lap["avgGradeAdjustedSpeed"] = 0.0
+    segs = il.segments_from_laps([lap], gaps=[4.0] * 400)
+    assert segs[0]["gapS"] == 250, "zero is not a usable device pace; the stream wins"
+
+
 def test_steady_run_still_gets_a_document():
     """'Looked, found nothing' must never look like 'never looked'."""
     doc = il.build_document(make_streams([(2400, 3.0)]))

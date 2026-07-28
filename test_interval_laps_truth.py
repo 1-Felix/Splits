@@ -99,6 +99,15 @@ def test_real_blocks_meet_the_block_floor(date, shape):
     assert build(date)["shape"] == shape
 
 
+def test_real_reps_carry_a_device_gap():
+    """Every fixture lap has avgGradeAdjustedSpeed, so no real rep should be
+    falling back — the GAP column was empty on precisely the athlete's genuine
+    workout days before it was filled at all."""
+    doc = build("2026-07-10")
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert work and all(s["gapS"] is not None for s in work)
+
+
 def test_no_real_workout_loses_span_coverage():
     """Across every fixture: demotion never deletes."""
     for date in WORKOUTS:

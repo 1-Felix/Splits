@@ -515,12 +515,23 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     guessing: boundaries, roles and per-lap statistics all come from the
     device, and nothing here re-derives them from the stream.
 
-    `gaps` is the one exception, and it is an addition rather than a
-    re-derivation: a lapDTO carries no grade-adjusted speed, so without it the
-    GAP column is empty on precisely the runs that earn a lap-sourced document
-    — the athlete's genuine workout days. The lap clock is cumulative from the
-    activity start, which is the same origin as the 1 Hz grid, so a lap's
-    [t0, t1) indexes straight into it."""
+    `gaps` is a FALLBACK, not the primary source. A lapDTO usually carries
+    `avgGradeAdjustedSpeed` (553 of this archive's 565 laps), and the device's
+    own number is preferred: it is measured over exactly the lap, whereas the
+    windowed lookup indexes the 1 Hz grid by a clock accumulated from lap
+    `duration` — MOVING time — so on a paused run it drifts off the stream's
+    elapsed axis and reads the wrong slice (handoff M3). `gaps` covers the
+    older payloads that have no such field, so the GAP column is not empty on
+    precisely the runs that earn a lap-sourced document — the athlete's
+    genuine workout days. The lap clock is cumulative from the activity start,
+    which is the same origin as the 1 Hz grid, so a lap's [t0, t1) indexes
+    straight into it.
+
+    A device value of exactly 0 (a standing-rest lap) is treated as ABSENT,
+    not as "zero pace": `_pace_s_per_km(0)` cannot produce a sane number
+    either way, so `lap.get(...)` — falsy on 0, None and missing keys alike —
+    falls through to the windowed lookup rather than reporting a nonsense
+    pace."""
     segs = []
     t0 = 0.0
     d0 = 0.0
@@ -538,7 +549,9 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
             "d0": int(round(d0)), "d1": int(round(d0 + dist)),
             "durS": int(round(dur)), "distM": int(round(dist)),
             "paceS": _pace_s_per_km(speed),
-            "gapS": _window_pace(gaps, int(round(t0)), int(round(t0 + dur))),
+            "gapS": _pace_s_per_km(lap["avgGradeAdjustedSpeed"])
+                    if lap.get("avgGradeAdjustedSpeed")
+                    else _window_pace(gaps, int(round(t0)), int(round(t0 + dur))),
             "hr": int(lap["averageHR"]) if lap.get("averageHR") else None,
             "cad": int(round(lap["averageRunCadence"] * 2))
                    if lap.get("averageRunCadence") else None,

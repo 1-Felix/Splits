@@ -421,11 +421,12 @@ def set_stats(bouts, series, dist_at, hr: list | None,
     its `gapS`. `raw` defaults to `series` so a caller with only one grid (a
     test, a payload with no `v`) keeps the old behaviour.
 
-    The split matters for `fadePct` and `paceCvPct`, which stay on the
-    DETECTION signal: a set of reps run up and back down a drag is not a fade,
-    and saying so is the whole reason D5 exists. The reported paces are the raw
-    ones because that is what the athlete ran and what the rep table shows next
-    to them.
+    `series` decides WHERE the reps are; `raw` decides what every reported
+    number says. `paceCvPct` and `fadePct` used to ride `series`, which put
+    them on a different signal from the `paceS` printed beside them and from
+    the deviation bars drawn from it — a hilly set fanned its bars out under a
+    sub-line reading "0.0 % spread". They now ride `raw`, which is also what
+    the laps branch has always done, so the two producers agree.
 
     `found` vs `prescribed` is the honesty contract (design D4): prescribed is
     None while detection is blind, and once Change 2 fills the prior these two
@@ -443,15 +444,16 @@ def set_stats(bouts, series, dist_at, hr: list | None,
     paces = [r["paceS"] for r in reps if r["paceS"]]
     nominal, varied = _rep_variation([r["distM"] for r in reps])
 
-    # consistency and fade ride on the detection signal, the reported mean on
-    # the raw one — see the docstring
-    effort = [p for p in (_window_pace(series, a, b) for a, b in bouts) if p]
+    # Consistency and fade ride the RAW grid — the same signal as the reported
+    # `paceS`, the rep table's PACE column and its deviation bars. See
+    # test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars for the
+    # measurement behind this and what it trades away. DETECTION is unchanged:
+    # `series` is still the grade-adjusted grid and still decides the bouts.
     mean_pace = _mean(paces)
     cv = None
-    mean_effort = _mean(effort)
-    if mean_effort and len(effort) > 1:
-        var = sum((p - mean_effort) ** 2 for p in effort) / len(effort)
-        cv = round(100.0 * (var ** 0.5) / mean_effort, 1)
+    if mean_pace and len(paces) > 1:
+        var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
+        cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
 
     recoveries = [bouts[i + 1][0] - bouts[i][1] for i in range(len(bouts) - 1)]
     drops = []
@@ -469,8 +471,8 @@ def set_stats(bouts, series, dist_at, hr: list | None,
         "varied": varied,
         "paceS": int(round(mean_pace)) if mean_pace else None,
         "paceCvPct": cv,
-        "fadePct": round(100.0 * (effort[-1] - effort[0]) / effort[0], 1)
-                   if len(effort) > 1 and effort[0] else None,
+        "fadePct": round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+                   if len(paces) > 1 and paces[0] else None,
         "recoveryS": int(round(_mean(recoveries))) if recoveries else None,
         "recoveryHrDrop": int(round(_mean(drops))) if drops else None,
         "reps": reps,

@@ -118,3 +118,28 @@ def test_no_real_workout_loses_span_coverage():
         assert len(segs) == len(load_workout(date)[1]), f"{date}: a lap vanished"
         for a, b in zip(segs, segs[1:]):
             assert a["t1"] == b["t0"] and a["d1"] == b["d0"], f"{date}: gap"
+
+
+def test_both_producers_report_spread_on_the_same_basis():
+    """The laps branch always computed cv/fade from raw lap paces while
+    set_stats used the detection grid. One engine, one definition."""
+    doc = build("2026-04-10")
+    paces = [r["paceS"] for r in doc["set"]["reps"]]
+    mean = sum(paces) / len(paces)
+    expected = round(100.0 * (sum((p - mean) ** 2 for p in paces) / len(paces)) ** 0.5 / mean, 1)
+    assert doc["set"]["paceCvPct"] == expected
+    assert doc["set"]["fadePct"] == round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+
+
+@pytest.mark.parametrize("date,max_cv,max_abs_fade", [
+    ("2026-04-10", 3.0, 2.0),    # 3x2 km, was cv 14.8 / fade +17.5
+    ("2026-03-20", 4.0, 4.0),    # 5x1 km, was cv 19.5 / fade +18.0
+    ("2025-12-12", 6.0, 6.0),    # 6x300 m, was fade +37.1
+    ("2026-05-29", 4.0, 2.0),    # 4x1 km, was cv 10.6 / fade +30.5
+])
+def test_corrected_sets_report_sane_spread(date, max_cv, max_abs_fade):
+    """The fabricated spread and fade were the visible damage — a genuine
+    tempo set does not fade 17% across its reps."""
+    st = build(date)["set"]
+    assert st["paceCvPct"] <= max_cv, f"{date}: {st['paceCvPct']}%"
+    assert abs(st["fadePct"]) <= max_abs_fade, f"{date}: {st['fadePct']}%"

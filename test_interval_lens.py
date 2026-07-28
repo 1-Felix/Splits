@@ -715,31 +715,41 @@ def test_a_run_without_a_gap_stream_reports_no_gap_rather_than_a_copy():
     assert all(r["gapS"] is None for r in doc["set"]["reps"])
 
 
-def test_fade_is_measured_on_effort_while_the_reported_pace_is_raw():
-    """The other half of the split, and the reason the two grids are not
-    interchangeable. This set climbs a steady drag: the raw pace decays rep by
-    rep (4.4 → 3.6 m/s) while the grade-adjusted effort never moves. Design D5
-    is explicit that "using raw pace would split one set into a fade", so
-    `fadePct` and `paceCvPct` ride on the DETECTION signal — but `paceS` is
-    still what the athlete actually ran, because that is the number sitting
-    next to GAP in the rep table."""
+def test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars():
+    """CHANGED 2026-07-28, deliberately, and this reverses design D5's
+    reporting half. `fadePct`/`paceCvPct` rode the grade-adjusted DETECTION
+    signal while the rep table's deviation bars and PACE column were raw, so a
+    hilly set fanned its bars out above a sub-line reading '0.0 % spread'.
+
+    Measured before choosing: on the archive's one uncontaminated hill-repeat
+    set (2025-11-21, eight genuine 90 s reps) RAW is TIGHTER — cv 9.1 % vs
+    GAP 14.7 %. Fixed-duration reps cover less ground as the athlete tires, so
+    each samples a different slice of the gradient and its grade adjustment
+    varies; GAP there measures the hill, not the athlete. On the stream path
+    the two bases differ by under 1.5 points and split both ways across 11
+    sets.
+
+    The cost this fixture now pins: a set climbing a CONTINUOUS drag at
+    constant effort reads as a fade, which is exactly what D5 warned about.
+    No such session exists in 168 runs — every hill session runs each rep up
+    the same hill and recovers back down — so successive reps share terrain
+    and raw pace compares them honestly. Revisit if one ever appears.
+
+    DETECTION is untouched: the bouts are still found on the grade-adjusted
+    signal, so this set is still detected as ONE set."""
     spans = [(600, 2.6, 2.6)]
     for raw in (4.4, 4.2, 4.0, 3.8, 3.6):
         spans += [(250, raw, 4.2), (60, 2.2, 2.2)]
     spans += [(300, 2.6, 2.6)]
     doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
-    assert doc["shape"] == "reps" and doc["set"]["found"] == 5
+    assert doc["shape"] == "reps" and doc["set"]["found"] == 5, \
+        "detection still rides the grade-adjusted signal — one set, not five"
     st = doc["set"]
-    assert st["fadePct"] == 0.0, \
-        f"constant effort up a drag is not a fade: {st['fadePct']}%"
-    assert st["paceCvPct"] == 0.0, f"…and not inconsistent either: {st['paceCvPct']}"
-    raws = [r["paceS"] for r in st["reps"]]
-    assert raws[-1] - raws[0] > 40, \
-        f"the RAW paces still tell the honest slowdown story: {raws}"
+    assert st["fadePct"] > 15, \
+        f"the raw slowdown is now reported as the fade it looks like: {st['fadePct']}%"
+    assert st["paceCvPct"] > 5, f"…and as real spread: {st['paceCvPct']}"
     assert all(abs(r["gapS"] - 238) <= 2 for r in st["reps"]), \
-        f"every rep's grade-adjusted pace is the same 4.2 m/s: {[r['gapS'] for r in st['reps']]}"
-    assert abs(st["paceS"] - sum(raws) / len(raws)) <= 1, \
-        "the headline pace is the mean of the RAW rep paces"
+        "GAP stays per-rep and unchanged — the terrain read lives in that column"
 
 
 def test_progression_steps_carry_both_paces_too():

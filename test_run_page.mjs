@@ -536,6 +536,17 @@ try {
     `PACE header is not aligned to the pace column: ${hp.x + hp.width} vs ${cp.x + cp.width}`);
   assert.ok(Math.abs((hg.x + hg.width) - (cg.x + cg.width)) <= 2,
     `GAP header is not aligned to the GAP column: ${hg.x + hg.width} vs ${cg.x + cg.width}`);
+  // fix round 1: the right-edge check above cannot fail for the column it is
+  // checking — the header row has exactly one flexible item (the flex:1
+  // spacer) BEFORE pace/gap/HR, so it silently absorbs any width change in a
+  // later fixed cell and keeps the row's overall width constant. Pin left
+  // edge AND width too — left moves when the cell's own width changes.
+  const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 2,
+    `${what}: ${a} vs ${b}`);
+  near(hp.x, cp.x, "PACE header left edge vs the pace column");
+  near(hp.width, cp.width, "PACE header width vs the pace column");
+  near(hg.x, cg.x, "GAP header left edge vs the GAP column");
+  near(hg.width, cg.width, "GAP header width vs the GAP column");
   // the recovery between reps is shown, and there is one fewer of them —
   // nothing trails the final rep
   assert.equal(await page.locator(".rep-rec").count(), 4);

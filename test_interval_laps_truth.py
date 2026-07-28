@@ -82,6 +82,15 @@ def test_correct_workouts_are_left_alone(date, found, label):
     assert doc["label"] == label
 
 
+@pytest.mark.parametrize("date,shape", [
+    ("2024-07-22", "steady"),   # Run Walk Run® — handoff P2.7a
+    ("2024-07-13", "steady"),   # an 801 m 'block' inside an assessment run
+    ("2026-06-26", "reps"),     # the pyramid is untouched
+])
+def test_real_blocks_meet_the_block_floor(date, shape):
+    assert build(date)["shape"] == shape
+
+
 def test_no_real_workout_loses_span_coverage():
     """Across every fixture: demotion never deletes."""
     for date in WORKOUTS:

@@ -1262,6 +1262,43 @@ def test_run_walk_run_partially_survives_the_floor_a_known_limitation():
     assert doc["set"]["varied"] is True
 
 
+def test_a_single_short_work_lap_is_not_a_block():
+    """The stream path has always required BLOCK_MIN_S/BLOCK_MIN_M before
+    calling something a block; the laps branch called ANY surviving work lap
+    one. Task 2 makes the single-survivor case common, so the asymmetry
+    started mattering. 'Run Walk Run®' (2024-07-22) asserted a '1 min block'
+    over a 205 m fragment of a 25 minute run/walk."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(205, 62, "ACTIVE", 1),
+            _step_lap(2000, 900, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "steady"
+    assert doc["label"] is None
+    assert doc["segments"] == [], "a steady run gets a document, no segments"
+    assert doc["set"] is None
+
+
+def test_a_single_long_work_lap_is_still_a_block():
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(3000, 1118, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "block"
+    assert doc["label"] == "19 min block"
+
+
+def test_a_single_work_lap_that_clears_distance_but_not_duration_is_not_a_block():
+    """BLOCK_MIN_M and BLOCK_MIN_S are two separate floors, not one — a work
+    lap can clear the 1500 m distance floor on a fast enough pace while still
+    falling short of the 300 s duration floor. Both must be required."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(1500, 299, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "steady"
+    assert doc["label"] is None
+
+
 def test_laps_and_stream_paths_share_the_same_reps_labelling_rule():
     """Fix 2: the laps branch must name a varied set through the SAME rule as
     the stream path (`_reps_label`, shared by both), not a second hand-rolled

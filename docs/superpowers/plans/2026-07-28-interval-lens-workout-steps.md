@@ -371,6 +371,12 @@ def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
         return None                       # nothing to go on: keep every rep
     counts = Counter(laps[i].get("wktStepIndex") for i in work_idx
                      if laps[i].get("wktStepIndex") is not None)
+    if not counts:
+        # Steps exist on this activity, but none on a WORK lap — so they say
+        # nothing about which laps are reps. Same answer as the guard above:
+        # no usable evidence, keep every work lap. (Added after review; the
+        # first draft returned set(counts) here and demoted the whole set.)
+        return None
     repeated = {step for step, n in counts.items() if n > 1}
     if repeated:
         return repeated

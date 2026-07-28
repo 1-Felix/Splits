@@ -1408,3 +1408,28 @@ def test_a_repeated_recovery_step_does_not_promote_a_one_off_work_lap():
     doc = _laps_doc(None, laps=laps)
     assert doc["set"]["found"] == 3
     assert doc["segments"][6]["role"] != "work"
+
+
+def test_no_step_on_any_work_lap_keeps_them_all_even_when_other_laps_have_one():
+    """Regression (fix round 1, finding 1): the no-evidence guard tested
+    `any(...)` over ALL laps, but `counts` is built over WORK laps only. When
+    a non-work lap carries a `wktStepIndex` and no floor-passing work lap
+    does, `counts` was empty, so `repeated` was empty too, and the old code
+    fell through to `return set(counts)` — an empty set — which demoted every
+    work lap and reported zero reps. Realistic trigger: the athlete starts a
+    downloaded workout, abandons it after the warmup step, then manually laps
+    a genuine rep set of its own with no steps at all.
+
+    This is the same 'no usable evidence' answer branch 1 gives: an activity
+    whose work laps carry no step index tells us nothing about which of them
+    are reps, so the honest response is to keep them all."""
+    laps = [
+        _lap(1000, 300, "ACTIVE"),              # no wktStepIndex
+        _step_lap(300, 150, "RECOVERY", 5),
+        _lap(1000, 305, "ACTIVE"),               # no wktStepIndex
+        _step_lap(300, 150, "RECOVERY", 5),
+        _lap(1000, 310, "ACTIVE"),               # no wktStepIndex
+    ]
+    doc = _laps_doc(None, laps=laps)
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert [s["rep"] for s in work] == [1, 2, 3]

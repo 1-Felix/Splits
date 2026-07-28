@@ -55,6 +55,13 @@ def test_every_fixture_workout_is_read_as_structured():
     ("2025-12-12", 6, "6×300 m"),     # was 7×300 m — a jog-in counted
     ("2026-05-29", 4, "4×1 km"),      # was 5×1 km — a post-cooldown lap counted
     ("2025-10-17", 6, None),          # was "8 reps"; label asserted separately
+    ("2026-02-06", 6, "6×0.23 km"),   # was "8 reps" — a 1500 m ACTIVE warmup,
+                                       # a 1500 m ACTIVE cooldown and a
+                                       # transition all counted. Label reads
+                                       # a sub-km distance in km rather than
+                                       # m; that is existing label-formatting
+                                       # behaviour, out of scope here — pinned
+                                       # as-is, not fixed.
 ])
 def test_real_workouts_recover_their_true_rep_count(date, found, label):
     doc = build(date)

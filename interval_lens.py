@@ -570,6 +570,16 @@ def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
         return None                       # nothing to go on: keep every rep
     counts = Counter(laps[i].get("wktStepIndex") for i in work_idx
                      if laps[i].get("wktStepIndex") is not None)
+    if not counts:
+        # A non-work lap (warmup, recovery, cooldown...) carries a step index
+        # but no floor-passing WORK lap does — e.g. the athlete abandoned a
+        # downloaded workout after its warmup step, then manually lapped a
+        # genuine rep set with no steps of its own. This is the same
+        # "no usable evidence" answer as the guard above: an activity whose
+        # work laps carry no step index tells us nothing about which of them
+        # are reps, so the honest response is to keep them all, not to
+        # conclude that none of them is a rep.
+        return None
     repeated = {step for step, n in counts.items() if n > 1}
     if repeated:
         return repeated
@@ -603,7 +613,14 @@ def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
 
     A `warmup`/`recovery`/`cooldown` lap is untouched however short: those
     roles carry no minimum on the stream path either.
+
+    `segments[i]` must correspond to `laps[i]`: `segments_from_laps` emits
+    exactly one segment per lap, in order, and this function indexes `laps`
+    by segment position on that assumption. If that ever stops holding, this
+    must fail loudly rather than silently read the wrong lap's step index.
     """
+    assert len(segments) == len(laps), \
+        "segments_from_laps must emit exactly one segment per lap, in order"
     sized = {i for i, s in enumerate(segments)
              if s["role"] == "work"
              and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}

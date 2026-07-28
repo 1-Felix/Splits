@@ -822,15 +822,19 @@ def build_document(streams: dict | None, summary: dict | None = None,
             var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
             cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
         # A single surviving work lap is only a BLOCK if it is big enough to
-        # be one — the same BLOCK_MIN_S/BLOCK_MIN_M the stream path has always
-        # applied. Task 2's step rule makes the single-survivor case common,
-        # and without this a 205 m fragment of a run/walk asserts "1 min
-        # block" (handoff P2.7a). The `>= 2` rep threshold is deliberately
-        # NOT unified with the stream path's REPS_MIN_COUNT here — see P2.7b,
+        # be one — the SAME BLOCK_MIN_S/BLOCK_MIN_M floor, on the SAME `or`
+        # basis, that classify() applies for the stream path (see its
+        # `if b - a >= BLOCK_MIN_S or dist_at(b) - dist_at(a) >= BLOCK_MIN_M`
+        # around line 308): one definition of a block across both producers.
+        # Task 2's step rule makes the single-survivor case common, and
+        # without this a 205 m fragment of a run/walk asserts "1 min block"
+        # (handoff P2.7a). The `>= 2` rep threshold is deliberately NOT
+        # unified with the stream path's REPS_MIN_COUNT here — see P2.7b,
         # which is entangled with Change 2's expect_reps.
         if len(work) >= 2:
             shape = "reps"
-        elif work and work[0]["durS"] >= BLOCK_MIN_S and work[0]["distM"] >= BLOCK_MIN_M:
+        elif work and (work[0]["durS"] >= BLOCK_MIN_S
+                       or work[0]["distM"] >= BLOCK_MIN_M):
             shape = "block"
         else:
             shape = "steady"

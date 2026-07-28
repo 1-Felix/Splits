@@ -83,8 +83,16 @@ def test_correct_workouts_are_left_alone(date, found, label):
 
 
 @pytest.mark.parametrize("date,shape", [
-    ("2024-07-22", "steady"),   # Run Walk Run® — handoff P2.7a
-    ("2024-07-13", "steady"),   # an 801 m 'block' inside an assessment run
+    ("2024-07-22", "steady"),   # Run Walk Run® — 205 m / 62 s, fails BOTH
+                                 # arms; handoff P2.7a
+    ("2024-07-13", "block"),    # Einstufungslauf — 801 m / exactly 300 s;
+                                 # fails the distance arm (801 < 1500) but
+                                 # clears the duration arm (>= BLOCK_MIN_S)
+                                 # on the boundary itself, so the `or` makes
+                                 # it a block
+    ("2025-12-19", "block"),    # W11 HM-Training: Tempo — 1500 m / 828 s;
+                                 # sits exactly on BLOCK_MIN_M, the only
+                                 # archived workout that reads "block"
     ("2026-06-26", "reps"),     # the pyramid is untouched
 ])
 def test_real_blocks_meet_the_block_floor(date, shape):

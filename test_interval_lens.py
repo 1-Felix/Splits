@@ -1287,12 +1287,16 @@ def test_a_single_long_work_lap_is_still_a_block():
     assert doc["label"] == "19 min block"
 
 
-def test_a_single_work_lap_that_clears_distance_but_not_duration_is_not_a_block():
-    """BLOCK_MIN_M and BLOCK_MIN_S are two separate floors, not one — a work
-    lap can clear the 1500 m distance floor on a fast enough pace while still
-    falling short of the 300 s duration floor. Both must be required."""
+def test_a_single_work_lap_just_under_both_floors_is_not_a_block():
+    """The block test is an `or` (parity with classify(), the stream path's
+    version of this same rule): a work lap is a block if it clears EITHER
+    the duration floor OR the distance floor. This fixture sits just under
+    BOTH — 299 s (< BLOCK_MIN_S) and 1499 m (< BLOCK_MIN_M) — so it fails
+    both arms and must read steady. Both arms stay separately meaningful:
+    weakening either one (or dropping the floor entirely) would wrongly
+    call this a block."""
     laps = [_step_lap(2000, 800, "WARMUP", 0),
-            _step_lap(1500, 299, "ACTIVE", 1),
+            _step_lap(1499, 299, "ACTIVE", 1),
             _step_lap(1000, 450, "COOLDOWN", 2)]
     doc = _laps_doc(None, laps=laps)
     assert doc["shape"] == "steady"

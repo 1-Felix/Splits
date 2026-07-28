@@ -1287,6 +1287,23 @@ def test_a_single_long_work_lap_is_still_a_block():
     assert doc["label"] == "19 min block"
 
 
+def test_a_single_work_lap_clearing_only_the_distance_arm_is_still_a_block():
+    """The block test is an `or`: EITHER arm alone is enough. Every real
+    fixture that reaches `block` clears BOTH arms or clears duration alone
+    (2024-07-13, 801 m / 300 s) — nothing in this athlete's archive clears
+    distance while failing duration, because no run over 1.5 km in the
+    archive is run at a ~3:01/km pace or faster. That absence of real-data
+    coverage is exactly why this synthetic case has to exist: 1600 m in
+    290 s clears BLOCK_MIN_M (1600 >= 1500) while FAILING BLOCK_MIN_S
+    (290 < 300), and must still read block through the distance arm alone."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(1600, 290, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "block"
+    assert doc["label"] == "5 min block"
+
+
 def test_a_single_work_lap_just_under_both_floors_is_not_a_block():
     """The block test is an `or` (parity with classify(), the stream path's
     version of this same rule): a work lap is a block if it clears EITHER

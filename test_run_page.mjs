@@ -175,11 +175,21 @@ const STEADY_SEGMENTS = [
     durS: 1800, distM: 5000, paceS: 360, gapS: 355, hr: 150, cad: null },
 ];
 const STEADY_DOC = {
-  version: 1, shape: "steady", source: "stream", confidence: 0.95,
+  version: 1, shape: "steady", source: "stream", calibrated: true, confidence: 0.95,
   label: null, guidedBy: null,
   segments: STEADY_SEGMENTS,
   set: null,
   quality: { workDistM: 5000, workDurS: 1800, zone: "Z2" },
+};
+
+// P1.2: a document from an athlete whose archive is too short to calibrate a
+// work floor. `calibrated: false` means "we could not judge structure yet" —
+// which rendered IDENTICALLY to "we looked and found nothing" before this.
+const UNCAL_RUN_ID = 9004;
+const UNCAL_DOC = {
+  version: 4, shape: "steady", source: "stream", calibrated: false,
+  confidence: 0.0, label: null, segments: [], set: null, guidedBy: null,
+  quality: { workDistM: 0, workDurS: 0, zone: null },
 };
 
 function makeArchive(dir) {
@@ -293,6 +303,20 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     STEADY_RUN_ID, 1, "2026-07-12 06:51:15", "steady", null, 0.95, "stream",
     5000, 1800, JSON.stringify(STEADY_DOC), "2026-07-27T09:00:00");
+
+  // ── P1.2: UNCAL_RUN_ID — an athlete whose archive is too short to
+  // calibrate a work floor. `calibrated: false` must render a plain notice,
+  // never the silent "no reps" look shared by STEADY_RUN_ID/PLAIN_RUN_ID.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-13 06:51:15', 'running', 'Max First Week Run',
+      5000.0, 1800, 148, 165, 164.0, 12.0, '{}', '{}', 'x', 'x', ?, NULL)`)
+    .run(UNCAL_RUN_ID, JSON.stringify(DETAIL));
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    UNCAL_RUN_ID, 4, "2026-07-13 06:51:15", "steady", null, 0.0, "stream",
+    0, 0, JSON.stringify(UNCAL_DOC), "2026-07-28T09:00:00");
   db.close();
 }
 
@@ -478,6 +502,12 @@ try {
   assert.equal(await page.locator(".rep-row").count(), 5, "five reps render");
   assert.match(await page.locator(".rep-title").innerText(), /5×1 km/,
     "the rep card titles itself with the detected label");
+  // P1.2 discriminator: REP_DOC predates the `calibrated` flag (no key at
+  // all — `iv.calibrated` is undefined, not false). `iv.calibrated === false`
+  // must stay silent on it; `!iv.calibrated` would wrongly show the "not
+  // enough history" notice on a real, confidently-detected rep set.
+  assert.equal(await page.locator(".rep-uncal").count(), 0,
+    "a document that predates the calibrated flag stays silent — no false accusation");
   // FINAL REVIEW I3: the cockpit verdict at the top of this page must describe
   // the SAME session the rep table below it describes. coachRead reads the
   // structure off `detail.intervals`, and the Garmin archive's distilled
@@ -654,6 +684,27 @@ try {
     "steady run: the km splits card still renders its real rows");
   assert.equal(await page.locator(".rep-table").count(), 0,
     "steady run: a run_intervals document with shape:'steady' renders NO rep table");
+
+  // P1.2: "not enough history to judge structure yet" must NOT render as
+  // "steady". This is Max's live state — work_floor needs ~30 runs of pace
+  // history and his archive is days old.
+  await page.goto(B + `/run/${UNCAL_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rep-uncal", { timeout: 15000 });
+  const uncalText = (await page.locator(".rep-uncal").innerText()).toLowerCase();
+  assert.ok(uncalText.includes("not enough"),
+    "an uncalibrated run says so plainly: " + uncalText);
+  assert.equal(await page.locator(".rep-table").count(), 0,
+    "…and still renders no rep table");
+  const uncalPage = await page.evaluate(() => document.body.innerText);
+  assert.ok(uncalPage.includes("km 6"),
+    "the km splits card is unaffected");
+
+  // the discriminating half: a CALIBRATED steady run must NOT carry the
+  // notice, or the notice means nothing.
+  await page.goto(B + `/run/${STEADY_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".card");
+  assert.equal(await page.locator(".rep-uncal").count(), 0,
+    "a calibrated steady run looked and found nothing — no notice");
 
   // a run with no run_intervals row at all (PLAIN_RUN_ID reuses run 7) — the
   // other real "no reps" path — shows no rep table either, and the km

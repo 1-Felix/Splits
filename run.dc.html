@@ -221,6 +221,12 @@
         </div>
       </div>
     </sc-for>
+    <sc-for list="{{ pg.uncalibrated }}" as="uc" hint-placeholder-count="0">
+      <div class="card rep-uncal">
+        <div class="card-title" style="margin-bottom:var(--sp-1)">Structure</div>
+        <div class="card-sub">{{ uc.t }}</div>
+      </div>
+    </sc-for>
     <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
       <div class="card">
         <div class="card-title" style="margin-bottom:var(--sp-1)">Splits</div>
@@ -571,6 +577,16 @@ class Component extends DCLogic {
           }];
         }
       }
+
+      // P1.2: `calibrated: false` means the work floor could not be computed —
+      // the athlete's archive is too short (WORK_FLOOR_MIN_SAMPLES ≈ 30 runs).
+      // Saying nothing renders that identically to "we looked and found
+      // nothing", which is the one distinction the steady-document rule
+      // exists to preserve. Lap-sourced documents are always calibrated (the
+      // watch is not guessing), so this only ever fires where it is true.
+      pg.uncalibrated = (iv && iv.calibrated === false)
+        ? [{ t: 'Not enough history to judge this run’s structure yet — that needs a few weeks of runs to learn what "fast" means for you. Pace, HR and splits below are unaffected.' }]
+        : [];
 
       // splits vs the run's own median (6.6)
       pg.splits = [];

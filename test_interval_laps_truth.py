@@ -3,9 +3,15 @@
 
 The local activity-archive.db carries no lap data at all — the backfill ran on
 the NUC and was never copied down — so test_interval_truth.py cannot reach this
-code path. These twelve workouts are the archive's entire lap-sourced
-population as of 2026-07-28, trimmed to the fields the engine reads, and they
-pin both the sessions this change corrects and the ones it must leave alone.
+code path. This fixture is the archive's entire lap-sourced population as of
+2026-07-28 — every activity whose laps read as structured under
+`laps_are_structured` itself, not a hand-picked list of dates — trimmed to the
+fields the engine reads: 23 workouts, of which 8 are the known defects this
+change corrects and the rest are controls it must leave alone. (An earlier cut
+of this fixture hardcoded 12 dates — the 8 defects plus 4 controls — which
+made the two whole-population tests below iterate a curated subset while
+reading as exhaustive; extending the fixture to the genuine population is what
+makes them honest.)
 """
 from __future__ import annotations
 
@@ -120,15 +126,48 @@ def test_no_real_workout_loses_span_coverage():
             assert a["t1"] == b["t0"] and a["d1"] == b["d0"], f"{date}: gap"
 
 
-def test_both_producers_report_spread_on_the_same_basis():
-    """The laps branch always computed cv/fade from raw lap paces while
-    set_stats used the detection grid. One engine, one definition."""
+def test_set_stats_agrees_with_the_laps_branch_on_the_same_rep_paces():
+    """Both producers must land on the same cv/fade for the same rep paces —
+    not merely be internally consistent with themselves.
+
+    The laps branch computes `paceCvPct`/`fadePct` with its own inline
+    formula, straight from each surviving lap's own `paceS` (raw averageSpeed,
+    since §5). `set_stats` is the stream path's equivalent — its own formula,
+    over whatever `raw` grid the caller hands it. This test reconstructs a
+    synthetic stream-path run whose RAW grid holds exactly `2026-04-10`'s
+    lap-derived rep paces, and whose DETECTION grid (`series`/`gaps`) is
+    deliberately something else — a run that never happened, at a pace no rep
+    here has — so the two producers can only agree if `set_stats` really is
+    computing cv/fade from `raw`, not from `series`. That is the exact
+    regression this guards: `set_stats` used to ride the detection grid for
+    cv/fade (design D5's pre-Task-5 basis), which this fixture's real
+    `2026-04-10` document was itself corrupted by — see the module docstring's
+    Task 5 note.
+
+    (`test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars` in
+    test_interval_lens.py covers the stream half of this same basis from a
+    hand-built fixture; this test is what proves the laps branch agrees with
+    it on real rep numbers.)"""
     doc = build("2026-04-10")
-    paces = [r["paceS"] for r in doc["set"]["reps"]]
-    mean = sum(paces) / len(paces)
-    expected = round(100.0 * (sum((p - mean) ** 2 for p in paces) / len(paces)) ** 0.5 / mean, 1)
-    assert doc["set"]["paceCvPct"] == expected
-    assert doc["set"]["fadePct"] == round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+    reps = doc["set"]["reps"]
+    assert len(reps) >= 2
+
+    raw, series, gaps, bouts = [], [], [], []
+    t = 0
+    for r in reps:
+        mps = 1000.0 / r["paceS"]
+        for _ in range(r["durS"]):
+            raw.append(mps)
+            series.append(9.9)   # a detection pace no real rep here ran at
+            gaps.append(9.9)
+        bouts.append((t, t + r["durS"]))
+        t += r["durS"]
+
+    stats = il.set_stats(bouts, series, lambda s: 0.0, hr=None, raw=raw, gaps=gaps)
+    assert [rr["paceS"] for rr in stats["reps"]] == [r["paceS"] for r in reps], \
+        "sanity: the synthetic bouts reproduce the laps branch's own rep paces"
+    assert stats["paceCvPct"] == doc["set"]["paceCvPct"]
+    assert stats["fadePct"] == doc["set"]["fadePct"]
 
 
 @pytest.mark.parametrize("date,max_cv,max_abs_fade", [

@@ -222,6 +222,29 @@ set into a fade". Two reasons it is still the right trade:
 Revisit if such a session ever appears. The test is rewritten to assert the new
 contract and to state this reasoning, not deleted.
 
+### 5.3 `confidence` moves too, honestly
+
+**Detection is untouched** stated above is true of the bouts themselves, but it
+understates what actually changes for the stream path: `_confidence` folds in
+`cv` — `set_stats`'s `paceCvPct` — as its "how regular were the reps" factor,
+and §5 just moved `paceCvPct` from the grade-adjusted grid to raw. So
+`confidence` rides raw too, as a direct consequence, on every stream-sourced
+rep run in the archive. Measured: 18 of the archive's 19 rep runs report a
+different `confidence` after this change. One crosses `run.dc.html`'s `< 0.5`
+hedge threshold — `2026-07-03` goes 0.52 → 0.47, so its rep card now appends
+the "possible structure" sub-line it did not carry before.
+
+This is accepted, not treated as a regression. The bouts on `2026-07-03` are
+found exactly where they were found before — DETECTION genuinely does not
+move, because `split_classes` and `find_bouts` still run on the grade-adjusted
+signal end to end. What moved is the confidence number's honesty about how
+regular those bouts' raw paces actually were, which is the same trade §5
+already made for `paceCvPct` and `fadePct` themselves: a number that used to
+ride a different signal from the one printed beside it now agrees with it,
+even where that agreement is less flattering. Lap-sourced documents are
+unaffected — they report `confidence: 1.0` outright and never call
+`_confidence` at all.
+
 ---
 
 ## 6. The rep table (P1.1)

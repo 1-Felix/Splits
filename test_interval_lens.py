@@ -1539,6 +1539,50 @@ def test_no_step_on_any_work_lap_keeps_them_all_even_when_other_laps_have_one():
     assert [s["rep"] for s in work] == [1, 2, 3]
 
 
+def test_step_index_zero_is_a_legitimate_repeat_block():
+    """`wktStepIndex` 0 is a real value, not "no step" — a workout with no
+    warmup step has its repeat block AT step 0. `_rep_step_indices` must treat
+    it exactly like any other step index (`is not None`, not truthiness):
+    under a truthy check, `0 or None` both read as "no evidence" and a lap
+    whose repeat block sits at step 0 loses every one of its counts, while a
+    later one-off `ACTIVE` lap on a nonzero step reads as the only 'repeated'
+    (in fact singleton) step and wrongly survives as the set."""
+    laps = [
+        _step_lap(1000, 310, "ACTIVE", 0),      # rep 1, step 0 — no warmup lap
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 0),      # rep 2, step 0
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 316, "ACTIVE", 0),      # rep 3, step 0
+        _step_lap(2000, 1000, "ACTIVE", 1),     # one-off cooldown, tagged ACTIVE
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3, "the step-0 reps must be recovered"
+    assert [s["rep"] for s in doc["segments"] if s["role"] == "work"] == [1, 2, 3]
+    assert doc["segments"][-1]["role"] == "cooldown", "the one-off is demoted"
+
+
+def test_step_index_zero_is_evidence_not_no_evidence():
+    """The `_rep_step_indices` no-evidence guard (`not any(... is not None ...)`)
+    must not read step 0 as absent. Here every step index anywhere in the
+    activity is 0 or missing — no lap carries any OTHER value — so a
+    truthiness reading of the guard sees no truthy step at all and bails out
+    early ('keep every rep'), silently skipping the one-off's demotion. A
+    correct `is not None` reading sees the 0s as real evidence and proceeds."""
+    laps = [
+        _step_lap(1000, 310, "ACTIVE", 0),      # rep 1, step 0
+        _step_lap(300, 150, "RECOVERY", 0),
+        _step_lap(1000, 313, "ACTIVE", 0),      # rep 2, step 0
+        _step_lap(300, 150, "RECOVERY", 0),
+        _step_lap(1000, 316, "ACTIVE", 0),      # rep 3, step 0
+        _lap(2000, 1000, "ACTIVE"),             # one-off, no step index at all
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3, "the step-0 evidence must be used, not discarded"
+    assert doc["segments"][-1]["role"] == "cooldown", "the stepless one-off is demoted"
+
+
 def test_interval_version_is_current():
     """A stored document is only trustworthy if its version moved whenever the
     rules that produced it did. Tasks 2-5 changed which laps are reps, what a

@@ -193,6 +193,29 @@ stream-sourced set in the archive:
 No case in the archive supports moving the bars to GAP. `gapS` stays as the
 per-rep column, which is where the terrain-adjusted read belongs.
 
+### 5.2 What this trades away, deliberately
+
+`test_fade_is_measured_on_effort_while_the_reported_pace_is_raw` encodes the
+opposite rule and is being reversed on purpose. Its fixture is five reps up a
+**steady continuous drag**: raw pace decays 4.4 → 3.6 m/s while grade-adjusted
+effort never moves, and it asserts `fadePct == 0.0`. Under raw reporting that
+same set reads as roughly a 22 % fade.
+
+That is the real cost, and design D5 named it — "using raw pace would split one
+set into a fade". Two reasons it is still the right trade:
+
+- **D5 governs detection, and detection is unchanged.** The bouts are still
+  found on the grade-adjusted signal, so the set is still detected as one set.
+  Only the number reported beside it changes.
+- **The fixture's shape does not occur in this archive.** Every hill session
+  runs each rep up the *same* hill and recovers back down, so successive reps
+  share terrain and raw pace compares them honestly. A point-to-point set
+  climbing continuously across its whole span would be misreported; none
+  exists in 168 runs.
+
+Revisit if such a session ever appears. The test is rewritten to assert the new
+contract and to state this reasoning, not deleted.
+
 ---
 
 ## 6. The rep table (P1.1)
@@ -252,8 +275,25 @@ per the branch's own standard:
   when absent;
 - `paceCvPct` / `fadePct` raw on both paths, over one fixture per path.
 
-`test_interval_truth.py`'s ground-truth expectations change for the eight
-sessions in §1 and must be updated with the corrected values, not loosened.
+### 9.1 The truth test cannot cover this, so a fixture must
+
+The local `activity-archive.db` holds 548 activities and **zero** with
+`laps_json` — the lap backfill happened on the NUC and was never copied down.
+`test_interval_truth.py` therefore cannot exercise the lap path at all, and
+every case in §1 would go unverified by it.
+
+So the eight sessions become a **committed fixture**: their lap DTOs, trimmed to
+the fields the engine reads (`distance`, `duration`, `elapsedDuration`,
+`averageSpeed`, `avgGradeAdjustedSpeed`, `averageHR`, `intensityType`,
+`wktStepIndex`), extracted from the NUC into a JSON file in the repo. Each gets
+a test asserting its corrected count, label, spread and fade from §1's table.
+
+This is strictly better than relying on the archive: it runs in CI, it pins the
+exact production defects permanently, and it cannot silently skip.
+
+`test_interval_truth.py` itself is unchanged — it reads run names off a
+lapless archive and keeps testing the stream path, which this change does not
+touch except for §5's reporting basis.
 
 ---
 

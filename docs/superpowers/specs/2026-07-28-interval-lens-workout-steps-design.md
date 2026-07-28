@@ -127,8 +127,7 @@ what a block is. (Corrected after Task 3's review, which caught this section
 claiming parity while the implementation used AND.)
 
 This matters more after §2, which makes the single-surviving-work-lap case
-common. Measured blast radius — exactly two runs flip to `steady`, both
-correctly:
+common. Measured blast radius — exactly one run flips to `steady`:
 
 - `2024-07-22 Run Walk Run®`, 205 m / 62 s — fails both arms. **Closes P2.7a.**
 

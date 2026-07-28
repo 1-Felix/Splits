@@ -186,6 +186,15 @@
       <div class="card rep-table">
         <div class="card-title rep-title" style="margin-bottom:var(--sp-1)">{{ rp.label }}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ rp.sub }}</div>
+        <div class="rep-head" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub);padding-bottom:var(--sp-1)">
+          <span style="width:34px"></span>
+          <span style="width:56px"></span>
+          <span style="width:48px"></span>
+          <div style="flex:1"></div>
+          <span class="rep-head-pace" style="width:52px;text-align:right">PACE</span>
+          <span class="rep-head-gap" style="width:52px;text-align:right">GAP</span>
+          <span style="width:44px;text-align:right">HR</span>
+        </div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ rp.rows }}" as="r" hint-placeholder-count="5">
             <div>

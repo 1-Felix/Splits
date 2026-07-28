@@ -517,6 +517,25 @@ try {
     "the GAP cell carries the document's own grade-adjusted pace");
   assert.strictEqual((await page.locator(".rep-pace").first().innerText()).trim(), expectPace,
     "…and the pace cell carries the raw one, on the same row");
+  // P1.1: pace and GAP were two adjacent unlabelled monospace numbers. The
+  // ambiguity was NEW — before gapS was real the GAP cell was always an em
+  // dash, so there was nothing to confuse it with.
+  const headPace = await page.locator(".rep-table .rep-head-pace").innerText();
+  const headGap = await page.locator(".rep-table .rep-head-gap").innerText();
+  assert.strictEqual(headPace.trim(), "PACE", "the pace column is labelled");
+  assert.strictEqual(headGap.trim(), "GAP", "…and so is the GAP column");
+  // the headers sit ABOVE the first rep row, and each is horizontally aligned
+  // with the column it names — a header in the wrong order is worse than none
+  const boxOf = async (sel) => await page.locator(sel).first().boundingBox();
+  const [hp, hg, cp, cg, r0] = await Promise.all([
+    boxOf(".rep-head-pace"), boxOf(".rep-head-gap"),
+    boxOf(".rep-pace"), boxOf(".rep-gap"), boxOf(".rep-row"),
+  ]);
+  assert.ok(hp.y + hp.height <= r0.y + 1, "the header row is above the first rep");
+  assert.ok(Math.abs((hp.x + hp.width) - (cp.x + cp.width)) <= 2,
+    `PACE header is not aligned to the pace column: ${hp.x + hp.width} vs ${cp.x + cp.width}`);
+  assert.ok(Math.abs((hg.x + hg.width) - (cg.x + cg.width)) <= 2,
+    `GAP header is not aligned to the GAP column: ${hg.x + hg.width} vs ${cg.x + cg.width}`);
   // the recovery between reps is shown, and there is one fewer of them —
   // nothing trails the final rep
   assert.equal(await page.locator(".rep-rec").count(), 4);

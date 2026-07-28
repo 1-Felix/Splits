@@ -15,15 +15,19 @@ documents are a disposable cache and the bump self-heals every row.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 
-INTERVAL_VERSION = 3   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 4   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
                        # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
                        #    rep floor the stream path always has, and shares its
                        #    labelling logic — a trailing partial lap no longer
                        #    reads as a rep, and a varied lap-sourced set no
                        #    longer loses its label (production defect, 2026-07-27)
+                       # 4: the workout STEP decides what is a rep — one-off
+                       #    ACTIVE laps demoted, lap blocks meet BLOCK_MIN_*,
+                       #    GAP from the device, spread/fade on the raw grid.
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
@@ -420,11 +424,12 @@ def set_stats(bouts, series, dist_at, hr: list | None,
     its `gapS`. `raw` defaults to `series` so a caller with only one grid (a
     test, a payload with no `v`) keeps the old behaviour.
 
-    The split matters for `fadePct` and `paceCvPct`, which stay on the
-    DETECTION signal: a set of reps run up and back down a drag is not a fade,
-    and saying so is the whole reason D5 exists. The reported paces are the raw
-    ones because that is what the athlete ran and what the rep table shows next
-    to them.
+    `series` decides WHERE the reps are; `raw` decides what every reported
+    number says. `paceCvPct` and `fadePct` used to ride `series`, which put
+    them on a different signal from the `paceS` printed beside them and from
+    the deviation bars drawn from it — a hilly set fanned its bars out under a
+    sub-line reading "0.0 % spread". They now ride `raw`, which is also what
+    the laps branch has always done, so the two producers agree.
 
     `found` vs `prescribed` is the honesty contract (design D4): prescribed is
     None while detection is blind, and once Change 2 fills the prior these two
@@ -442,15 +447,16 @@ def set_stats(bouts, series, dist_at, hr: list | None,
     paces = [r["paceS"] for r in reps if r["paceS"]]
     nominal, varied = _rep_variation([r["distM"] for r in reps])
 
-    # consistency and fade ride on the detection signal, the reported mean on
-    # the raw one — see the docstring
-    effort = [p for p in (_window_pace(series, a, b) for a, b in bouts) if p]
+    # Consistency and fade ride the RAW grid — the same signal as the reported
+    # `paceS`, the rep table's PACE column and its deviation bars. See
+    # test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars for the
+    # measurement behind this and what it trades away. DETECTION is unchanged:
+    # `series` is still the grade-adjusted grid and still decides the bouts.
     mean_pace = _mean(paces)
     cv = None
-    mean_effort = _mean(effort)
-    if mean_effort and len(effort) > 1:
-        var = sum((p - mean_effort) ** 2 for p in effort) / len(effort)
-        cv = round(100.0 * (var ** 0.5) / mean_effort, 1)
+    if mean_pace and len(paces) > 1:
+        var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
+        cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
 
     recoveries = [bouts[i + 1][0] - bouts[i][1] for i in range(len(bouts) - 1)]
     drops = []
@@ -468,8 +474,8 @@ def set_stats(bouts, series, dist_at, hr: list | None,
         "varied": varied,
         "paceS": int(round(mean_pace)) if mean_pace else None,
         "paceCvPct": cv,
-        "fadePct": round(100.0 * (effort[-1] - effort[0]) / effort[0], 1)
-                   if len(effort) > 1 and effort[0] else None,
+        "fadePct": round(100.0 * (paces[-1] - paces[0]) / paces[0], 1)
+                   if len(paces) > 1 and paces[0] else None,
         "recoveryS": int(round(_mean(recoveries))) if recoveries else None,
         "recoveryHrDrop": int(round(_mean(drops))) if drops else None,
         "reps": reps,
@@ -514,12 +520,23 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     guessing: boundaries, roles and per-lap statistics all come from the
     device, and nothing here re-derives them from the stream.
 
-    `gaps` is the one exception, and it is an addition rather than a
-    re-derivation: a lapDTO carries no grade-adjusted speed, so without it the
-    GAP column is empty on precisely the runs that earn a lap-sourced document
-    — the athlete's genuine workout days. The lap clock is cumulative from the
-    activity start, which is the same origin as the 1 Hz grid, so a lap's
-    [t0, t1) indexes straight into it."""
+    `gaps` is a FALLBACK, not the primary source. A lapDTO usually carries
+    `avgGradeAdjustedSpeed` (553 of this archive's 565 laps), and the device's
+    own number is preferred: it is measured over exactly the lap, whereas the
+    windowed lookup indexes the 1 Hz grid by a clock accumulated from lap
+    `duration` — MOVING time — so on a paused run it drifts off the stream's
+    elapsed axis and reads the wrong slice (handoff M3). `gaps` covers the
+    older payloads that have no such field, so the GAP column is not empty on
+    precisely the runs that earn a lap-sourced document — the athlete's
+    genuine workout days. The lap clock is cumulative from the activity start,
+    which is the same origin as the 1 Hz grid, so a lap's [t0, t1) indexes
+    straight into it.
+
+    A device value of exactly 0 (a standing-rest lap) is treated as ABSENT,
+    not as "zero pace": `_pace_s_per_km(0)` cannot produce a sane number
+    either way, so `lap.get(...)` — falsy on 0, None and missing keys alike —
+    falls through to the windowed lookup rather than reporting a nonsense
+    pace."""
     segs = []
     t0 = 0.0
     d0 = 0.0
@@ -537,7 +554,9 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
             "d0": int(round(d0)), "d1": int(round(d0 + dist)),
             "durS": int(round(dur)), "distM": int(round(dist)),
             "paceS": _pace_s_per_km(speed),
-            "gapS": _window_pace(gaps, int(round(t0)), int(round(t0 + dur))),
+            "gapS": _pace_s_per_km(lap["avgGradeAdjustedSpeed"])
+                    if lap.get("avgGradeAdjustedSpeed")
+                    else _window_pace(gaps, int(round(t0)), int(round(t0 + dur))),
             "hr": int(lap["averageHR"]) if lap.get("averageHR") else None,
             "cad": int(round(lap["averageRunCadence"] * 2))
                    if lap.get("averageRunCadence") else None,
@@ -550,43 +569,83 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     return segs
 
 
-def _apply_lap_work_floor(segments: list[dict]) -> list[dict]:
-    """Fix for the production defect of 2026-07-27: `segments_from_laps` maps
-    every `ACTIVE`/`INTERVAL` lap to a `work` rep verbatim (design D1 — the
-    watch is not guessing about ROLES), but it is still just a lap boundary,
-    and a lap can be a trailing artifact — the athlete pressing stop, or the
-    watch's own end-of-activity lap — a fraction of a second and a few metres
-    long. Nothing before this function told that apart from a real rep, so a
-    9 m fragment sat beside five genuine 1 km reps and the whole set read
-    `varied`, which in turn nulled its label (see `_reps_label`).
+def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
+    """Which workout STEP indices identify reps — or None when this activity
+    carries no usable step evidence and the caller must keep every work lap.
 
-    Applies the SAME `WORK_MIN_S` / `WORK_MIN_M` floor `find_bouts` has always
-    applied to the stream path — one engine, one definition of what counts as
-    a rep, not two. A `warmup`/`recovery`/`cooldown` lap is untouched however
-    short: those roles carry no minimum on the stream path either (a 20 s
-    recovery is still a recovery), so filtering them here would be inventing a
-    rule the design never had.
+    `wktStepIndex` is the step of the downloaded workout a lap executed. Reps
+    of one set share a single REPEATED step; a warmup, a cooldown or a
+    transition occupies its own step, used once. That is the only signal that
+    separates them: Garmin tags all of them ACTIVE, and the one-off ones are
+    LONGER than the reps, so no size floor can reach them (production defect
+    2026-07-28, 8 of 23 lap-sourced documents).
 
-    A lap that fails the floor is RE-ROLED, never removed: `segments_from_laps`
-    guarantees every segment's `t0/t1/d0/d1` chains to the next with no gap,
-    and consumers (the rep-shaded stream chart, `_quality`'s summation) rely
-    on that full-span coverage. Deleting the segment would open a hole in the
-    run nothing else in the contract allows; re-roling keeps the athlete's
-    recorded time and distance in the document while correctly excluding it
-    from `work`, `quality` and the rep count. The new role mirrors the
-    vocabulary `_segments_from_bouts` already uses for the stream path's own
-    gaps: `warmup` before the first surviving rep, `cooldown` after the last,
-    `recovery` in between (and when no rep survives at all — there is then no
-    'between' to speak of, but the run has already been demoted to `steady`
-    or `block` by the caller, so the exact word does not affect any number).
+    `work_idx` is the set of lap indices already accepted as work by role and
+    by the size floor — counting steps over recovery laps would let a repeated
+    RECOVERY step decide which laps are reps.
+    """
+    if not any(l.get("wktStepIndex") is not None for l in laps):
+        return None                       # nothing to go on: keep every rep
+    counts = Counter(laps[i].get("wktStepIndex") for i in work_idx
+                     if laps[i].get("wktStepIndex") is not None)
+    if not counts:
+        # A non-work lap (warmup, recovery, cooldown...) carries a step index
+        # but no floor-passing WORK lap does — e.g. the athlete abandoned a
+        # downloaded workout after its warmup step, then manually lapped a
+        # genuine rep set with no steps of its own. This is the same
+        # "no usable evidence" answer as the guard above: an activity whose
+        # work laps carry no step index tells us nothing about which of them
+        # are reps, so the honest response is to keep them all, not to
+        # conclude that none of them is a rep.
+        return None
+    repeated = {step for step, n in counts.items() if n > 1}
+    if repeated:
+        return repeated
+    # every work step distinct — a genuinely varied session (a pyramid). The
+    # only thing still disqualifying is carrying no step at all.
+    return set(counts)
 
-    `idx` never changes — segments are re-roled in place order, never
-    deleted. `rep` is renumbered 1..N over the SURVIVING work segments only,
-    in order, so a demoted lap in the middle of a set does not leave a hole
-    in the numbering."""
-    survivors = {i for i, s in enumerate(segments)
-                 if s["role"] == "work"
-                 and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}
+
+def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
+    """Which lap-derived work segments are genuine reps.
+
+    Two filters, one question. The SIZE floor (`WORK_MIN_S` / `WORK_MIN_M`,
+    the same one `find_bouts` applies to the stream path) rejects fragments —
+    the athlete pressing stop, the watch's own end-of-activity lap. The STEP
+    rule rejects the opposite failure: a warmup, cooldown or transition the
+    watch tagged ACTIVE, which is bigger than a rep rather than smaller.
+
+    A rejected lap is RE-ROLED, never removed: `segments_from_laps` guarantees
+    every segment's `t0/t1/d0/d1` chains to the next with no gap, and
+    consumers (the rep-shaded stream chart, `_quality`'s summation) rely on
+    that full-span coverage. Deleting would open a hole in the run nothing in
+    the contract allows. The new role mirrors the vocabulary
+    `_segments_from_bouts` already uses for the stream path's own gaps:
+    `warmup` before the first surviving rep, `cooldown` after the last,
+    `recovery` in between (and when no rep survives at all there is no
+    'between' to speak of, but the caller has already demoted the run to
+    `steady` or `block`, so the exact word affects no number).
+
+    `idx` never changes. `rep` renumbers 1..N over the SURVIVING work
+    segments only, in order, so a demoted lap mid-set leaves no hole.
+
+    A `warmup`/`recovery`/`cooldown` lap is untouched however short: those
+    roles carry no minimum on the stream path either.
+
+    `segments[i]` must correspond to `laps[i]`: `segments_from_laps` emits
+    exactly one segment per lap, in order, and this function indexes `laps`
+    by segment position on that assumption. If that ever stops holding, this
+    must fail loudly rather than silently read the wrong lap's step index.
+    """
+    assert len(segments) == len(laps), \
+        "segments_from_laps must emit exactly one segment per lap, in order"
+    sized = {i for i, s in enumerate(segments)
+             if s["role"] == "work"
+             and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}
+    steps = _rep_step_indices(laps, sized)
+    survivors = sized if steps is None else {
+        i for i in sized if laps[i].get("wktStepIndex") in steps}
+
     ordered = sorted(survivors)
     first = ordered[0] if ordered else None
     last = ordered[-1] if ordered else None
@@ -772,7 +831,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
     base = {"version": INTERVAL_VERSION, "guidedBy": None}
 
     if laps and laps_are_structured(summary, laps):
-        segments = _apply_lap_work_floor(segments_from_laps(laps, gap_grid))
+        segments = _lap_rep_segments(segments_from_laps(laps, gap_grid), laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -780,7 +839,23 @@ def build_document(streams: dict | None, summary: dict | None = None,
         if mean_pace and len(paces) > 1:
             var = sum((p - mean_pace) ** 2 for p in paces) / len(paces)
             cv = round(100.0 * (var ** 0.5) / mean_pace, 1)
-        shape = "reps" if len(work) >= 2 else ("block" if work else "steady")
+        # A single surviving work lap is only a BLOCK if it is big enough to
+        # be one — the SAME BLOCK_MIN_S/BLOCK_MIN_M floor, on the SAME `or`
+        # basis, that classify() applies for the stream path (see its
+        # `if b - a >= BLOCK_MIN_S or dist_at(b) - dist_at(a) >= BLOCK_MIN_M`
+        # around line 308): one definition of a block across both producers.
+        # Task 2's step rule makes the single-survivor case common, and
+        # without this a 205 m fragment of a run/walk asserts "1 min block"
+        # (handoff P2.7a). The `>= 2` rep threshold is deliberately NOT
+        # unified with the stream path's REPS_MIN_COUNT here — see P2.7b,
+        # which is entangled with Change 2's expect_reps.
+        if len(work) >= 2:
+            shape = "reps"
+        elif work and (work[0]["durS"] >= BLOCK_MIN_S
+                       or work[0]["distM"] >= BLOCK_MIN_M):
+            shape = "block"
+        else:
+            shape = "steady"
         nominal, varied = _rep_variation([s["distM"] for s in work])
         if shape == "reps":
             label = _reps_label([s["distM"] for s in work])

@@ -715,31 +715,41 @@ def test_a_run_without_a_gap_stream_reports_no_gap_rather_than_a_copy():
     assert all(r["gapS"] is None for r in doc["set"]["reps"])
 
 
-def test_fade_is_measured_on_effort_while_the_reported_pace_is_raw():
-    """The other half of the split, and the reason the two grids are not
-    interchangeable. This set climbs a steady drag: the raw pace decays rep by
-    rep (4.4 → 3.6 m/s) while the grade-adjusted effort never moves. Design D5
-    is explicit that "using raw pace would split one set into a fade", so
-    `fadePct` and `paceCvPct` ride on the DETECTION signal — but `paceS` is
-    still what the athlete actually ran, because that is the number sitting
-    next to GAP in the rep table."""
+def test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars():
+    """CHANGED 2026-07-28, deliberately, and this reverses design D5's
+    reporting half. `fadePct`/`paceCvPct` rode the grade-adjusted DETECTION
+    signal while the rep table's deviation bars and PACE column were raw, so a
+    hilly set fanned its bars out above a sub-line reading '0.0 % spread'.
+
+    Measured before choosing: on the archive's one uncontaminated hill-repeat
+    set (2025-11-21, eight genuine 90 s reps) RAW is TIGHTER — cv 9.1 % vs
+    GAP 14.7 %. Fixed-duration reps cover less ground as the athlete tires, so
+    each samples a different slice of the gradient and its grade adjustment
+    varies; GAP there measures the hill, not the athlete. On the stream path
+    the two bases differ by under 1.5 points and split both ways across 11
+    sets.
+
+    The cost this fixture now pins: a set climbing a CONTINUOUS drag at
+    constant effort reads as a fade, which is exactly what D5 warned about.
+    No such session exists in 168 runs — every hill session runs each rep up
+    the same hill and recovers back down — so successive reps share terrain
+    and raw pace compares them honestly. Revisit if one ever appears.
+
+    DETECTION is untouched: the bouts are still found on the grade-adjusted
+    signal, so this set is still detected as ONE set."""
     spans = [(600, 2.6, 2.6)]
     for raw in (4.4, 4.2, 4.0, 3.8, 3.6):
         spans += [(250, raw, 4.2), (60, 2.2, 2.2)]
     spans += [(300, 2.6, 2.6)]
     doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
-    assert doc["shape"] == "reps" and doc["set"]["found"] == 5
+    assert doc["shape"] == "reps" and doc["set"]["found"] == 5, \
+        "detection still rides the grade-adjusted signal — one set, not five"
     st = doc["set"]
-    assert st["fadePct"] == 0.0, \
-        f"constant effort up a drag is not a fade: {st['fadePct']}%"
-    assert st["paceCvPct"] == 0.0, f"…and not inconsistent either: {st['paceCvPct']}"
-    raws = [r["paceS"] for r in st["reps"]]
-    assert raws[-1] - raws[0] > 40, \
-        f"the RAW paces still tell the honest slowdown story: {raws}"
+    assert st["fadePct"] > 15, \
+        f"the raw slowdown is now reported as the fade it looks like: {st['fadePct']}%"
+    assert st["paceCvPct"] > 5, f"…and as real spread: {st['paceCvPct']}"
     assert all(abs(r["gapS"] - 238) <= 2 for r in st["reps"]), \
-        f"every rep's grade-adjusted pace is the same 4.2 m/s: {[r['gapS'] for r in st['reps']]}"
-    assert abs(st["paceS"] - sum(raws) / len(raws)) <= 1, \
-        "the headline pace is the mean of the RAW rep paces"
+        "GAP stays per-rep and unchanged — the terrain read lives in that column"
 
 
 def test_progression_steps_carry_both_paces_too():
@@ -774,6 +784,42 @@ def test_lap_sourced_segments_gain_gap_from_the_stream():
     assert all(seg["gapS"] == 227 for seg in work), \
         f"GAP read from the stream over each lap's window: {[s['gapS'] for s in work]}"
     assert all(r["gapS"] == 227 for r in doc["set"]["reps"])
+
+
+def test_lap_gap_comes_from_the_device_when_it_carries_one():
+    """`segments_from_laps` derived gapS by windowing the stream's gap grid,
+    on the docstring's claim that "a lapDTO carries no grade-adjusted speed".
+    It does: avgGradeAdjustedSpeed is present on 553 of the archive's 565
+    laps. The device value is also immune to M3 — lap `duration` is MOVING
+    time, so on a paused run the accumulated t0 drifts off the stream's
+    elapsed axis and the windowed lookup reads the wrong slice."""
+    lap = _lap(1000, 300, "ACTIVE")
+    lap["avgGradeAdjustedSpeed"] = 4.0          # 250 s/km
+    segs = il.segments_from_laps([lap], gaps=[2.0] * 400)   # 500 s/km if windowed
+    assert segs[0]["gapS"] == 250, "the device's own number, not the stream's"
+
+
+def test_lap_gap_falls_back_to_the_stream_grid():
+    lap = _lap(1000, 300, "ACTIVE")              # no avgGradeAdjustedSpeed
+    segs = il.segments_from_laps([lap], gaps=[4.0] * 400)
+    assert segs[0]["gapS"] == 250
+
+
+def test_lap_gap_is_none_when_neither_source_has_one():
+    lap = _lap(1000, 300, "ACTIVE")
+    assert il.segments_from_laps([lap], gaps=None)[0]["gapS"] is None
+
+
+def test_lap_gap_of_exactly_zero_falls_back_rather_than_reporting_zero():
+    """A standing-rest lap can legitimately average 0 m/s grade-adjusted
+    speed, but `_pace_s_per_km(0)` cannot turn that into a sane pace — it is
+    the sentinel for "no data" everywhere else in this module. So a device
+    value of exactly 0 is treated as ABSENT, and the lookup falls back to the
+    windowed stream grid, same as a missing field would."""
+    lap = _lap(1000, 300, "ACTIVE")
+    lap["avgGradeAdjustedSpeed"] = 0.0
+    segs = il.segments_from_laps([lap], gaps=[4.0] * 400)
+    assert segs[0]["gapS"] == 250, "zero is not a usable device pace; the stream wins"
 
 
 def test_steady_run_still_gets_a_document():
@@ -1057,12 +1103,12 @@ def _pace_lap(dist_m, pace_s_per_km=300, intensity="ACTIVE"):
 
 def test_lap_work_floor_reroles_a_trailing_fragment_as_cooldown():
     """The exact shape of the live defect: two real reps then a lap-clock
-    fragment with no more work after it. `_apply_lap_work_floor` must demote
+    fragment with no more work after it. `_lap_rep_segments` must demote
     it, not count it, and — since nothing follows it — call it `cooldown`,
     not `recovery` (there is no more work to recover FOR)."""
     laps = [_lap(600, 180, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
             _pace_lap(9)]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["warmup", "work", "work", "cooldown"]
     assert segs[1]["rep"] == 1 and segs[2]["rep"] == 2
     assert "rep" not in segs[3]
@@ -1074,7 +1120,7 @@ def test_lap_work_floor_reroles_leading_fragments_as_warmup():
     there is nothing yet to have recovered from."""
     laps = [_pace_lap(93, 150), _pace_lap(118, 150), _pace_lap(112, 150),
             _pace_lap(105, 150), _pace_lap(3040, 260)]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["warmup"] * 4 + ["work"]
     assert segs[4]["rep"] == 1
     assert all("rep" not in s for s in segs[:4])
@@ -1086,7 +1132,7 @@ def test_lap_work_floor_reroles_a_mid_set_fragment_as_recovery_and_renumbers():
     count must not leave a hole in `rep` numbering: the third real rep is
     still numbered 3, not 4."""
     laps = [_pace_lap(1000), _pace_lap(1000), _pace_lap(9), _pace_lap(1000)]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["work", "work", "recovery", "work"]
     assert [s.get("rep") for s in segs] == [1, 2, None, 3]
     # idx is untouched — segments are re-roled in place, never deleted
@@ -1099,7 +1145,7 @@ def test_lap_work_floor_leaves_short_warmup_recovery_cooldown_alone():
     recovery there is still a recovery, never dropped or re-roled)."""
     laps = [_lap(50, 15, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
             _lap(20, 8, "REST"), _pace_lap(1000), _lap(30, 10, "COOLDOWN")]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == \
         ["warmup", "work", "work", "recovery", "work", "cooldown"]
     assert [s.get("rep") for s in segs] == [None, 1, 2, None, 3, None]
@@ -1112,7 +1158,7 @@ def test_lap_work_floor_never_touches_a_non_work_role_even_by_position():
     demoted `work` laps go through, which would fire on it too if the code
     ever stopped checking the role first."""
     laps = [_lap(10, 5, "REST"), _pace_lap(1000), _pace_lap(1000)]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert segs[0]["role"] == "recovery"
 
 
@@ -1124,7 +1170,8 @@ def test_lap_work_floor_needs_both_distance_and_duration_not_either_alone():
     alone is a rep."""
     fast_sprint = _lap(200, 20)          # clears 150 m, fails 30 s
     slow_stroll = _lap(100, 60)          # clears 30 s, fails 150 m
-    segs = il._apply_lap_work_floor(il.segments_from_laps([fast_sprint, slow_stroll]))
+    laps = [fast_sprint, slow_stroll]
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["recovery", "recovery"]
 
 
@@ -1135,7 +1182,7 @@ def test_lap_work_floor_falls_back_to_recovery_when_nothing_survives():
     `steady` or `block` in this case (see test_all_sub_floor_laps_read_
     steady_with_no_segments) and neither counts a `recovery` segment."""
     laps = [_pace_lap(9), _pace_lap(8)]
-    segs = il._apply_lap_work_floor(il.segments_from_laps(laps))
+    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["recovery", "recovery"]
     assert all("rep" not in s for s in segs)
 
@@ -1261,6 +1308,64 @@ def test_run_walk_run_partially_survives_the_floor_a_known_limitation():
     assert doc["set"]["varied"] is True
 
 
+def test_a_single_short_work_lap_is_not_a_block():
+    """The stream path has always required BLOCK_MIN_S/BLOCK_MIN_M before
+    calling something a block; the laps branch called ANY surviving work lap
+    one. Task 2 makes the single-survivor case common, so the asymmetry
+    started mattering. 'Run Walk Run®' (2024-07-22) asserted a '1 min block'
+    over a 205 m fragment of a 25 minute run/walk."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(205, 62, "ACTIVE", 1),
+            _step_lap(2000, 900, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "steady"
+    assert doc["label"] is None
+    assert doc["segments"] == [], "a steady run gets a document, no segments"
+    assert doc["set"] is None
+
+
+def test_a_single_long_work_lap_is_still_a_block():
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(3000, 1118, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "block"
+    assert doc["label"] == "19 min block"
+
+
+def test_a_single_work_lap_clearing_only_the_distance_arm_is_still_a_block():
+    """The block test is an `or`: EITHER arm alone is enough. Every real
+    fixture that reaches `block` clears BOTH arms or clears duration alone
+    (2024-07-13, 801 m / 300 s) — nothing in this athlete's archive clears
+    distance while failing duration, because no run over 1.5 km in the
+    archive is run at a ~3:01/km pace or faster. That absence of real-data
+    coverage is exactly why this synthetic case has to exist: 1600 m in
+    290 s clears BLOCK_MIN_M (1600 >= 1500) while FAILING BLOCK_MIN_S
+    (290 < 300), and must still read block through the distance arm alone."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(1600, 290, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "block"
+    assert doc["label"] == "5 min block"
+
+
+def test_a_single_work_lap_just_under_both_floors_is_not_a_block():
+    """The block test is an `or` (parity with classify(), the stream path's
+    version of this same rule): a work lap is a block if it clears EITHER
+    the duration floor OR the distance floor. This fixture sits just under
+    BOTH — 299 s (< BLOCK_MIN_S) and 1499 m (< BLOCK_MIN_M) — so it fails
+    both arms and must read steady. Both arms stay separately meaningful:
+    weakening either one (or dropping the floor entirely) would wrongly
+    call this a block."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0),
+            _step_lap(1499, 299, "ACTIVE", 1),
+            _step_lap(1000, 450, "COOLDOWN", 2)]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "steady"
+    assert doc["label"] is None
+
+
 def test_laps_and_stream_paths_share_the_same_reps_labelling_rule():
     """Fix 2: the laps branch must name a varied set through the SAME rule as
     the stream path (`_reps_label`, shared by both), not a second hand-rolled
@@ -1280,3 +1385,208 @@ def test_lap_sourced_varied_set_gets_a_label_not_none():
     assert doc["set"]["varied"] is True
     assert doc["label"] is not None
     assert doc["label"] == "1-2-1 km"
+
+
+def _step_lap(dist, dur, intensity, step, pace_s_per_km=300):
+    """A lap carrying a workout STEP index — what a structured workout
+    downloaded to the watch produces, and what `_lap` deliberately omits."""
+    lap = _lap(dist, dur, intensity)
+    lap["wktStepIndex"] = step
+    return lap
+
+
+def test_one_off_active_steps_are_not_reps():
+    """The production defect of 2026-07-28. Garmin tags a warmup, a cooldown
+    and a mid-workout transition ACTIVE whenever the athlete built them that
+    way, and no size floor reaches them — they are LONGER than the reps.
+    Only the repeated step is the set."""
+    laps = [
+        _step_lap(2000, 800, "ACTIVE", 0),      # warmup, tagged ACTIVE
+        _step_lap(1000, 310, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 316, "ACTIVE", 1),
+        _step_lap(2000, 1000, "ACTIVE", 4),     # cooldown, tagged ACTIVE
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3, "the two 2 km bookends are not reps"
+    assert doc["label"] == "3×1 km"
+    assert [s["role"] for s in doc["segments"]] == [
+        "warmup", "work", "recovery", "work", "recovery", "work", "cooldown"]
+    assert doc["quality"]["workDistM"] == 3000
+
+
+def test_a_demoted_step_keeps_its_span():
+    """Demotion re-roles in place — deleting would open a hole in the run that
+    `_quality` and the rep-shaded chart both assume cannot exist."""
+    laps = [
+        _step_lap(2000, 800, "ACTIVE", 0),
+        _step_lap(1000, 310, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 1),
+    ]
+    doc = _laps_doc(None, laps=laps)
+    segs = doc["segments"]
+    assert len(segs) == 4, "nothing is dropped"
+    for a, b in zip(segs, segs[1:]):
+        assert a["t1"] == b["t0"], f"gap in the time span: {a} -> {b}"
+        assert a["d1"] == b["d0"], f"gap in the distance span: {a} -> {b}"
+    assert segs[0]["distM"] == 2000, "the demoted lap keeps its own numbers"
+    assert "rep" not in segs[0]
+    assert [s["rep"] for s in segs if s["role"] == "work"] == [1, 2]
+
+
+def test_a_varied_set_with_no_repeated_step_survives_intact():
+    """'pYRAMIDE: 1-2-1K' — three distinct steps, each used once. There is no
+    repeat block, so the rule must not fire and eat two thirds of the set."""
+    laps = [
+        _step_lap(2000, 800, "WARMUP", 0),
+        _step_lap(1000, 310, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(2000, 640, "ACTIVE", 3),
+        _step_lap(300, 150, "RECOVERY", 4),
+        _step_lap(1000, 315, "ACTIVE", 5),
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["set"]["found"] == 3
+    assert doc["label"] == "1-2-1 km"
+
+
+def test_a_lap_with_no_step_among_stepped_laps_is_demoted():
+    """2026-05-29: a manual lap pressed AFTER the cooldown. It has no step
+    index at all, so it was never part of the workout."""
+    laps = [
+        _step_lap(2000, 800, "WARMUP", 0),
+        _step_lap(1000, 310, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 1),
+        _step_lap(1300, 700, "COOLDOWN", 4),
+        _lap(926, 420, "ACTIVE"),               # no wktStepIndex
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["set"]["found"] == 2
+    assert doc["segments"][-1]["role"] == "cooldown"
+
+
+def test_laps_with_no_steps_anywhere_are_untouched():
+    """An unstructured run manually lapped carries no step index on any lap.
+    The rule has no evidence to act on and must keep today's behaviour."""
+    laps = [_lap(2000, 800, "WARMUP")] + [
+        l for d in (1000, 1000, 1000)
+        for l in (_pace_lap(d, 300), _lap(300, 150, "REST"))][:-1]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["set"]["found"] == 3
+
+
+def test_two_repeated_steps_are_one_alternating_set():
+    """4 x [1 km hard, 1 km moderate] is ONE set with TWO repeated steps."""
+    laps = [_step_lap(2000, 800, "WARMUP", 0)]
+    for _ in range(3):
+        laps.append(_step_lap(1000, 300, "ACTIVE", 1))
+        laps.append(_step_lap(1000, 360, "ACTIVE", 2))
+    doc = _laps_doc(None, laps=laps)
+    assert doc["set"]["found"] == 6
+
+
+def test_a_repeated_recovery_step_does_not_promote_a_one_off_work_lap():
+    """`_rep_step_indices` only counts steps over WORK laps that already
+    cleared the size floor (`work_idx`) — never over recovery/warmup/cooldown
+    laps. Here the recovery step (2) happens to repeat twice, and a one-off
+    ACTIVE transition lap coincidentally reuses that same step number (2). If
+    step-counting ever looked at every lap instead of just `work_idx`, step 2
+    would read as 'repeated' from the recovery laps alone and wrongly pull
+    the one-off work lap into the set alongside the three genuine step-1
+    reps, inflating found from 3 to 4."""
+    laps = [
+        _step_lap(2000, 800, "WARMUP", 0),
+        _step_lap(1000, 310, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 316, "ACTIVE", 1),
+        _step_lap(1000, 400, "ACTIVE", 2),      # one-off, reuses the RECOVERY step
+        _step_lap(2000, 1000, "COOLDOWN", 4),
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["set"]["found"] == 3
+    assert doc["segments"][6]["role"] != "work"
+
+
+def test_no_step_on_any_work_lap_keeps_them_all_even_when_other_laps_have_one():
+    """Regression (fix round 1, finding 1): the no-evidence guard tested
+    `any(...)` over ALL laps, but `counts` is built over WORK laps only. When
+    a non-work lap carries a `wktStepIndex` and no floor-passing work lap
+    does, `counts` was empty, so `repeated` was empty too, and the old code
+    fell through to `return set(counts)` — an empty set — which demoted every
+    work lap and reported zero reps. Realistic trigger: the athlete starts a
+    downloaded workout, abandons it after the warmup step, then manually laps
+    a genuine rep set of its own with no steps at all.
+
+    This is the same 'no usable evidence' answer branch 1 gives: an activity
+    whose work laps carry no step index tells us nothing about which of them
+    are reps, so the honest response is to keep them all."""
+    laps = [
+        _lap(1000, 300, "ACTIVE"),              # no wktStepIndex
+        _step_lap(300, 150, "RECOVERY", 5),
+        _lap(1000, 305, "ACTIVE"),               # no wktStepIndex
+        _step_lap(300, 150, "RECOVERY", 5),
+        _lap(1000, 310, "ACTIVE"),               # no wktStepIndex
+    ]
+    doc = _laps_doc(None, laps=laps)
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert [s["rep"] for s in work] == [1, 2, 3]
+
+
+def test_step_index_zero_is_a_legitimate_repeat_block():
+    """`wktStepIndex` 0 is a real value, not "no step" — a workout with no
+    warmup step has its repeat block AT step 0. `_rep_step_indices` must treat
+    it exactly like any other step index (`is not None`, not truthiness):
+    under a truthy check, `0 or None` both read as "no evidence" and a lap
+    whose repeat block sits at step 0 loses every one of its counts, while a
+    later one-off `ACTIVE` lap on a nonzero step reads as the only 'repeated'
+    (in fact singleton) step and wrongly survives as the set."""
+    laps = [
+        _step_lap(1000, 310, "ACTIVE", 0),      # rep 1, step 0 — no warmup lap
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 313, "ACTIVE", 0),      # rep 2, step 0
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 316, "ACTIVE", 0),      # rep 3, step 0
+        _step_lap(2000, 1000, "ACTIVE", 1),     # one-off cooldown, tagged ACTIVE
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3, "the step-0 reps must be recovered"
+    assert [s["rep"] for s in doc["segments"] if s["role"] == "work"] == [1, 2, 3]
+    assert doc["segments"][-1]["role"] == "cooldown", "the one-off is demoted"
+
+
+def test_step_index_zero_is_evidence_not_no_evidence():
+    """The `_rep_step_indices` no-evidence guard (`not any(... is not None ...)`)
+    must not read step 0 as absent. Here every step index anywhere in the
+    activity is 0 or missing — no lap carries any OTHER value — so a
+    truthiness reading of the guard sees no truthy step at all and bails out
+    early ('keep every rep'), silently skipping the one-off's demotion. A
+    correct `is not None` reading sees the 0s as real evidence and proceeds."""
+    laps = [
+        _step_lap(1000, 310, "ACTIVE", 0),      # rep 1, step 0
+        _step_lap(300, 150, "RECOVERY", 0),
+        _step_lap(1000, 313, "ACTIVE", 0),      # rep 2, step 0
+        _step_lap(300, 150, "RECOVERY", 0),
+        _step_lap(1000, 316, "ACTIVE", 0),      # rep 3, step 0
+        _lap(2000, 1000, "ACTIVE"),             # one-off, no step index at all
+    ]
+    doc = _laps_doc(None, laps=laps)
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3, "the step-0 evidence must be used, not discarded"
+    assert doc["segments"][-1]["role"] == "cooldown", "the stepless one-off is demoted"
+
+
+def test_interval_version_is_current():
+    """A stored document is only trustworthy if its version moved whenever the
+    rules that produced it did. Tasks 2-5 changed which laps are reps, what a
+    lap-sourced block must clear, where GAP comes from, and the basis of
+    spread and fade — every stored document must be recomputed."""
+    assert il.INTERVAL_VERSION == 4
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 4

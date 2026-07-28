@@ -175,11 +175,21 @@ const STEADY_SEGMENTS = [
     durS: 1800, distM: 5000, paceS: 360, gapS: 355, hr: 150, cad: null },
 ];
 const STEADY_DOC = {
-  version: 1, shape: "steady", source: "stream", confidence: 0.95,
+  version: 1, shape: "steady", source: "stream", calibrated: true, confidence: 0.95,
   label: null, guidedBy: null,
   segments: STEADY_SEGMENTS,
   set: null,
   quality: { workDistM: 5000, workDurS: 1800, zone: "Z2" },
+};
+
+// P1.2: a document from an athlete whose archive is too short to calibrate a
+// work floor. `calibrated: false` means "we could not judge structure yet" —
+// which rendered IDENTICALLY to "we looked and found nothing" before this.
+const UNCAL_RUN_ID = 9004;
+const UNCAL_DOC = {
+  version: 4, shape: "steady", source: "stream", calibrated: false,
+  confidence: 0.0, label: null, segments: [], set: null, guidedBy: null,
+  quality: { workDistM: 0, workDurS: 0, zone: null },
 };
 
 function makeArchive(dir) {
@@ -293,6 +303,20 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     STEADY_RUN_ID, 1, "2026-07-12 06:51:15", "steady", null, 0.95, "stream",
     5000, 1800, JSON.stringify(STEADY_DOC), "2026-07-27T09:00:00");
+
+  // ── P1.2: UNCAL_RUN_ID — an athlete whose archive is too short to
+  // calibrate a work floor. `calibrated: false` must render a plain notice,
+  // never the silent "no reps" look shared by STEADY_RUN_ID/PLAIN_RUN_ID.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-13 06:51:15', 'running', 'Max First Week Run',
+      5000.0, 1800, 148, 165, 164.0, 12.0, '{}', '{}', 'x', 'x', ?, NULL)`)
+    .run(UNCAL_RUN_ID, JSON.stringify(DETAIL));
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    UNCAL_RUN_ID, 4, "2026-07-13 06:51:15", "steady", null, 0.0, "stream",
+    0, 0, JSON.stringify(UNCAL_DOC), "2026-07-28T09:00:00");
   db.close();
 }
 
@@ -478,6 +502,12 @@ try {
   assert.equal(await page.locator(".rep-row").count(), 5, "five reps render");
   assert.match(await page.locator(".rep-title").innerText(), /5×1 km/,
     "the rep card titles itself with the detected label");
+  // P1.2 discriminator: REP_DOC predates the `calibrated` flag (no key at
+  // all — `iv.calibrated` is undefined, not false). `iv.calibrated === false`
+  // must stay silent on it; `!iv.calibrated` would wrongly show the "not
+  // enough history" notice on a real, confidently-detected rep set.
+  assert.equal(await page.locator(".rep-uncal").count(), 0,
+    "a document that predates the calibrated flag stays silent — no false accusation");
   // FINAL REVIEW I3: the cockpit verdict at the top of this page must describe
   // the SAME session the rep table below it describes. coachRead reads the
   // structure off `detail.intervals`, and the Garmin archive's distilled
@@ -517,6 +547,36 @@ try {
     "the GAP cell carries the document's own grade-adjusted pace");
   assert.strictEqual((await page.locator(".rep-pace").first().innerText()).trim(), expectPace,
     "…and the pace cell carries the raw one, on the same row");
+  // P1.1: pace and GAP were two adjacent unlabelled monospace numbers. The
+  // ambiguity was NEW — before gapS was real the GAP cell was always an em
+  // dash, so there was nothing to confuse it with.
+  const headPace = await page.locator(".rep-table .rep-head-pace").innerText();
+  const headGap = await page.locator(".rep-table .rep-head-gap").innerText();
+  assert.strictEqual(headPace.trim(), "PACE", "the pace column is labelled");
+  assert.strictEqual(headGap.trim(), "GAP", "…and so is the GAP column");
+  // the headers sit ABOVE the first rep row, and each is horizontally aligned
+  // with the column it names — a header in the wrong order is worse than none
+  const boxOf = async (sel) => await page.locator(sel).first().boundingBox();
+  const [hp, hg, cp, cg, r0] = await Promise.all([
+    boxOf(".rep-head-pace"), boxOf(".rep-head-gap"),
+    boxOf(".rep-pace"), boxOf(".rep-gap"), boxOf(".rep-row"),
+  ]);
+  assert.ok(hp.y + hp.height <= r0.y + 1, "the header row is above the first rep");
+  assert.ok(Math.abs((hp.x + hp.width) - (cp.x + cp.width)) <= 2,
+    `PACE header is not aligned to the pace column: ${hp.x + hp.width} vs ${cp.x + cp.width}`);
+  assert.ok(Math.abs((hg.x + hg.width) - (cg.x + cg.width)) <= 2,
+    `GAP header is not aligned to the GAP column: ${hg.x + hg.width} vs ${cg.x + cg.width}`);
+  // fix round 1: the right-edge check above cannot fail for the column it is
+  // checking — the header row has exactly one flexible item (the flex:1
+  // spacer) BEFORE pace/gap/HR, so it silently absorbs any width change in a
+  // later fixed cell and keeps the row's overall width constant. Pin left
+  // edge AND width too — left moves when the cell's own width changes.
+  const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 2,
+    `${what}: ${a} vs ${b}`);
+  near(hp.x, cp.x, "PACE header left edge vs the pace column");
+  near(hp.width, cp.width, "PACE header width vs the pace column");
+  near(hg.x, cg.x, "GAP header left edge vs the GAP column");
+  near(hg.width, cg.width, "GAP header width vs the GAP column");
   // the recovery between reps is shown, and there is one fewer of them —
   // nothing trails the final rep
   assert.equal(await page.locator(".rep-rec").count(), 4);
@@ -624,6 +684,27 @@ try {
     "steady run: the km splits card still renders its real rows");
   assert.equal(await page.locator(".rep-table").count(), 0,
     "steady run: a run_intervals document with shape:'steady' renders NO rep table");
+
+  // P1.2: "not enough history to judge structure yet" must NOT render as
+  // "steady". This is Max's live state — work_floor needs ~30 runs of pace
+  // history and his archive is days old.
+  await page.goto(B + `/run/${UNCAL_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rep-uncal", { timeout: 15000 });
+  const uncalText = (await page.locator(".rep-uncal").innerText()).toLowerCase();
+  assert.ok(uncalText.includes("not enough"),
+    "an uncalibrated run says so plainly: " + uncalText);
+  assert.equal(await page.locator(".rep-table").count(), 0,
+    "…and still renders no rep table");
+  const uncalPage = await page.evaluate(() => document.body.innerText);
+  assert.ok(uncalPage.includes("km 6"),
+    "the km splits card is unaffected");
+
+  // the discriminating half: a CALIBRATED steady run must NOT carry the
+  // notice, or the notice means nothing.
+  await page.goto(B + `/run/${STEADY_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".card");
+  assert.equal(await page.locator(".rep-uncal").count(), 0,
+    "a calibrated steady run looked and found nothing — no notice");
 
   // a run with no run_intervals row at all (PLAIN_RUN_ID reuses run 7) — the
   // other real "no reps" path — shows no rep table either, and the km

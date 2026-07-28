@@ -186,6 +186,15 @@
       <div class="card rep-table">
         <div class="card-title rep-title" style="margin-bottom:var(--sp-1)">{{ rp.label }}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ rp.sub }}</div>
+        <div class="rep-head" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub);padding-bottom:var(--sp-1)">
+          <span style="width:34px"></span>
+          <span style="width:56px"></span>
+          <span style="width:48px"></span>
+          <div style="flex:1"></div>
+          <span class="rep-head-pace" style="width:52px;text-align:right">PACE</span>
+          <span class="rep-head-gap" style="width:52px;text-align:right">GAP</span>
+          <span style="width:44px;text-align:right">HR</span>
+        </div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ rp.rows }}" as="r" hint-placeholder-count="5">
             <div>
@@ -210,6 +219,12 @@
             </div>
           </sc-for>
         </div>
+      </div>
+    </sc-for>
+    <sc-for list="{{ pg.uncalibrated }}" as="uc" hint-placeholder-count="0">
+      <div class="card rep-uncal">
+        <div class="card-title" style="margin-bottom:var(--sp-1)">Structure</div>
+        <div class="card-sub">{{ uc.t }}</div>
       </div>
     </sc-for>
     <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
@@ -562,6 +577,16 @@ class Component extends DCLogic {
           }];
         }
       }
+
+      // P1.2: `calibrated: false` means the work floor could not be computed —
+      // the athlete's archive is too short (WORK_FLOOR_MIN_SAMPLES ≈ 30 runs).
+      // Saying nothing renders that identically to "we looked and found
+      // nothing", which is the one distinction the steady-document rule
+      // exists to preserve. Lap-sourced documents are always calibrated (the
+      // watch is not guessing), so this only ever fires where it is true.
+      pg.uncalibrated = (iv && iv.calibrated === false)
+        ? [{ t: 'Not enough history to judge this run’s structure yet — that needs a few weeks of runs to learn what "fast" means for you. Pace, HR and splits below are unaffected.' }]
+        : [];
 
       // splits vs the run's own median (6.6)
       pg.splits = [];

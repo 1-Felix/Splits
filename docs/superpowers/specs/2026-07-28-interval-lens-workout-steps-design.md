@@ -120,14 +120,20 @@ re-role implementation beneath them.
 `shape = "reps" if len(work) >= 2 else ("block" if work else "steady")` with no
 minimum on the block case, while the stream path has always applied
 `BLOCK_MIN_S` (300 s) / `BLOCK_MIN_M` (1500 m). The laps branch gains the same
-test.
+test — **on the same OR basis**: `classify()` reads
+`if b - a >= BLOCK_MIN_S or dist >= BLOCK_MIN_M`, so either arm alone makes a
+block, and the laps branch must match it or the two producers disagree about
+what a block is. (Corrected after Task 3's review, which caught this section
+claiming parity while the implementation used AND.)
 
 This matters more after §2, which makes the single-surviving-work-lap case
-common. Measured blast radius — exactly two runs flip to `steady`, both
-correctly:
+common. Measured blast radius — exactly one run flips to `steady`:
 
-- `2024-07-22 Run Walk Run®`, 205 m / 62 s — **closes P2.7a**;
-- `2024-07-13 Einstufungslauf`, 801 m / 300 s, currently asserting `5 min block`.
+- `2024-07-22 Run Walk Run®`, 205 m / 62 s — fails both arms. **Closes P2.7a.**
+
+`2024-07-13 Einstufungslauf` (801 m / **exactly** 300 s) was expected to flip
+too, and does not: its duration sits precisely on `BLOCK_MIN_S`, so the OR's
+duration arm carries it and it stays a `block`. One flip, not two.
 
 All six genuine tempo blocks (2000–3040 m) are untouched.
 
@@ -215,6 +221,29 @@ set into a fade". Two reasons it is still the right trade:
 
 Revisit if such a session ever appears. The test is rewritten to assert the new
 contract and to state this reasoning, not deleted.
+
+### 5.3 `confidence` moves too, honestly
+
+**Detection is untouched** stated above is true of the bouts themselves, but it
+understates what actually changes for the stream path: `_confidence` folds in
+`cv` — `set_stats`'s `paceCvPct` — as its "how regular were the reps" factor,
+and §5 just moved `paceCvPct` from the grade-adjusted grid to raw. So
+`confidence` rides raw too, as a direct consequence, on every stream-sourced
+rep run in the archive. Measured: 18 of the archive's 19 rep runs report a
+different `confidence` after this change. One crosses `run.dc.html`'s `< 0.5`
+hedge threshold — `2026-07-03` goes 0.52 → 0.47, so its rep card now appends
+the "possible structure" sub-line it did not carry before.
+
+This is accepted, not treated as a regression. The bouts on `2026-07-03` are
+found exactly where they were found before — DETECTION genuinely does not
+move, because `split_classes` and `find_bouts` still run on the grade-adjusted
+signal end to end. What moved is the confidence number's honesty about how
+regular those bouts' raw paces actually were, which is the same trade §5
+already made for `paceCvPct` and `fadePct` themselves: a number that used to
+ride a different signal from the one printed beside it now agrees with it,
+even where that agreement is less flattering. Lap-sourced documents are
+unaffected — they report `confidence: 1.0` outright and never call
+`_confidence` at all.
 
 ---
 

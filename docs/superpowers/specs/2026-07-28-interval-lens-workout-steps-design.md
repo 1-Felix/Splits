@@ -230,11 +230,25 @@ understates what actually changes for the stream path: `_confidence` folds in
 and §5 just moved `paceCvPct` from the grade-adjusted grid to raw. So
 `confidence` rides raw too, as a direct consequence, on every stream-sourced
 rep run in the archive. Measured: 18 of the archive's 19 rep runs report a
-different `confidence` after this change. One crosses `run.dc.html`'s `< 0.5`
-hedge threshold — `2026-07-03` goes 0.52 → 0.47, so its rep card now appends
-the "possible structure" sub-line it did not carry before.
+different `confidence` after this change. Exactly one crosses `run.dc.html`'s
+`< 0.5` hedge threshold — `2026-07-03` goes 0.52 → 0.47.
 
-This is accepted, not treated as a regression. The bouts on `2026-07-03` are
+**Verified in production after the deploy, and it is a non-event.** The
+measurement above was taken against the LOCAL archive, which holds no lap
+payloads, so every run there takes the stream path. In production
+`2026-07-03` is lap-sourced — it reads `4×1 km` with `confidence: 1.0`, never
+calling `_confidence` at all — so the threshold crossing does not happen. The
+production sweep found three rep sets below 0.5 (`2024-05-24` 0.31,
+`2026-04-29` 0.38, `2026-05-22` 0.32); none of them crossed, they were hedged
+before and remain hedged. **No run gains or loses its "possible structure"
+hedge as a result of this change.**
+
+This is the same shape of error §1.1 corrects in the previous handoff: a
+conclusion drawn from a lapless archive about a run that takes the lap path in
+production. Worth naming twice, because the local archive will keep inviting
+it until it carries lap data.
+
+The moved numbers are accepted, not treated as a regression. The bouts are
 found exactly where they were found before — DETECTION genuinely does not
 move, because `split_classes` and `find_bouts` still run on the grade-adjusted
 signal end to end. What moved is the confidence number's honesty about how

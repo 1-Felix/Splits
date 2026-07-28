@@ -12,6 +12,62 @@ and deliberately deferred; none of it is a surprise waiting to be discovered.
 
 ---
 
+## UPDATE 2026-07-28 — "the workout step decides what is a rep" shipped
+
+**Merged:** `9f3ac32` on `main` (17 commits). **Deployed and verified on the NUC
+the same day**; all 168 documents recomputed at `INTERVAL_VERSION` 4,
+`verify_archive` exit 0.
+**Design:** `docs/superpowers/specs/2026-07-28-interval-lens-workout-steps-design.md`
+**Plan:** `docs/superpowers/plans/2026-07-28-interval-lens-workout-steps.md`
+**Suite at merge:** 458 Python passed / 2 skipped; `test_run_page.mjs`,
+`test_archive_page.mjs`, `test_coach_read.mjs` ALL PASS.
+
+**Closed by it:** P1.1, P1.2, P2.1, P2.7a, and the lap half of M3.
+
+That change found a defect this file did not know about: `_LAP_ROLES` maps
+`ACTIVE` → work unconditionally, and Garmin tags warmups, cooldowns and
+transitions `ACTIVE` too. Those are **longer** than the reps, so P2.7's size
+floor never reached them — 8 of 23 lap-sourced documents were counting non-reps
+as reps. `wktStepIndex` separates them: reps of a set share one *repeated*
+workout step; a one-off step is not a rep.
+
+Production sweep after the deploy — shapes moved `reps 26→24`, `steady 129→130`,
+`block 11→12`, and stream-sourced counts did not move at all (145, unchanged):
+
+```
+2026-04-10  5×2 km, cv 14.8, fade +17.5  →  3×2 km,  cv 1.7, fade +0.6
+2026-03-20  7 reps, cv 19.5, fade +18.0  →  5×1 km,  cv 2.4, fade +2.3
+2025-12-12  7×300 m,         fade +37.1  →  6×300 m, cv 4.2, fade −4.0
+2026-05-29  5×1 km,          fade +30.5  →  4×1 km,  cv 2.4, fade +0.3
+2026-02-06  8 reps, cv 15.4               →  6 reps,  cv 2.1, fade −3.2
+2025-10-17  8 reps, cv 23.9               →  6 reps
+2025-12-19  1.5-0.627 km                  →  14 min block
+2024-07-22  3 reps (Run Walk Run®)        →  steady          ← closes P2.7a
+unchanged:  2025-11-21 8×200 m · 2026-06-26 1-2-1 km · 2026-07-10 5×1 km
+            2024-07-13 block · every genuine tempo block
+```
+
+**A claim in this file it overturns — see §1.1 of that design.** P2.3 below
+records `2026-05-29` recovering as `5×1 km [1000,1000,1000,1000,926]` and treats
+it as the engine working. It was not: that 926 m "rep" is a manual lap run
+**after** the COOLDOWN at 7:33/km with no workout step index at all. It now
+reads `4×1 km`, which is the truth — the watch executed four of a prescribed
+five. P2.3's *conclusion* is unaffected: that run still takes the lap path,
+where the calibration floor is never consulted, so the windowed baseline remains
+unmotivated.
+
+**New test asset.** `tests/fixtures/lap_workouts.json` +
+`test_interval_laps_truth.py` pin all **23** of the archive's structured
+lap-sourced workouts, trimmed to the fields the engine reads. This exists
+because the local `activity-archive.db` carries **no lap data at all** — the
+backfill ran on the NUC and was never copied down — so `test_interval_truth.py`
+cannot reach the lap path. **Any future lap-path change must extend this fixture
+rather than lean on the local archive.** Its own trap, twice hit during this
+change: a conclusion drawn locally about a run that takes the *lap* path in
+production is worthless (see P2.3 above, and §5.3 of the design).
+
+---
+
 ## What shipped
 
 `interval_lens.py` decides what structure a run had — `reps` / `block` /
@@ -34,9 +90,18 @@ sessions recover `6×200 m`; the `pYRAMIDE: 1-2-1K` stays varied and enumerated.
 
 ---
 
-## Priority 1 — visible on the page, small fixes
+## Priority 1 — visible on the page, small fixes  ✅ ALL CLOSED 2026-07-28
 
-### P1.1 The rep table has no column headers
+### ~~P1.1 The rep table has no column headers~~ — DONE 2026-07-28 (`83a96c5`, `4d98949`)
+
+`PACE` / `GAP` headers ship on the rep card, width-matched to their columns and
+pinned by bounding-box assertions that were themselves mutation-proven (an
+earlier version could not fail: the `flex:1` spacer sits before those cells and
+absorbs any width delta, so comparing right edges alone measured nothing).
+The sub-line needs no qualifier now — P2.1 put it on the same signal as the bars.
+
+<details><summary>original entry</summary>
+
 
 `run.dc.html` renders pace and GAP as two adjacent unlabelled monospace numbers
 (pace bold, GAP muted). This ambiguity is **new**: before the final fix wave the
@@ -51,7 +116,17 @@ bars onto `gapS` — see P2.1 for why that is a real design question, not a typo
 
 *Source: final whole-branch re-review, agreed by the controller.*
 
-### P1.2 `calibrated: false` is written but never surfaced
+</details>
+
+### ~~P1.2 `calibrated: false` is written but never surfaced~~ — DONE 2026-07-28 (`e272054`)
+
+`/run/:id` now says "Not enough history to judge this run's structure yet" when
+`intervals.calibrated === false`, and stays silent otherwise. `=== false`, not
+`!calibrated`: a document predating the flag has no key and must not be accused.
+Felix's archive currently has 0 uncalibrated documents; this is for Max.
+
+<details><summary>original entry</summary>
+
 
 `interval_lens.build_document` sets `calibrated` on every document, and nothing
 reads it — not the API, not `run.dc.html`, not `validate_data.py`.
@@ -68,11 +143,30 @@ ship to a beginner. A run that says *"steady"* when nobody looked is not.
 *Source: final whole-branch review, M7 — and the strongest single reason the
 feature is not yet honest for Max.*
 
+</details>
+
 ---
 
 ## Priority 2 — correctness and quality, no user-visible breakage
 
-### P2.1 Should the deviation bars measure GAP or raw pace?
+### ~~P2.1 Should the deviation bars measure GAP or raw pace?~~ — DECIDED 2026-07-28 (`b003e9d`)
+
+**Raw, and the bars were already right.** Measured before choosing: on the
+archive's one *uncontaminated* hill-repeat set (`2025-11-21`, eight genuine 90 s
+reps) raw is TIGHTER — cv 9.1 % vs GAP 14.7 %. Fixed-duration reps cover less
+ground as the athlete tires, so each samples a different slice of the gradient
+and its grade adjustment varies; GAP there measures the hill, not the athlete.
+On the stream path the two bases differ by under 1.5 points and split both ways
+across 11 sets. The large GAP-vs-raw gaps on the other hill sets turned out to be
+the ACTIVE-lap contamination above, not terrain.
+
+So `paceCvPct`/`fadePct` moved to raw on BOTH producers, matching the bars and
+the PACE column. **Do not reopen without a session that climbs continuously
+point-to-point** — that is the one shape raw misreports, and none exists in 168
+runs. See §5.1/§5.2 of the design for what it trades away.
+
+<details><summary>original entry</summary>
+
 
 Open design question, deliberately not decided. `paceS` is raw pace (what you
 ran); `gapS` is grade-adjusted (what it cost). The bars currently use `paceS`.
@@ -80,6 +174,8 @@ On rolling ground GAP is arguably the honest basis for comparing reps to each
 other — it is why the engine detects on GAP in the first place (design D5).
 
 Decide it by looking at a hilly session on `/run/:id`.
+
+</details>
 
 ### P2.2 Ragged labels on 3 of 19 detections
 
@@ -169,7 +265,7 @@ All found by the final whole-branch review, all in `interval_lens.py`:
 
 ---
 
-## Priority 2.7 — found in production, partially fixed
+## Priority 2.7 — found in production (a: closed, b: open)
 
 The deploy on 2026-07-27 banked 124 runs' lap data, which created the first
 lap-sourced documents that had ever existed. Two defects surfaced immediately
@@ -177,7 +273,17 @@ that no fixture could have caught, because the code path had never met its
 input. The first was fixed the same night (`INTERVAL_VERSION` 2→3); the second
 was not.
 
-### P2.7a — Galloway run/walk sessions misclassify as rep sets (NOT fixed)
+### ~~P2.7a — Galloway run/walk sessions misclassify as rep sets~~ — DONE 2026-07-28 (`4f62625`)
+
+Fixed as a side effect of the step rule plus a block floor on the lap path.
+`Run Walk Run®` now reads **`steady`**: its run/walk laps carry no repeated
+workout step, and the single survivor (205 m / 62 s) fails both `BLOCK_MIN_S`
+and `BLOCK_MIN_M`. The block floor is an **OR**, matching `classify()` — the
+stream path has always used OR, and a draft of this change used AND until review
+caught the asymmetry.
+
+<details><summary>original entry</summary>
+
 
 `Leinfelden-Echterdingen - Run Walk Run®` has lap distances
 `[205, 106, 81, 145, 52, 94, 66, 118, 52, 97, 50, 111, 42, 173, 914]`. It is a
@@ -193,6 +299,8 @@ Needs either a run/walk-aware shape (Garmin's `splitSummaries` already carries
 `RWD_RUN` / `RWD_WALK` counts, which would identify these directly) or a
 whole-set-trust rule that refuses to call a set when most of its laps failed the
 floor. One run out of 168 today.
+
+</details>
 
 ### P2.7b — the two paths disagree on how many reps make a set
 
@@ -241,7 +349,7 @@ prior and bumps `INTERVAL_VERSION`, which self-heals every stored document.
 |---|---|---|
 | M1 | `sync_garmin._fetch_raw_laps` | Caches the envelope *before* checking for `lapDTOs`. A reply of `{"lapDTOs": []}` is cached permanently and `write_laps` never called. Combined with `runs_missing_laps`'s `ORDER BY … DESC LIMIT 40`, enough such runs at the head of the queue would starve the backlog. Fix: only write the cache after confirming a non-empty list. |
 | M2 | `interval_lens.CONFIDENCE_ASSERT_MIN` | Referenced nowhere in Python; `run.dc.html` hardcodes `< 0.5`. The comment claims it is "part of INTERVAL_VERSION like every other parameter" — it isn't, and the two can drift. |
-| M3 | `interval_lens.segments_from_laps` | Accumulates `t0` from lap `duration` (moving) rather than `elapsedDuration`, so on a run with pauses the lap-derived `t0/t1` drift from the stream's elapsed axis the rep bands are drawn against. Same for `d0/d1`. Also assumes the stream clock starts at 0 — true for all 165 archived runs (measured), but unguarded. |
+| M3 | `interval_lens.segments_from_laps` | **HALF DONE 2026-07-28** (`66ecc28`): `gapS` now comes from the lap's own `avgGradeAdjustedSpeed` (present on 553 of 565 laps — the old docstring claiming lapDTOs carry no GAP was simply false), so the windowed lookup is a fallback and the drift no longer reaches it. Measured drift across all 17 lap-sourced structured runs: 0 s on every one except `2026-06-26` (40 s). **Still open:** accumulates `t0` from lap `duration` (moving) rather than `elapsedDuration`, so on a run with pauses the lap-derived `t0/t1` drift from the stream's elapsed axis the rep bands are drawn against. Same for `d0/d1`. Also assumes the stream clock starts at 0 — true for all 165 archived runs (measured), but unguarded. |
 | M4 | `serve.mjs` | Neither the list JOIN nor the by-id read filters on `lens_version`. Between an `INTERVAL_VERSION` bump and the next sync, the API asserts stale documents as current. The block/course endpoints carry their version; these should too. |
 | M5 | `run.dc.html` | `s.gapS ? …` and `rc.durS` truthiness: a genuine `0` renders as `—`. `recs[i]` pairs recoveries to reps positionally — exact for stream-derived segments, a heuristic on the laps path. |
 | M6 | `interval_lens.build_document` | The `work_floor` parameter shadows the module-level `work_floor()` function. Harmless today; a `TypeError` waiting for whoever adds a call. |
@@ -254,6 +362,25 @@ prior and bumps `INTERVAL_VERSION`, which self-heals every stored document.
 | M13 | Design testing section | Two named synthetic cases are absent: *"a hilly easy run that must not trigger"* (the archive-wide `test_full_archive_is_not_mostly_intervals` is a good substitute) and *"a bailed session that must report 3 of 4"* (unreachable until P3.1). |
 
 ---
+
+## New — found by the 2026-07-28 change, deliberately not fixed
+
+| # | Where | What |
+|---|---|---|
+| N1 | `run.dc.html` rep card | `recs[i]` pairs recoveries to reps positionally. A **mid-set** demotion (a one-off `ACTIVE` step *between* two reps) becomes a `recovery` segment and shifts every later pairing, so rep 3 can display the transition's duration and rep 4 gets rep 3's. Pre-existing pattern, but the step rule makes it reachable for full-size transitions — and §1 of the design proves those are real (`2025-10-17` lap 2). No archived run triggers it today; the sweep confirmed none has a mid-set demotion. **Most likely future breakage in this area.** |
+| N2 | `test_interval_laps_truth.py` | `test_every_fixture_workout_is_read_as_structured` is circular by construction: the 23-workout fixture was *selected* by running `laps_are_structured`, and every entry is a positive. As a frozen-JSON guard it still catches the predicate becoming too **strict**; it cannot catch it becoming too **permissive**. That direction is covered only by synthetic tests (`test_autolap_beats_the_workout_flag`, `test_uniform_intensity_is_not_structure`). Fix: add one known-**unstructured** real workout from the ~101 excluded `laps_json` rows with an `is False` assertion. |
+| N3 | `_reps_label` | `2026-02-06` labels its six 90 s hill reps `6×0.23 km`, because their mean distance snaps to no round target. Those sets want naming by **duration** (`6×90 s`) — the reps are time-prescribed, and their distances vary precisely *because* the athlete tires. Blast radius: the `/archive` chip, the rep-card title and the cockpit sentence. |
+| N4 | `interval_lens._lap_rep_segments` | The size floor runs **before** the step rule, so a rep the floor drops is also dropped from the step evidence. `2025-11-21` lap 8 is **151 m** against `WORK_MIN_M = 150` — one metre of GPS noise turns that session from 8 reps into 7 plus a mid-set "recovery", compounding N1. Ordering is correct and documented; the margin is not. |
+| N5 | `interval_lens._rep_step_indices` rule 3 | When no work step repeats, ACTIVE bookends are **not** demoted (by design — the `1-2-1 km` pyramid needs it). So a hypothetical ACTIVE-warmup / ACTIVE-tempo / ACTIVE-cooldown workout on three distinct steps still reads "3 reps". Unchanged from before, no archive case hits it, but the change's headline promise holds only where a repeat block exists. |
+| N6 | `interval_lens._pace_s_per_km` | Returns `0` for a negative input, so a nonsense negative `avgGradeAdjustedSpeed` would report `gapS: 0` rather than `None`. Shared helper, every call site. Triaged as zero user-visible impact: `gapS`'s only consumer is `run.dc.html`'s `s.gapS ? … : '—'`, which renders `0` as the same em dash `None` produces. |
+| N7 | `tools/style-audit.mjs` | Never visits `/run` at all, so the run page has no responsive coverage. It carries a **pre-existing** ~18 px horizontal overflow at 390 px — measured identically with and without the new header row, so not caused by it, and the overflow is `.card.rep-table` itself rather than any row. |
+
+Note **P2.4** (no distill version marker on the Garmin side) is now more
+reachable than when it was written: `detail_distilled_json.intervals` is still
+filled only where the column is `NULL`, so it is not refreshed by an
+`INTERVAL_VERSION` bump. Harmless today — `/run/:id` injects the fresh document
+before calling `coachRead`, and the cockpit re-distills every sync — but any
+future consumer of that stored key reads a v3-era document.
 
 ## NUC operations — a trap hit during this very deploy
 

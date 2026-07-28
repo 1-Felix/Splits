@@ -1537,3 +1537,12 @@ def test_no_step_on_any_work_lap_keeps_them_all_even_when_other_laps_have_one():
     doc = _laps_doc(None, laps=laps)
     work = [s for s in doc["segments"] if s["role"] == "work"]
     assert [s["rep"] for s in work] == [1, 2, 3]
+
+
+def test_interval_version_is_current():
+    """A stored document is only trustworthy if its version moved whenever the
+    rules that produced it did. Tasks 2-5 changed which laps are reps, what a
+    lap-sourced block must clear, where GAP comes from, and the basis of
+    spread and fade — every stored document must be recomputed."""
+    assert il.INTERVAL_VERSION == 4
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 4

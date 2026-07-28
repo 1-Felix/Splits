@@ -18,13 +18,16 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
-INTERVAL_VERSION = 3   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 4   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
                        # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
                        #    rep floor the stream path always has, and shares its
                        #    labelling logic — a trailing partial lap no longer
                        #    reads as a rep, and a varied lap-sourced set no
                        #    longer loses its label (production defect, 2026-07-27)
+                       # 4: the workout STEP decides what is a rep — one-off
+                       #    ACTIVE laps demoted, lap blocks meet BLOCK_MIN_*,
+                       #    GAP from the device, spread/fade on the raw grid.
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge

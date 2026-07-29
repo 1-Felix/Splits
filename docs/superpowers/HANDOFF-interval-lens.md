@@ -3,6 +3,23 @@
 This file is the list of what is **not** done. Everything here was found, understood
 and deliberately deferred; none of it is a surprise waiting to be discovered.
 
+> **2026-07-29 — read "The 2026-07-29 exploration" (below "What to do next")
+> before trusting the priorities in this file.** A read-only exploration against
+> production measured the archive against the Garmin *workout* definitions the
+> watch already holds, and falsified four claims here: N5's "no archive case
+> hits it", P2.7b's "changed neither flagged case's outcome", P2.5's stale
+> `conf=1.00` example, and the "prescribed five" reading of `2026-05-29`. It
+> also found 14 wrong documents in 88 and answered P2.3's own demand for
+> evidence. Each is corrected inline.
+>
+> **It produced two OpenSpec changes, and they have an order.** Start with the
+> first — the second's design depends on it:
+>
+> | | | |
+> |---|---|---|
+> | 1 | **`openspec/changes/fix-lap-confidence/`** | 4/4 artifacts, **35 tasks, ready for `/opsx:apply`**. Removes the lap path's hardcoded `confidence: 1.0` (line 878). No schema, no fetch, no shape changes. Closes **M2**. |
+> | 2 | `openspec/changes/add-workout-prior/` | 3/4 artifacts — **no `tasks.md` yet**. Reads the Garmin workout as the prior. Its design decision D1a leans on the hedging change 1 introduces, so do not start it first. |
+
 ## Live state — 2026-07-28
 
 | | |
@@ -78,6 +95,21 @@ There is no direct-push deploy path.
 
 ## What to do next
 
+> **SUPERSEDED 2026-07-29 by a measured exploration — read this first.**
+> The plan below (build the `plan-data.js` prescription parser, P3.1 as its
+> blocker) was written without three facts that were then measured against
+> production. See **"The 2026-07-29 exploration"** below and the two OpenSpec
+> changes it produced — **`fix-lap-confidence` first** (ready to apply), then
+> `add-workout-prior`.
+>
+> In short: `build_document`'s laps branch **never reads `prior` at all** (it
+> returns at line 876; `prior` is read at line 903), the `plan-data.js` route
+> reaches **12 runs**, and the watch already carries a richer prescription for
+> **92**. Several claims below are now measurably false and are marked inline.
+
+<details><summary>original entry — the plan-data-first ordering</summary>
+
+
 The lens is complete as a *detector*. The next real work is the piece it was
 built to enable — **the prescription parser, P3.1 + P3.2 below**: parse
 `plan-data.js`'s `segments[].val` strings (`4×1 km @ 5:25–5:35`), fill
@@ -93,6 +125,88 @@ apply to **both** paths, not just the stream one.
 Everything else here is optional. If you want a small, high-value one instead,
 **N1** (the rep card mis-pairs recoveries after a mid-set demotion) is the most
 likely next user-visible breakage.
+
+</details>
+
+---
+
+## The 2026-07-29 exploration — the watch already holds the prescription
+
+Read-only against production; no code changed. Full write-up and requirements:
+**`openspec/changes/add-workout-prior/proposal.md`**.
+
+`summary_json.workoutId` is present on **92 of 170** running activities (89
+distinct workouts) — including **all 24 lap-sourced documents**.
+`garminconnect.Garmin.get_workout_by_id` is already in the installed client, and
+the payload carries what the lens currently infers: `stepTypeKey`
+(`warmup`/`interval`/`recovery`/`cooldown`/`rest`), `numberOfIterations`,
+`endCondition{distance|time|lap.button}` + `endConditionValue`, `targetType` +
+`zoneNumber`, and `targetValueOne/Two` as pace bands in m/s.
+
+`wktStepIndex` joins to it deterministically: flatten depth-first and consume
+one index **after** each repeat group's children (the FIT encoding — the repeat
+instruction follows the steps it repeats). Verified exactly on `2026-06-05`,
+`2026-07-10`, `2026-07-29`.
+
+**Measured, 88 documents with a fetchable workout:**
+
+| | |
+|---|---|
+| prescribed sets where `found == numberOfIterations` | **12 / 15** |
+| documents the lens reads wrongly vs the prescription | **15 (≈17 %)** |
+| distinct workouts still fetchable | 85 / 89 (4 deleted); `updateDate` is `None` on every one, so **silent edits are undetectable** |
+
+The 12/12 agreement is the first **independent** confirmation of change 2's step
+rule — `test_interval_laps_truth.py` is circular by construction (N2).
+
+Four failure families, two of them live on the page today:
+
+```
+continuous tempo fragmented   2026-01-23 1×3km→"4 reps" · 2026-03-13 1×5km→
+into a fake set               "2.66-1.04-0.408-0.39 km" · 2026-04-03 1×7km→"8 reps"
+prescribed tempo missed       2026-01-09 · 2026-02-13 · 2026-02-27  (all pace.zone → steady)
+easy run promoted             2025-12-24 Z2 3km→"7 min block" · 2026-04-29 Z2 5km→"5 reps"
+short reps dropped (N4)       2025-12-26 4×30s→"24 min block" · 2026-07-29 4×20s→"32 min block"
+ACTIVE bookends kept (N5)     2026-06-05 →"2 reps" · 2026-01-16 →"2-1-2 km" conf 1.00
+recovery float as a rep       2025-12-05 2×2km Z4 + 3min Z2 float →"2-0.32-2 km" found 3
+```
+
+**Rep-set detection itself is in good health — 12 of the 15 prescribed sets are
+already exactly right.** The 15 errors sit almost entirely elsewhere: inventing
+sets where nothing hard was prescribed (6), missing or fragmenting a prescribed
+block (6), and rejecting reps shorter than the inference floors (2). Treat that
+as a vindication of change 2's step rule, not an indictment of it.
+
+**Why not the `plan-data.js` parser first (P3.2).** `plan_compliance` spans only
+the current block — `2026-06-29 → 2026-08-02`, 35 day rows, 27 with an activity,
+of which **12** are runs with an interval document. The workout route reaches
+92, retroactively, gives pace bands as floats instead of parsing
+`5×1 km by effort · Z4` and `3 km easy · 3×400 m @ 5:41 inside`, and has no
+step-ordering problem — `compliance_step` runs **after** `intervals_step` in
+`main()`, so the plan match does not exist yet when the prior is needed.
+
+They are complementary: the workout is what was **pushed to the device**, the
+plan is what the coach **meant**. P3.2 remains a separate, later change.
+
+### Sequencing, and the one live wrongness to fix first
+
+```
+1. fix-lap-confidence   READY (35 tasks). Small; no schema, no fetch, no shape
+                        changes. Stops 2026-07-29 and 2025-12-26 asserting.
+                        Prerequisite for 2 — its D1a merges a block across a
+                        304 s gap, only defensible once hedging exists.
+2. add-workout-prior    Needs tasks.md. Acquisition + VETO / POINT / ADMIT.
+                        Fixes the 14.
+3. P3.2 plan parser     The coach's intent; 12 runs; rep-level compliance.
+4. (deferred) push      upload_running_workout — see design.md "Parked".
+```
+
+**Live on the page right now:** `2026-07-29` (`5km easy + 4x20s strides`) asserts
+`"32 min block"` at confidence 1.00, because the size floor dropped all four
+20 s strides and promoted the easy 5 km. `2025-12-26` fails identically at
+4×30 s. `2026-01-16` and `2025-12-05` have been quietly wrong since January and
+December. Change 1 stops the first two asserting; only change 2 makes any of
+them correct.
 
 ---
 
@@ -136,7 +250,12 @@ records `2026-05-29` recovering as `5×1 km [1000,1000,1000,1000,926]` and treat
 it as the engine working. It was not: that 926 m "rep" is a manual lap run
 **after** the COOLDOWN at 7:33/km with no workout step index at all. It now
 reads `4×1 km`, which is the truth — the watch executed four of a prescribed
-five. P2.3's *conclusion* is unaffected: that run still takes the lap path,
+five. *(**Correction 2026-07-29:** "a prescribed five" was inferred from the
+activity **name**, `Tempo: 5x 1km (Pace 6:00-6:10)`. The workout object itself
+says `numberOfIterations: 4`. Either it was edited or the name was always stale
+— `updateDate` is `None`, so this is unknowable. Four of four, not four of five.
+**The activity name is not the prescription.**)* P2.3's *conclusion* is
+unaffected: that run still takes the lap path,
 where the calibration floor is never consulted, so the windowed baseline remains
 unmotivated.
 
@@ -303,6 +422,18 @@ structured — where a false positive matters more than a false negative anyway.
 was a workout, that has no usable lap structure, and that reads `steady`. If you
 cannot find one, the windowed baseline is solving a problem you no longer have.
 
+> **UPDATE 2026-07-29 — that evidence now exists, but it argues for the prior,
+> not for a windowed baseline.** Three runs meet the test exactly: `2026-01-09`
+> (prescribed `1×2 km @ pace.zone`), `2026-02-13` (`1×4 km`) and `2026-02-27`
+> (`1×2 km`) — all stream-sourced, all genuinely prescribed tempo blocks, all
+> reading **`steady`**.
+>
+> So the challenge above is answered. But the cheaper fix is the workout prior:
+> a prescription tells the engine *where to look* without needing calibration at
+> all, whereas a windowed baseline still has to rediscover the session from the
+> stream. Build the prior first and re-measure — these three may simply stop
+> being wrong.
+
 (The skip in `test_interval_truth.py` is now stale in its *reasoning* — the run
 still reads `steady` against a local archive with no laps banked, so the test is
 correct as written, but the recorded cause no longer applies in production.)
@@ -327,9 +458,26 @@ Mutation-proven dead coverage in `interval_lens.py`: replacing the `crisp`
 factor with `1.0` leaves the suite green; so does replacing `regular` with
 `1.0`. Only the separation factor is actually exercised.
 
+> **CORRECTION 2026-07-29, measured.** The second half of this entry was wrong
+> about which path is affected. Stream-sourced blocks **are** hedged — measured
+> across the archive: `0.52`, `0.61`, `0.77`. The named example is stale: the
+> half-marathon (`2025-12-28`) reads **`conf 0.52`**, not `1.00`.
+>
+> The never-hedged case is the **laps branch**, which hardcodes
+> `"confidence": 1.0` at `interval_lens.py:878` for *every* shape. All 23
+> lap-sourced documents assert at full confidence regardless of how much
+> filtering it took to get there — including `2026-07-29`'s "32 min block"
+> (which is a 5 km easy segment, see N4) and `2026-01-16`'s "2-1-2 km" (which is
+> one prescribed rep between two Z2 bookends, see N5).
+
+<details><summary>original second half</summary>
+
+
 Related and more concrete: a single-bout `block` always has `cv is None` and
 `shortest ≥ 300 s`, so blocks score confidence `1.0` and can **never** be
 hedged. A half-marathon race in the archive reads `conf=1.00 "6 min block"`.
+
+</details>
 
 ### P2.6 Other mutation survivors
 
@@ -394,12 +542,32 @@ by the lap-floor fix, and it changed neither flagged case's outcome — but it i
 one more place the two paths quietly differ, which is exactly what the
 one-engine design exists to prevent.
 
+> **CORRECTION 2026-07-29.** *"changed neither flagged case's outcome"* is no
+> longer true. `2026-06-05` (`Tempo: 4km Dauerlauf @ 6:10` — a **single**
+> prescribed 4 km step) has two surviving work laps, so the lap path's floor of
+> 2 reports **`"2 reps"`**; the stream path's floor of 3 would have said
+> `block`. The disagreement is the difference between a right and a wrong answer
+> on a live document, not a latent asymmetry.
+
 Note this interacts with **P3.1**: whatever `expect_reps` logic lands with the
 prescription parser must apply to both paths, not just the stream one.
 
 ## Priority 3 — Change 2 blockers
 
 These must be resolved **before** the prescription parser ships, not after.
+
+> **RESCOPED 2026-07-29.** Both entries assume the prescription arrives from
+> `plan-data.js`. Measured, that route reaches **12 runs**; the watch's own
+> workout reaches **92**. See "The 2026-07-29 exploration" above and
+> `openspec/changes/add-workout-prior/`.
+>
+> The structural point neither entry knew: **`build_document`'s laps branch
+> never reads `prior` at all.** It returns at line 876 with
+> `"prescribed": None` hardcoded; `prior` is first read at line 903. So P3.1
+> below — a fix to `classify()` — only ever governs the **stream** path, while
+> the runs that carry a prescription are overwhelmingly **lap**-sourced. P3.1 is
+> therefore not the blocker it is described as; **P2.7b is**, because the real
+> prerequisite is one prior contract sitting *upstream* of the branch.
 
 ### P3.1 `classify`'s rep floor breaks the honesty contract at 2-of-4
 
@@ -453,9 +621,9 @@ prior and bumps `INTERVAL_VERSION`, which self-heals every stored document.
 |---|---|---|
 | N1 | `run.dc.html` rep card | `recs[i]` pairs recoveries to reps positionally. A **mid-set** demotion (a one-off `ACTIVE` step *between* two reps) becomes a `recovery` segment and shifts every later pairing, so rep 3 can display the transition's duration and rep 4 gets rep 3's. Pre-existing pattern, but the step rule makes it reachable for full-size transitions — and §1 of the design proves those are real (`2025-10-17` lap 2). No archived run triggers it today; the sweep confirmed none has a mid-set demotion. **Most likely future breakage in this area.** |
 | N2 | `test_interval_laps_truth.py` | `test_every_fixture_workout_is_read_as_structured` is circular by construction: the 23-workout fixture was *selected* by running `laps_are_structured`, and every entry is a positive. As a frozen-JSON guard it still catches the predicate becoming too **strict**; it cannot catch it becoming too **permissive**. That direction is covered only by synthetic tests (`test_autolap_beats_the_workout_flag`, `test_uniform_intensity_is_not_structure`). Fix: add one known-**unstructured** real workout from the ~101 excluded `laps_json` rows with an `is False` assertion. |
-| N3 | `_reps_label` | `2026-02-06` labels its six 90 s hill reps `6×0.23 km`, because their mean distance snaps to no round target. Those sets want naming by **duration** (`6×90 s`) — the reps are time-prescribed, and their distances vary precisely *because* the athlete tires. Blast radius: the `/archive` chip, the rep-card title and the cockpit sentence. |
-| N4 | `interval_lens._lap_rep_segments` | The size floor runs **before** the step rule, so a rep the floor drops is also dropped from the step evidence. `2025-11-21` lap 8 is **151 m** against `WORK_MIN_M = 150` — one metre of GPS noise turns that session from 8 reps into 7 plus a mid-set "recovery", compounding N1. Ordering is correct and documented; the margin is not. |
-| N5 | `interval_lens._rep_step_indices` rule 3 | When no work step repeats, ACTIVE bookends are **not** demoted (by design — the `1-2-1 km` pyramid needs it). So a hypothetical ACTIVE-warmup / ACTIVE-tempo / ACTIVE-cooldown workout on three distinct steps still reads "3 reps". Unchanged from before, no archive case hits it, but the change's headline promise holds only where a repeat block exists. |
+| N3 | `_reps_label` | `2026-02-06` labels its six 90 s hill reps `6×0.23 km`, because their mean distance snaps to no round target. Those sets want naming by **duration** (`6×90 s`) — the reps are time-prescribed, and their distances vary precisely *because* the athlete tires. Blast radius: the `/archive` chip, the rep-card title and the cockpit sentence. **CONFIRMED 2026-07-29 by the device:** `2026-02-06`'s workout is literally `interval / time 90.0 s / HR zone ×6`, and `2025-11-21`'s (labelled `8×200 m`) is `time 90.0 s ×8`. A time-based prior fixes both by construction. |
+| N4 | `interval_lens._lap_rep_segments` | The size floor runs **before** the step rule, so a rep the floor drops is also dropped from the step evidence. `2025-11-21` lap 8 is **151 m** against `WORK_MIN_M = 150` — one metre of GPS noise turns that session from 8 reps into 7 plus a mid-set "recovery", compounding N1. Ordering is correct and documented; the margin is not. **ESCALATED 2026-07-29: this is not a margin, it is a recurring pattern that has already fired twice.** `2026-07-29` (`5km easy + 4x20s strides`) and `2025-12-26` (`4×30 s`) both prescribe reps at or below `WORK_MIN_S = 30`; the floor drops every one, leaving the *easy* bookend as the sole survivor, which is then promoted to `"32 min block"` / `"24 min block"` at confidence 1.00. The 151 m margin also evaporates entirely under a time-based prior — `2025-11-21` was prescribed `90 s`, not `200 m`. |
+| N5 | `interval_lens._rep_step_indices` rule 3 | When no work step repeats, ACTIVE bookends are **not** demoted (by design — the `1-2-1 km` pyramid needs it). So a hypothetical ACTIVE-warmup / ACTIVE-tempo / ACTIVE-cooldown workout on three distinct steps still reads "3 reps". ~~Unchanged from before, no archive case hits it~~, but the change's headline promise holds only where a repeat block exists. **CORRECTION 2026-07-29: "no archive case hits it" is false — two do, and neither looks wrong on the page.** `2026-06-05` (`interval 2 km HR-zone` + `interval 4 km pace 5:59–6:14`) reads **`"2 reps"`**, pairing a warm-up with a tempo. `2026-01-16` (`Z2 2 km` / `pace 5:45–5:59 1 km` / `Z2 2 km`) reads **`"2-1-2 km", found 3, conf 1.00`** — one prescribed rep rendered as a three-rep pyramid. The workout discriminates the genuine pyramid from these: `2026-06-26`'s three work steps all share `pace.zone`, whereas these mix `heart.rate.zone` with `pace.zone`. **Target type, not repetition, is the signal** — and it exists only in the workout, which is why inference cannot reach it. |
 | N6 | `interval_lens._pace_s_per_km` | Returns `0` for a negative input, so a nonsense negative `avgGradeAdjustedSpeed` would report `gapS: 0` rather than `None`. Shared helper, every call site. Triaged as zero user-visible impact: `gapS`'s only consumer is `run.dc.html`'s `s.gapS ? … : '—'`, which renders `0` as the same em dash `None` produces. |
 | N7 | `tools/style-audit.mjs` | Never visits `/run` at all, so the run page has no responsive coverage. It carries a **pre-existing** ~18 px horizontal overflow at 390 px — measured identically with and without the new header row, so not caused by it, and the overflow is `.card.rep-table` itself rather than any row. |
 

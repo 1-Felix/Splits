@@ -630,6 +630,25 @@ def _lap_survivors(segments: list[dict], laps: list[dict],
     return survivors, work - sized, sized - survivors
 
 
+def _size_discard_is_material(segments: list[dict], laps: list[dict]) -> bool:
+    """Did the SIZE floor decide this run's shape? (design D2 of
+    fix-lap-confidence)
+
+    'A size discard occurred' is far too weak a trigger — nearly every
+    lap-sourced run ends with a sub-floor fragment the athlete's stop press
+    produced, and hedging all of them would hedge everything and mean nothing.
+    So the question is asked directly: re-run the SAME survivor selection with
+    the size floor lifted, and call the discard material only when the
+    survivor set changes. Wherever a genuine repeated step exists, a trailing
+    fragment carries no step index and the step rule kills it either way, so
+    this self-selects the cases that matter.
+
+    Pure: two calls to `_lap_survivors`, microseconds on ≤ 30 laps."""
+    with_floor, _, _ = _lap_survivors(segments, laps)
+    lifted, _, _ = _lap_survivors(segments, laps, size_floor=False)
+    return with_floor != lifted
+
+
 def _lap_rep_segments(segments: list[dict],
                       laps: list[dict]) -> tuple[list[dict], dict]:
     """Which lap-derived work segments are genuine reps — returns the re-roled

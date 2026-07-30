@@ -114,6 +114,52 @@ def test_real_reps_carry_a_device_gap():
     assert work and all(s["gapS"] is not None for s in work)
 
 
+def test_lifting_the_size_floor_flips_the_strides_run_survivors():
+    """Design D2 of fix-lap-confidence, the MATERIAL case. '5km easy + 4x20s
+    strides': the four prescribed 20 s strides all sit below WORK_MIN_S, so
+    the size floor leaves only the easy 5 km standing (lap 0) and it becomes
+    the reported '32 min block'. Lift the floor and the repeated stride step
+    takes over — the survivor set flips to the four strides. The shape
+    depends on the discard, so the discard is material and the document must
+    hedge."""
+    summary, laps = load_workout("2026-07-29")
+    segs = il.segments_from_laps(laps)
+    with_floor, _, _ = il._lap_survivors(segs, laps)
+    lifted, _, _ = il._lap_survivors(segs, laps, size_floor=False)
+    assert with_floor == {0}, "the easy 5 km is the sole survivor today"
+    assert lifted == {2, 4, 6, 8}, "the four prescribed strides"
+    assert il._size_discard_is_material(segs, laps) is True
+
+
+def test_lifting_the_size_floor_flips_the_lagrasse_survivors():
+    """The same failure a season earlier: 'W12 HM-Training: Tempo' prescribed
+    4×30 s; the floor drops all four and the 3 km tempo bookend becomes a
+    '24 min block'."""
+    summary, laps = load_workout("2025-12-26")
+    segs = il.segments_from_laps(laps)
+    with_floor, _, _ = il._lap_survivors(segs, laps)
+    lifted, _, _ = il._lap_survivors(segs, laps, size_floor=False)
+    assert with_floor == {9}, "the tempo bookend is the sole survivor today"
+    assert lifted == {1, 3, 5, 7}, "the four prescribed 30 s reps"
+    assert il._size_discard_is_material(segs, laps) is True
+
+
+@pytest.mark.parametrize("date", ["2026-07-10", "2026-06-05"])
+def test_a_routine_trailing_fragment_is_immaterial(date):
+    """Design D2, the IMMATERIAL case: both runs end with a metres-long lap
+    the athlete's stop press produced. It carries no `wktStepIndex`, so the
+    STEP rule drops it whether or not the size floor exists — the survivor
+    set is identical with the floor lifted, the discard decided nothing, and
+    the document may keep asserting."""
+    summary, laps = load_workout(date)
+    segs = il.segments_from_laps(laps)
+    with_floor, size_disc, _ = il._lap_survivors(segs, laps)
+    lifted, _, _ = il._lap_survivors(segs, laps, size_floor=False)
+    assert size_disc, f"{date} must actually have a size discard to test"
+    assert with_floor == lifted
+    assert il._size_discard_is_material(segs, laps) is False
+
+
 def test_no_real_workout_loses_span_coverage():
     """Across every fixture: demotion never deletes."""
     for date in WORKOUTS:

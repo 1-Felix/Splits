@@ -15,10 +15,10 @@
 
 ## 3. Materiality — a discard only counts if it decided something (design D2)
 
-- [ ] 3.1 Write the failing test: on the `2026-07-29` fixture, lifting the size floor changes the survivor set from `{lap 1}` to `{laps 3,5,7,9}` — material.
-- [ ] 3.2 Write the failing test: on the `2026-07-10` and `2026-06-05` fixtures, the trailing sub-floor fragment carries no `wktStepIndex`, so the step rule drops it either way and the survivor set is unchanged — immaterial.
-- [ ] 3.3 Implement the materiality check by re-running survivor selection with the size floor lifted and comparing survivor sets. Pure, no state.
-- [ ] 3.4 Mutation-prove both directions: replacing the check with `True` (always hedge) turns the suite red, and replacing it with `False` (never hedge) turns the suite red. A check that only fails one way is not tested.
+- [x] 3.1 Write the failing test: on the `2026-07-29` fixture, lifting the size floor changes the survivor set from `{lap 1}` to `{laps 3,5,7,9}` — material. *(Plus the same test for `2025-12-26`: `{9}` → `{1,3,5,7}`.)*
+- [x] 3.2 Write the failing test: on the `2026-07-10` and `2026-06-05` fixtures, the trailing sub-floor fragment carries no `wktStepIndex`, so the step rule drops it either way and the survivor set is unchanged — immaterial.
+- [x] 3.3 Implement the materiality check by re-running survivor selection with the size floor lifted and comparing survivor sets. Pure, no state. *(`_size_discard_is_material` — two `_lap_survivors` calls.)*
+- [x] 3.4 Mutation-prove both directions: replacing the check with `True` (always hedge) turns the suite red, and replacing it with `False` (never hedge) turns the suite red. A check that only fails one way is not tested. *(`True` → both immaterial tests fail; `False` → both material tests fail; reverted green.)*
 
 ## 4. Confidence levels and the assert verdict (design D3, D4)
 

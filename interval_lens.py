@@ -899,8 +899,8 @@ def _lap_confidence(segments: list[dict], laps: list[dict]) -> tuple[str, float]
     return "structured", _LAP_CONFIDENCE["structured"]
 
 
-def _lap_rep_segments(segments: list[dict],
-                      laps: list[dict]) -> tuple[list[dict], dict]:
+def _lap_rep_segments(segments: list[dict], laps: list[dict],
+                      survivors: set | None = None) -> tuple[list[dict], dict]:
     """Which lap-derived work segments are genuine reps — returns the re-roled
     segments plus the discard bookkeeping `{"size": set, "step": set}` of lap
     indices each filter rejected (design D1 of fix-lap-confidence: the two
@@ -938,7 +938,16 @@ def _lap_rep_segments(segments: list[dict],
     """
     assert len(segments) == len(laps), \
         "segments_from_laps must emit exactly one segment per lap, in order"
-    survivors, size_discards, step_discards = _lap_survivors(segments, laps)
+    if survivors is None:
+        survivors, size_discards, step_discards = _lap_survivors(segments, laps)
+    else:
+        # prescription-selected (add-workout-prior D1): the prior decided
+        # which laps are the set — demotions here are corroborated by the
+        # workout itself, so they live in the never-hedge bucket, and the
+        # size floors were never consulted (ADMIT).
+        size_discards = set()
+        step_discards = {i for i, s in enumerate(segments)
+                         if s["role"] == "work" and i not in survivors}
 
     ordered = sorted(survivors)
     first = ordered[0] if ordered else None
@@ -1134,11 +1143,25 @@ def build_document(streams: dict | None, summary: dict | None = None,
 
     if laps and laps_are_structured(summary, laps):
         raw_segments = segments_from_laps(laps, gap_grid)
+        # The prescription decides which laps are the set when it can join
+        # (add-workout-prior D1): VETO — a lap executing an easy-target step
+        # is never work, whatever its stepTypeKey said; set membership by
+        # target VALUE (D3); ADMIT — a lap executing a prescribed rep step is
+        # a rep however small (the size floors exist to reject fragments the
+        # detector invented, not reps the athlete was told to run). Roles and
+        # inference floors stay the fallback for runs with no usable prior.
+        prior_joins = bool(prior) and any(
+            l.get("wktStepIndex") is not None for l in laps)
+        if prior_joins:
+            selected = {i for i, l in enumerate(laps)
+                        if l.get("wktStepIndex") in prior["setSteps"]}
+            segments, discards = _lap_rep_segments(raw_segments, laps, selected)
+        else:
+            segments, discards = _lap_rep_segments(raw_segments, laps)
         # confidence reads the RAW segments — _lap_rep_segments re-roles the
         # demoted laps, and the materiality re-run has to see the same
         # work-role population the original selection saw
         _level, confidence = _lap_confidence(raw_segments, laps)
-        segments, discards = _lap_rep_segments(raw_segments, laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -1223,6 +1246,12 @@ def build_document(streams: dict | None, summary: dict | None = None,
         bouts = [(a, b) for a, b in bouts
                  if (_mean(series[a:b]) or 0) >= work_floor]
     else:
+        bouts = []
+    if prior and not prior["hard"]:
+        # VETO, whole-run form (D2): the workout prescribed nothing hard —
+        # every step's target value is easy — so a fast half must not be
+        # promoted to a set or a block. Progression stays reachable: a
+        # negative-split easy run is a reading of pacing, not a quality claim.
         bouts = []
     shape = classify(bouts, series, dist_at, expect)
     if shape in ("steady", "progression"):

@@ -32,10 +32,10 @@
 
 ## 5. VETO — a prescribed easy step is never work (design D2)
 
-- [ ] 5.1 Write the failing tests: a step whose target VALUE is HR zone ≤ 2 cannot be reported as a rep or a block, whatever its `stepTypeKey` says — `2026-06-05`'s warm-up is typed `interval` and the veto still fires; `2026-01-16` collapses from `"2-1-2 km" found 3` to its one prescribed rep; `2025-12-24`/`2026-04-29` read `steady`.
-- [ ] 5.2 Write the failing guard test: Z3 is deliberately NOT vetoed — `2025-12-14` (14 km @ HR Z3) keeps its `progression` reading.
-- [ ] 5.3 Implement the veto, reading the target's value (`zoneNumber`), never the step type.
-- [ ] 5.4 Mutation-prove both directions: widening the veto to Z3 turns the suite red (5.2), and deleting it turns the suite red (5.1).
+- [x] 5.1 Write the failing tests: a step whose target VALUE is HR zone ≤ 2 cannot be reported as a rep or a block, whatever its `stepTypeKey` says — `2026-06-05`'s warm-up is typed `interval` and the veto still fires; `2026-01-16` collapses from `"2-1-2 km" found 3` to its one prescribed rep; `2025-12-24`/`2026-04-29` read `steady`.
+- [x] 5.2 Write the failing guard test: Z3 is deliberately NOT vetoed — `2025-12-14` (14 km @ HR Z3) keeps its `progression` reading.
+- [x] 5.3 Implement the veto, reading the target's value (`zoneNumber`), never the step type. *(Lap path: prescription-selected survivors via `_lap_rep_segments(…, survivors)`; stream path: a nothing-hard prior empties the bouts, progression stays reachable.)*
+- [x] 5.4 Mutation-prove both directions: widening the veto to Z3 turns the suite red (5.2), and deleting it turns the suite red (5.1). *(Deleting → 3 tests fail. Widening to Z3 survived the shape assertion — progression stays reachable through `_is_progression` either way — so the Z3 guard also pins `prior['hard']`/`vetoed` directly; widened veto now fails it.)*
 
 ## 6. Set membership by target VALUE, not type (design D3)
 

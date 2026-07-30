@@ -125,6 +125,22 @@ def test_laps_with_no_indices_still_get_no_step_mapping_but_not_a_veto():
     assert steps is not None and 1 in steps
 
 
+def make_streams(spans, hr=150):
+    """spans: [(duration_s, mps)] → columnar streams at 1 Hz (the shape
+    test_interval_lens uses; duplicated because test modules stay standalone)."""
+    t, d, v, hrs = [], [], [], []
+    clock, dist = 0, 0.0
+    for dur, mps in spans:
+        for _ in range(dur):
+            t.append(clock)
+            d.append(round(dist))
+            v.append(mps)
+            hrs.append(hr)
+            clock += 1
+            dist += mps
+    return {"t": t, "d": d, "v": v, "hr": hrs}
+
+
 # ── the prior upstream of the branch (design D4) ─────────────────────────────
 def build(date: str, workout_payload: dict | None = None,
           laps: list[dict] | None = None) -> dict:
@@ -155,6 +171,68 @@ def test_without_a_workout_nothing_changes():
     assert build("2026-07-10") == build("2026-07-10", None)
     doc = build("2026-07-10")
     assert doc["set"]["prescribed"] is None
+
+
+# ── VETO: a prescribed easy step is never work (design D2) ───────────────────
+def test_the_mistyped_warmup_is_vetoed_by_its_target_value():
+    """`2026-06-05` types its warm-up `interval`, but its target VALUE is HR
+    Z2 — the veto reads the value and fires anyway. The document stops
+    pairing a warm-up with a tempo as `"2 reps"`: one prescribed 4 km block,
+    warm-up demoted."""
+    doc = build("2026-06-05", workout("2026-06-05"))
+    assert doc["shape"] == "block"
+    assert doc["segments"][0]["role"] == "warmup"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 1 and work[0]["distM"] == 4000
+
+
+def test_a_single_prescribed_rep_between_easy_bookends_is_not_a_pyramid():
+    """`2026-01-16`: Z2 2 km / paced 1 km / Z2 2 km read `"2-1-2 km", found 3,
+    conf 1.00` — one prescribed rep rendered as a three-rep pyramid, with
+    nothing on the page suggesting it was wrong. The bookends' Z2 value
+    vetoes them; the one paced kilometre is an honest small block."""
+    doc = build("2026-01-16", workout("2026-01-16"))
+    assert doc["shape"] == "block"
+    assert doc["label"] != "2-1-2 km"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 1 and work[0]["distM"] == 1000
+
+
+def test_a_z2_only_prescription_reads_steady_on_the_stream_path():
+    """`2025-12-24` / `2026-04-29` / `2026-04-01` are stream-sourced runs
+    whose single prescribed step is HR Z2 — nothing hard was prescribed, so
+    inference must not promote a fast half into a set or block. Synthetic
+    streams that WOULD read as reps prove the veto does the work."""
+    spans = [(300, 2.5)]
+    for _ in range(5):
+        spans += [(240, 4.0), (120, 2.0)]
+    spans += [(300, 2.5)]
+    streams = make_streams(spans)
+    with_veto = il.build_document(streams, {"startTimeLocal": "2026-04-29 08:00:00"},
+                                  None, workout("2026-04-29"), work_floor=3.0)
+    without = il.build_document(streams, {}, None, None, work_floor=3.0)
+    assert without["shape"] == "reps", "inference alone would call this a set"
+    assert with_veto["shape"] in ("steady", "progression")
+    assert with_veto["shape"] == "steady"
+
+
+def test_z3_is_deliberately_not_vetoed():
+    """`2025-12-14` (14 km @ HR Z3) reads `progression` today — a defensible
+    reading of how it was executed. Z3 is not easy; vetoing it would suppress
+    a true positive to fix nothing."""
+    spans = [(2400, 2.6), (2400, 2.9), (1200, 3.2)]
+    streams = make_streams(spans)
+    doc = il.build_document(streams, {"startTimeLocal": "2025-12-14 08:00:00"},
+                            None, workout("2025-12-14"), work_floor=3.4)
+    plain = il.build_document(streams, {}, None, None, work_floor=3.4)
+    assert plain["shape"] == "progression", "the fixture must be a progression"
+    assert doc["shape"] == "progression", "a Z3 prescription changes nothing"
+    # the mechanism, pinned directly: Z3 counts as HARD in the prior contract
+    # (the shape assertion alone cannot catch a widened veto — progression
+    # stays reachable through _is_progression with or without bouts)
+    prior = il.derive_prior(workout("2025-12-14"), None)
+    assert prior["hard"] is True, "a Z3 step is a work prescription"
+    assert prior["vetoed"] == set()
 
 
 def test_two_unprescribed_work_laps_are_not_a_set():

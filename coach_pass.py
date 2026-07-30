@@ -112,6 +112,20 @@ def attach_blocks(conn, plan, today, data, log=_noop) -> list[str]:
     return attached
 
 
+def briefing(conn, plan, data, today, path, log=_noop) -> bool:
+    """Render coach-briefing.md and publish it atomically. False when there is
+    no plan to render against.
+
+    Runs strictly AFTER the telemetry file is written — a briefing problem can
+    never affect the contract file."""
+    if not plan:
+        return False
+    coach_briefing.write_briefing(
+        path, coach_briefing.render_briefing(conn, plan, data, today))
+    log("✓ coach briefing written")
+    return True
+
+
 def _course(conn, plan):
     """The stored course document for the plan's race, or None — a race without
     a `courseId` has no course, which is the normal state."""

@@ -185,3 +185,40 @@ def test_derive_banks_a_snapshot_and_scores_the_weeks():
     assert scored > 0 and stats["weeks_scored"] > 0
     assert int(ratchet) == stats["weeks_scored"]
     assert "blocks" in stats and "recomputed" in stats
+
+
+def test_briefing_publishes_atomically():
+    """D1: rendering moves too, so /coach reads the same document on both
+    instances. write_briefing's temp-file-then-rename is what makes a reader
+    (or a crash) unable to observe half a briefing."""
+    import coach_pass
+
+    tmp = Path(tempfile.mkdtemp())
+    conn, plan = _fixture_archive(tmp)
+    data = {"profile": {"maxHR": MAX_HR, "restingHR": 47}, "today": TODAY.isoformat()}
+    coach_pass.attach_blocks(conn, plan, TODAY, data)
+    dest = tmp / "coach-briefing.md"
+    try:
+        ok = coach_pass.briefing(conn, plan, data, TODAY, dest)
+    finally:
+        conn.close()
+    text = dest.read_text(encoding="utf-8")
+    assert ok is True
+    assert text.startswith(f"# Coach Briefing — {TODAY.isoformat()}")
+    assert "## Plan vs actual" in text
+    assert "insights unavailable" not in text, \
+        "the fixture has insights; the briefing must show them"
+    assert not list(tmp.glob(".coach-briefing-*.tmp")), "no temp file left behind"
+
+
+def test_briefing_without_a_plan_is_a_no_op():
+    import coach_pass
+
+    tmp = Path(tempfile.mkdtemp())
+    conn, _plan = _fixture_archive(tmp)
+    dest = tmp / "coach-briefing.md"
+    try:
+        assert coach_pass.briefing(conn, None, {}, TODAY, dest) is False
+    finally:
+        conn.close()
+    assert not dest.exists()

@@ -19,9 +19,18 @@ and deliberately deferred; none of it is a surprise waiting to be discovered.
 > move. The July-30 morning ships had already closed M2, M11 (+N3), M13/P3.1
 > and P2.7b.
 >
+> **2026-07-30 (third ship of the day) — `fix-distill-parity` SHIPPED and
+> NUC-verified: M8 + P2.4 are CLOSED.** Schema v13 (`distilled_version` +
+> `distilled_at`), `GARMIN_DISTILL_VERSION = 1`, the distiller takes laps +
+> workout on both callers, and the nightly order is now archive → workouts →
+> **distill** → intervals (it used to distill before the laps were even
+> fetched). The one-off self-heal re-distilled 171/171 rows; the `4×20 s`
+> strides run's cockpit compact moved `steady/stream/v4 → reps "4×20 s"/laps/
+> v6`, in exact agreement with `/run/:id`. `run_intervals` untouched. See
+> `openspec/changes/fix-distill-parity/`.
+>
 > **Still open after the sweep:** M3 (second half, documented as fallback-only),
-> M8 + P2.4 (cockpit distill parity + Garmin distill version marker — agreed
-> as the NEXT change, with its own design), P2.2 (partially mitigated by
+> ~~M8 + P2.4~~ (closed above), P2.2 (partially mitigated by
 > `_point_window` for prescribed blocks), the `corroborated`-vs-`structured`
 > confidence distinction (both 1.0; open question inherited from
 > fix-lap-confidence), POINT's variance guard (revisit on a real case), and a

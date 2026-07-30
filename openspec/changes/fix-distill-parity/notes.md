@@ -44,4 +44,18 @@ Python `569 passed / 2 skipped`; `test_run_page.mjs`, `test_archive_page.mjs`,
 `test_coach_read.mjs`, `test_archive_api.mjs` ALL PASS. The by-id `detail`
 exact-key assertion is untouched — versioning lives in columns, not payload.
 
-## Post-deploy (filled after 5.3/5.4)
+## Post-deploy (2026-07-30, NUC)
+
+The first sync after deploy re-distilled the archive as designed: **171/171
+distilled rows at distill version 1**. The spot-check run — `2026-07-29`, the
+`5km easy + 4x20s strides` session this whole arc began with:
+
+```
+BEFORE  {"shape": "steady", "label": null,     "source": "stream", "version": 4}
+AFTER   {"shape": "reps",   "label": "4×20 s", "source": "laps",   "version": 6}
+```
+
+The cockpit now reads the run exactly as /run/:id does. `verify_archive`
+exit 0. `run_intervals` untouched: 170 docs, `steady 130 / reps 19 / block 19
+/ progression 2`, sources `stream 146 / laps 24`, all at v6, `gapS==0` still
+0 of 290 segments.

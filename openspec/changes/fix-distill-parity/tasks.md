@@ -47,11 +47,11 @@
       `test_archive_api.mjs` green (the by-id `detail` exact-key assertion
       must NOT change — versioning is columns-only).
 - [x] 5.2 Re-run every mutation in this change's tests; record in notes.md.
-- [ ] 5.3 Merge → CI → NUC deploy. Trigger a sync (`POST /api/sync`); confirm
+- [x] 5.3 Merge → CI → NUC deploy. Trigger a sync (`POST /api/sync`); confirm
       the one-off full re-distill completes.
-- [ ] 5.4 Post-deploy: distilled coverage full at version 1; spot-check a
+- [x] 5.4 Post-deploy: distilled coverage full at version 1; spot-check a
       lap-sourced run (e.g. the 4×20 s strides run) — cockpit sentence agrees
       with /run/:id; `run_intervals` distribution unchanged (same sweep as
       sweep-lens-tail); `verify_archive` exit 0.
-- [ ] 5.5 Update HANDOFF-interval-lens.md (M8 + P2.4 closed) and notes.md
+- [x] 5.5 Update HANDOFF-interval-lens.md (M8 + P2.4 closed) and notes.md
       (before/after cockpit sentence for the spot-check run).

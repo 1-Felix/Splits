@@ -1,9 +1,9 @@
 ## 1. Baseline and fixtures
 
-- [ ] 1.1 Capture the current production sweep read-only (`shape`, `label`, `source`, `confidence` per document, plus the shape/source counters) and commit it into this change folder as `baseline-before.md`. This is the diff target for 7.3 — shapes and labels must not move at all.
-- [ ] 1.2 Extend `tests/fixtures/lap_workouts.json` with the two size-discard cases: `2026-07-29` (`5km easy + 4x20s strides`) and `2025-12-26` (`4×30 s`), trimmed to the fields the engine reads. Note the local `activity-archive.db` has NO lap payloads — pull these from the NUC, read-only.
-- [ ] 1.3 Extend the same fixture with at least two cases that must NOT hedge: one step-demotion set (`2026-04-10` or `2025-10-17`, where change 2's rule demoted an ACTIVE lap) and one clean repeated-step set with a trailing fragment (`2026-07-10`).
-- [ ] 1.4 Confirm `test_interval_laps_truth.py` still passes unchanged against the enlarged fixture, so the additions are additive and pin nothing new by accident.
+- [x] 1.1 Capture the current production sweep read-only (`shape`, `label`, `source`, `confidence` per document, plus the shape/source counters) and commit it into this change folder as `baseline-before.md`. This is the diff target for 7.3 — shapes and labels must not move at all.
+- [x] 1.2 Extend `tests/fixtures/lap_workouts.json` with the two size-discard cases: `2026-07-29` (`5km easy + 4x20s strides`) and `2025-12-26` (`4×30 s`), trimmed to the fields the engine reads. Note the local `activity-archive.db` has NO lap payloads — pull these from the NUC, read-only. *(2025-12-26 was already in the fixture; only 2026-07-29 was new — two activities share that date, so the pull keyed by activity_id 23771823931.)*
+- [x] 1.3 Extend the same fixture with at least two cases that must NOT hedge: one step-demotion set (`2026-04-10` or `2025-10-17`, where change 2's rule demoted an ACTIVE lap) and one clean repeated-step set with a trailing fragment (`2026-07-10`). *(All already present in the 23-entry fixture; verified their laps carry the needed evidence — full-size demoted laps on 2026-04-10/2025-10-17, `wktStepIndex: None` trailing fragments on 2026-07-10/2026-06-05.)*
+- [x] 1.4 Confirm `test_interval_laps_truth.py` still passes unchanged against the enlarged fixture, so the additions are additive and pin nothing new by accident. *(21 passed.)*
 
 ## 2. Discard bookkeeping — the two filters are distinct (design D1)
 

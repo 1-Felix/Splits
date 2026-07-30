@@ -323,6 +323,85 @@ def test_prescribed_thirty_second_reps_are_found_not_filtered():
     assert doc["label"] != "24 min block"
 
 
+# ── POINT: locate from the prescription, confirm from execution (D1a) ────────
+def _tempo_workout(dist_m, lo_mps, hi_mps):
+    """A Z2-warmup / paced-block / Z2-cooldown prescription — the shape of
+    all six POINT cases."""
+    z2 = {"type": "ExecutableStepDTO", "stepOrder": 1,
+          "stepType": {"stepTypeKey": "interval"},
+          "endCondition": {"conditionTypeKey": "distance"},
+          "endConditionValue": 2000.0,
+          "targetType": {"workoutTargetTypeKey": "heart.rate.zone"},
+          "zoneNumber": 2}
+    return _synth_workout([
+        dict(z2, stepOrder=1),
+        _pace_step(2, dist_m, lo_mps, hi_mps),
+        dict(z2, stepOrder=3),
+    ])
+
+
+def test_point_confirms_a_prescribed_block_the_floor_missed():
+    """The prescription locates a window of exactly the prescribed size; the
+    window's mean pace falls in the band; the document reads `block` with the
+    window's boundaries — even though the calibration floor would have
+    dropped every bout (8.6, closing handoff P2.3)."""
+    streams = make_streams([(800, 2.5), (1379, 2.9), (700, 2.5)])
+    w = _tempo_workout(4000, 2.86, 2.95)
+    doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
+                            None, w, work_floor=3.4)
+    plain = il.build_document(streams, {}, None, None, work_floor=3.4)
+    assert plain["shape"] == "steady", "the floor alone misses this block"
+    assert doc["shape"] == "block"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 1
+    assert abs(work[0]["distM"] - 4000) <= 120
+    assert doc["asserts"] is True
+
+
+def test_point_refuses_a_run_that_plodded_the_window():
+    """Step 3 of D1a is the entire safety property: the athlete who skipped
+    the workout must not have the prescribed block reported as completed."""
+    streams = make_streams([(800, 2.4), (1680, 2.38), (700, 2.4)])
+    w = _tempo_workout(4000, 2.86, 2.95)
+    doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
+                            None, w, work_floor=3.4)
+    assert doc["shape"] == "steady", "out of band → the athlete did not run it"
+
+
+def test_point_refuses_a_substituted_rep_session_via_the_variance_guard():
+    """Design open question 1: a rep set run over the prescribed stretch can
+    AVERAGE into the band. A true block is flat; a hard/easy pattern is not —
+    the conservative variance guard refuses to call it the prescribed block."""
+    spans = [(400, 2.5)]
+    for _ in range(5):
+        spans += [(180, 4.2), (120, 1.2)]
+    spans += [(400, 2.5)]
+    streams = make_streams(spans)
+    # measured: the fastest 4000 m window over this pattern averages
+    # 3.086 m/s — INSIDE this band with tolerance — at cv 0.47, so the
+    # variance guard is the only thing standing between the rep session and
+    # a false 'prescribed block completed'
+    w = _tempo_workout(4000, 2.7, 3.1)
+    doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
+                            None, w, work_floor=3.0)
+    assert doc["shape"] == "reps", \
+        "the real structure survives; the substituted session is not erased"
+
+
+def test_point_merged_across_a_gap_is_hedged_not_asserted():
+    """`2026-01-23`'s shape in miniature: the prescribed block with a long
+    standstill inside. Merging is right — '4 reps' is plainly worse — but the
+    result must be hedged, which is what fix-lap-confidence's verdict exists
+    to carry (D1a note, D8)."""
+    streams = make_streams([(800, 2.5), (700, 2.9), (90, 0.0), (679, 2.9),
+                            (700, 2.5)])
+    w = _tempo_workout(4000, 2.6, 2.95)
+    doc = il.build_document(streams, {"startTimeLocal": "2026-01-23 08:00:00"},
+                            None, w, work_floor=3.4)
+    assert doc["shape"] == "block"
+    assert doc["asserts"] is False, "merged across a gap → possible, not certain"
+
+
 def test_two_unprescribed_work_laps_are_not_a_set():
     """The other half of the unified floor (P2.7b retired): WITHOUT a
     prescription, two work laps meet the same 3-rep inference minimum the
@@ -359,3 +438,78 @@ def test_an_abandoned_workout_reports_found_zero(monkeypatch):
     assert doc["set"] is not None
     assert doc["set"]["found"] == 0
     assert doc["set"]["prescribed"] == 5
+
+
+# ── POINT against the six real runs (local archive streams; skips without) ───
+import sqlite3
+
+_DB = Path(__file__).parent / "activity-archive.db"
+_HAS_ARCHIVE = _DB.exists()
+
+# (date, prescribed metres) — the three tempos the lens missed entirely and
+# the three it fragmented into fake sets, per the 2026-07-29 exploration.
+_POINT_CASES = [
+    ("2026-01-09", 2000), ("2026-02-13", 4000), ("2026-02-27", 2000),
+    ("2026-01-23", 3000), ("2026-03-13", 5000), ("2026-04-03", 7000),
+]
+
+
+def _archive_streams(date: str):
+    conn = sqlite3.connect(f"file:{_DB.as_posix()}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT summary_json, detail_streams_json FROM activities "
+            "WHERE start_time_local LIKE ? AND detail_streams_json IS NOT NULL "
+            "AND type_key LIKE '%run%' AND type_key NOT LIKE '%cycling%'",
+            (f"{date}%",)).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1, f"{date}: expected exactly one streamed run"
+    return json.loads(rows[0][0] or "{}"), json.loads(rows[0][1])
+
+
+@pytest.mark.skipif(not _HAS_ARCHIVE, reason="no local activity-archive.db")
+@pytest.mark.parametrize("date,dist", _POINT_CASES)
+def test_point_recovers_the_six_prescribed_tempos(date, dist):
+    """8.1 + 8.2, measured on the real streams: the three missed tempos and
+    the three fragmented ones all read `block`, boundaries within a few
+    percent of the prescribed size, with no second mechanism. The local
+    archive HAS streams (it lacks only laps), so this is a legitimate
+    stream-path truth test. Uses the archive-wide floor 2.7 the way
+    production does — POINT must win regardless (8.6)."""
+    summary, streams = _archive_streams(date)
+    doc = il.build_document(streams, summary, None, workout(date),
+                            work_floor=2.7)
+    assert doc["shape"] == "block", f"{date}: {doc['shape']} ({doc['label']})"
+    work = [s for s in doc["segments"] if s["role"] == "work"]
+    assert len(work) == 1
+    assert abs(work[0]["distM"] - dist) / dist <= 0.05, \
+        f"{date}: window {work[0]['distM']} m vs prescribed {dist} m"
+
+
+# The hedge verdicts, MEASURED rather than taken from the design: within-
+# window pace cannot single out 2026-01-23 (its 304 s "gap" is a shallow jog;
+# the design's clean 2026-01-09 dips below the band for longer), so hedging
+# follows evidence of interruption — a deep stop or a bout-fragmented window.
+# That hedges the three fragmented executions AND 2026-02-27, whose genuine
+# 92 s standstill the design's trace never examined. The two uninterrupted
+# tempos assert.
+_POINT_VERDICTS = {
+    "2026-01-09": True,      # the one uninterrupted execution of the six
+    "2026-02-13": False,     # a real ~98 s break mid-tempo (two bouts, measured)
+    "2026-02-27": False,     # a real 92 s stop mid-tempo (measured)
+    "2026-01-23": False,     # the design's own hedge case: 4 fragments
+    "2026-03-13": False,     # fragmented execution
+    "2026-04-03": False,     # fragmented execution
+}
+
+
+@pytest.mark.skipif(not _HAS_ARCHIVE, reason="no local activity-archive.db")
+@pytest.mark.parametrize("date", sorted(_POINT_VERDICTS))
+def test_point_hedges_interrupted_executions_and_asserts_clean_ones(date):
+    summary, streams = _archive_streams(date)
+    doc = il.build_document(streams, summary, None, workout(date),
+                            work_floor=2.7)
+    assert doc["shape"] == "block"
+    assert doc["asserts"] is _POINT_VERDICTS[date], \
+        f"{date}: asserts must be {_POINT_VERDICTS[date]}"

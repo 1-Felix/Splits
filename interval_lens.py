@@ -765,6 +765,87 @@ def derive_prior(payload: dict | None, laps: list[dict] | None,
     }
 
 
+# POINT (add-workout-prior D1a) — the prescription LOCATES, execution DECIDES.
+POINT_BAND_TOLERANCE = 0.05   # ± on the prescribed band's edges: 2026-02-27's
+                              # best window is 1 s/km FASTER than its band's
+                              # fast end, and refusing an athlete for beating
+                              # the prescription by seconds would be absurd
+POINT_VARIANCE_MAX = 0.25     # within-window cv above this is a hard/easy rep
+                              # pattern, not a block — the variance guard for
+                              # a substituted session (design open question 1;
+                              # deliberately conservative: a smoothed real
+                              # block sits under 10, alternating reps near 30)
+POINT_GAP_HEDGE_S = 60        # this much standstill inside the window means
+                              # the block was merged across a gap → hedged
+_PRIOR_CONFIRMED = 0.9        # prescription-corroborated verdicts (D8)
+_PRIOR_HEDGED = 0.4           # prescription and execution disagree — below
+                              # CONFIDENCE_ASSERT_MIN by construction
+
+
+def _point_window(series: list, raw: list, dist_at, total_s: int,
+                  block: dict, bouts: list | None = None) -> tuple | None:
+    """The best window of exactly the prescribed distance, confirmed against
+    the prescribed band — or None, and the caller falls back to inference.
+
+    1. slide a window of the prescribed size over the run,
+    2. keep the fastest (the prescription says where to LOOK, and the block,
+       if run, is the hardest stretch of its own length),
+    3. CONFIRM: its mean pace must fall within the prescribed band — a run
+       that plodded the window did not run the workout, and reporting it
+       completed would invert the honesty contract,
+    4. refuse a window whose within-window variance says rep pattern, not
+       block (the substituted-session guard),
+    5. flag an INTERRUPTED execution for hedging: a contiguous deep
+       interruption (a stop, a walk — well below the band), or a window the
+       calibrated bout structure fragments (two or more detected bouts
+       inside it: the hysteresis saw the athlete break and resurge).
+
+       Measured against the six real POINT runs, within-window pace CANNOT
+       single out the design's named hedge case (2026-01-23's 304 s gap is a
+       shallow jog; the 'clean' 2026-01-09 dips below the band for longer),
+       so the hedge is decided by evidence of interruption instead — which
+       also catches 2026-02-27's genuine 92 s standstill the design's trace
+       never examined.
+
+    Never consults the calibration floor for CONFIRMATION (closes handoff
+    P2.3): the floor-filtered bouts are only read as fragmentation
+    evidence."""
+    dist = block.get("value") or 0
+    lo, hi = block["band"]
+    if dist <= 0 or total_s < 2 or dist_at(total_s) < dist:
+        return None
+    best = None
+    b = 0
+    for a in range(total_s):
+        if b <= a:
+            b = a + 1
+        while b < total_s and dist_at(b) - dist_at(a) < dist:
+            b += 1
+        if dist_at(b) - dist_at(a) < dist:
+            break
+        mps = dist / (b - a)
+        if best is None or mps > best[2]:
+            best = (a, b, mps)
+    if not best:
+        return None
+    a, b, mps = best
+    if not (lo * (1 - POINT_BAND_TOLERANCE) <= mps
+            <= hi * (1 + POINT_BAND_TOLERANCE)):
+        return None
+    moving = [v for v in raw[a:b] if v]
+    m = _mean(moving)
+    if m and len(moving) > 1:
+        var = sum((v - m) ** 2 for v in moving) / len(moving)
+        if (var ** 0.5) / m > POINT_VARIANCE_MAX:
+            return None
+    deep = longest = 0
+    for v in series[a:b]:
+        longest = longest + 1 if (v is None or v < lo * 0.8) else 0
+        deep = max(deep, longest)
+    fragmented = sum(1 for x, y in (bouts or []) if x < b and y > a) >= 2
+    return a, b, deep >= POINT_GAP_HEDGE_S or fragmented
+
+
 def _zero_set(expect: int) -> dict:
     """The bailed-session set (design D10): a workout begun and abandoned is
     a real training event, and the page should be able to say '0 of N
@@ -1253,7 +1334,18 @@ def build_document(streams: dict | None, summary: dict | None = None,
         # promoted to a set or a block. Progression stays reachable: a
         # negative-split easy run is a reading of pacing, not a quality claim.
         bouts = []
-    shape = classify(bouts, series, dist_at, expect)
+    point = None
+    if prior and prior.get("block"):
+        blk = prior["block"]
+        if blk.get("band") and blk.get("endCondition") == "distance":
+            point = _point_window(series, raw_grid, dist_at, len(series), blk,
+                                  bouts)
+    if point:
+        a, b, gap_hedged = point
+        bouts = [(a, b)]
+        shape = "block"
+    else:
+        shape = classify(bouts, series, dist_at, expect)
     if shape in ("steady", "progression"):
         bouts = []
     stats = (set_stats(bouts, series, dist_at, hr, raw_grid, gap_grid)
@@ -1276,8 +1368,14 @@ def build_document(streams: dict | None, summary: dict | None = None,
     else:
         segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series),
                                         raw_grid, gap_grid)
-    confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
-                             stats["paceCvPct"] if stats else None)
+    if point:
+        # D8: a POINT block is prescription-corroborated — it asserts, unless
+        # it was merged across a standstill, in which case the shape is the
+        # best reading available but not a certainty.
+        confidence = _PRIOR_HEDGED if gap_hedged else _PRIOR_CONFIRMED
+    else:
+        confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
+                                 stats["paceCvPct"] if stats else None)
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,

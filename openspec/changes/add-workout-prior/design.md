@@ -127,6 +127,21 @@ Merging it into one block is right — "4 reps" is plainly worse — but the res
 must be **hedged rather than asserted**, which is what the confidence work in
 `fix-lap-confidence` + D8 exists to carry.
 
+> **CORRECTED 2026-07-30, measured during implementation.** Within-window
+> pace cannot single out `2026-01-23`: its 304 s "gap" is a *shallow* jog
+> (never below 0.8× the band's slow end), while the "clean" `2026-01-09`
+> dips below the band for *longer* (194 s vs 172 s) — at every threshold the
+> six runs interleave. The hedge is therefore decided by **evidence of
+> interruption** instead: a contiguous deep interruption (≥ 60 s below 0.8×
+> band-lo — a stop or a walk), or a window the calibrated bout structure
+> fragments (≥ 2 detected bouts inside it). Measured on the six: only
+> `2026-01-09` executed its block uninterrupted and asserts; `2026-02-13`
+> (~98 s break), `2026-02-27` (92 s standstill — which this design's own
+> trace called clean without ever examining continuity), `2026-01-23`,
+> `2026-03-13` and `2026-04-03` all hedge. All six read `block`, which is
+> the fix this change exists for; the verdict marks the interruption
+> honestly.
+
 ### D2 — The veto threshold is HR zone ≤ 2, and Z3 is deliberately untouched
 
 Measured across every case whose fix depends on a veto:

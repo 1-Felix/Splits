@@ -1144,6 +1144,32 @@ def test_an_unreadable_plan_still_yields_telemetry():
         assert '"compliance"' not in out
 
 
+def test_the_ingest_path_banks_its_own_prediction():
+    # D6 — race_predictions is empty on ingest instances, so the goal-gap trend
+    # would stay empty forever. Bank the Riegel estimate under its own source
+    # so the provenance is recorded, not laundered as Garmin's.
+    tmp = _tmpdir()
+    ib.build_archive(tmp, [RUNS[0]], PROFILE)
+    conn = _db(tmp)
+    ib.bank_riegel_prediction(conn, [RUNS[0]], TODAY)
+    row = conn.execute(
+        "SELECT date, half_s, source FROM race_predictions").fetchone()
+    conn.close()
+    assert row[0] == TODAY.isoformat()
+    assert row[1] > 0
+    assert row[2] == "riegel", "not 'sync' — this is not Garmin's predictor"
+
+
+def test_riegel_seconds_agree_with_the_formatted_predictions():
+    # one derivation, two consumers: the banked seconds and the cockpit's
+    # strings must come from the same projection
+    secs = ib._riegel_seconds(RUNS)
+    strings = ib.predictions(RUNS, plan_goal=None)
+    assert ib._fmt_hms(secs["time_5k_s"]) == strings["fiveK"]
+    assert ib._fmt_hms(secs["half_s"]) == strings["halfNow"]
+    assert ib._riegel_seconds([]) is None
+
+
 def test_a_failing_archive_still_yields_telemetry():
     # D4 — the telemetry guarantee, archive half. This is the property the old
     # ordering got for free by writing telemetry first. Patched by hand, not

@@ -45,6 +45,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 RIEGEL_EXPONENT = 1.06            # mirror insight_metrics
 HALF_KM = 21.0975
+MARATHON_KM = 42.195
 ZONE_LABELS = ["Recovery", "Endurance", "Tempo", "Threshold", "VO2 max"]
 SAMPLE_GAP_CAP_S = 30            # a gap between HR samples longer than this is a pause
 MOVING_MPS_MIN = 1.7             # slower than ≈9:48/km = a standing/walking pause (D10)
@@ -457,22 +458,50 @@ def heatmap(runs: list[dict], today: dt.date, days: int = HEATMAP_DAYS) -> list[
     return [round(v, 2) for v in hm]
 
 
-def predictions(runs: list[dict], plan_goal: str | None) -> dict:
-    """Riegel projections from the best recent effort (fastest run ≥ 2 km),
-    anchored on the MOVING effort when a speed series exists (design D10)."""
+def _riegel_seconds(runs: list[dict]) -> dict | None:
+    """Riegel projections in SECONDS from the best recent effort (fastest run
+    ≥ 2 km), anchored on the MOVING effort when a speed series exists (design
+    D10). None when nothing is long enough to project from.
+
+    The promoted shape activity_archive.upsert_race_prediction expects, so the
+    banked row and the cockpit's strings are one derivation (design D6)."""
     eligible = [r for r in runs if r["distanceM"] >= 2000]
     if not eligible:
-        return {"fiveK": None, "tenK": None, "halfNow": None, "halfGoal": plan_goal, "trend": None}
+        return None
     anchor = min(eligible, key=lambda r: (lambda e: e[0] / e[1])(_effort(r)))
     t1, d1 = _effort(anchor)
     riegel = lambda d2: t1 * (d2 / d1) ** RIEGEL_EXPONENT  # noqa: E731
+    return {"time_5k_s": riegel(5), "time_10k_s": riegel(10),
+            "half_s": riegel(HALF_KM), "marathon_s": riegel(MARATHON_KM)}
+
+
+def predictions(runs: list[dict], plan_goal: str | None) -> dict:
+    """Riegel projections from the best recent effort, formatted for the
+    cockpit."""
+    s = _riegel_seconds(runs)
+    if not s:
+        return {"fiveK": None, "tenK": None, "halfNow": None,
+                "halfGoal": plan_goal, "trend": None}
     return {
-        "fiveK": _fmt_hms(riegel(5)),
-        "tenK": _fmt_hms(riegel(10)),
-        "halfNow": _fmt_hms(riegel(HALF_KM)),
+        "fiveK": _fmt_hms(s["time_5k_s"]),
+        "tenK": _fmt_hms(s["time_10k_s"]),
+        "halfNow": _fmt_hms(s["half_s"]),
         "halfGoal": plan_goal,
         "trend": None,
     }
+
+
+def bank_riegel_prediction(conn, runs: list[dict], today: dt.date) -> bool:
+    """Upsert today's projection so the trajectory has a line to draw. Source
+    is "riegel", never "sync": this is our own model's estimate, not Garmin's
+    predictor document, and the column exists so that stays visible."""
+    s = _riegel_seconds(runs)
+    if not s:
+        return False
+    activity_archive.upsert_race_prediction(
+        conn, today.isoformat(), s,
+        {"source": "riegel", "exponent": RIEGEL_EXPONENT}, "riegel")
+    return True
 
 
 # ── assembly ──────────────────────────────────────────────────────────────────
@@ -1031,6 +1060,8 @@ def main() -> None:
     if activity_archive.archive_path(data_dir).exists():
         conn = activity_archive.open_archive(data_dir)
         try:
+            _safe(lambda: bank_riegel_prediction(conn, runs, today),
+                  "prediction banking")
             if plan:
                 _safe(lambda: coach_pass.derive(conn, plan_raw, plan, today,
                                                 max_hr, log=_log), "derive pass")

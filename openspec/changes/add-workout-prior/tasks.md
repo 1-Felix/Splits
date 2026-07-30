@@ -6,13 +6,13 @@
 
 ## 2. Schema and acquisition — dark (design D5, D6)
 
-- [ ] 2.1 Write the failing tests: `activity_archive` gains `write_workout(conn, workout_id, payload, provenance)` (write-once: an existing row is never overwritten; an empty/falsy payload is refused and NOT cached — the M1 lesson: only bank after a usable payload is confirmed) and `workout_payload(conn, workout_id)`.
-- [ ] 2.2 Implement the additive `workouts` table (raw payload JSON, `fetched_at`, `provenance` in `{'first-sight','backfill'}`) with a schema-version bump, and the two helpers. No migration of existing rows.
-- [ ] 2.3 Write the failing test: the acquisition step banks each `summary_json.workoutId` not already stored, exactly once, and never holds a write-capable connection across the network call (fetch first into memory, open, write, close).
-- [ ] 2.4 Implement `workouts_step` in `sync_garmin.py` beside the laps acquisition: for archived running activities with an unbanked `workoutId`, `get_workout_by_id` once, provenance `first-sight`, fail-soft per workout (a deleted workout warns and skips), offline no-op, only ever inside `safe()`. Wire into `main()` after the archive step.
-- [ ] 2.5 Implement `--backfill-workouts`: throttled (≥0.15 s between calls), resumable (skips banked ids), provenance `backfill`, out of band from the nightly path. Expect ~85 of 89 with 4 deleted.
-- [ ] 2.6 Add a workouts line to `--verify-archive` coverage output (banked / referenced / gone counts) so drift is visible.
-- [ ] 2.7 Mutation-prove 2.2's write-once and refuse-empty rules: overwriting on re-fetch, or caching an empty payload, turns the suite red.
+- [x] 2.1 Write the failing tests: `activity_archive` gains `write_workout(conn, workout_id, payload, provenance)` (write-once: an existing row is never overwritten; an empty/falsy payload is refused and NOT cached — the M1 lesson: only bank after a usable payload is confirmed) and `workout_payload(conn, workout_id)`.
+- [x] 2.2 Implement the additive `workouts` table (raw payload JSON, `fetched_at`, `provenance` in `{'first-sight','backfill'}`) with a schema-version bump, and the two helpers. No migration of existing rows.
+- [x] 2.3 Write the failing test: the acquisition step banks each `summary_json.workoutId` not already stored, exactly once, and never holds a write-capable connection across the network call (fetch first into memory, open, write, close).
+- [x] 2.4 Implement `workouts_step` in `sync_garmin.py` beside the laps acquisition: for archived running activities with an unbanked `workoutId`, `get_workout_by_id` once, provenance `first-sight`, fail-soft per workout (a deleted workout warns and skips), offline no-op, only ever inside `safe()`. Wire into `main()` after the archive step.
+- [x] 2.5 Implement `--backfill-workouts`: throttled (≥0.15 s between calls), resumable (skips banked ids), provenance `backfill`, out of band from the nightly path. Expect ~85 of 89 with 4 deleted.
+- [x] 2.6 Add a workouts line to `--verify-archive` coverage output (banked / referenced / gone counts) so drift is visible.
+- [x] 2.7 Mutation-prove 2.2's write-once and refuse-empty rules: overwriting on re-fetch, or caching an empty payload, turns the suite red.
 
 ## 3. The step-tree reader (design D6, D7)
 

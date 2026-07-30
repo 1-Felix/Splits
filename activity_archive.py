@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -339,6 +339,22 @@ CREATE INDEX IF NOT EXISTS idx_run_intervals_shape ON run_intervals(shape);
 """
 
 
+# Schema v12 (add-workout-prior, design D5/D6): the raw Garmin workout
+# definitions the athlete's runs were started from — the PRESCRIPTION, banked
+# verbatim so every interpretation (flattening, index mapping, grouping) lives
+# in interval_lens at build time under INTERVAL_VERSION. Write-once,
+# cache-on-first-sight; `provenance` records how a row arrived and the
+# payload's own `updatedDate` decides per-run trust (D5).
+SCHEMA_V12_SQL = """
+CREATE TABLE IF NOT EXISTS workouts (
+  workout_id   INTEGER PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  fetched_at   TEXT NOT NULL,
+  provenance   TEXT NOT NULL CHECK (provenance IN ('first-sight', 'backfill'))
+);
+"""
+
+
 _ACTIVITIES_V11_COLUMNS = (
     ("laps_json", "TEXT"),
     ("laps_fetched_at", "TEXT"),
@@ -392,7 +408,8 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V10_SQL)
         conn.executescript(SCHEMA_V11_SQL)
         _apply_schema_v11(conn)
-        # Forward-only migration: v1→…→v11 is purely additive (CREATE IF
+        conn.executescript(SCHEMA_V12_SQL)
+        # Forward-only migration: v1→…→v12 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -644,6 +661,60 @@ def runs_missing_laps(conn: sqlite3.Connection, limit: int | None = None) -> lis
     rows = (conn.execute(sql + " LIMIT ?", (limit,)).fetchall()
             if limit is not None else conn.execute(sql).fetchall())
     return [r[0] for r in rows]
+
+
+def write_workout(conn: sqlite3.Connection, workout_id, payload,
+                  provenance: str) -> bool:
+    """Store a RAW workout definition, write-once — same rule as write_laps:
+    an empty or failed payload is REFUSED, never cached (the M1 lesson: a
+    banked miss is permanent and starves the backfill), and an existing row is
+    never overwritten (design D5 — cache on first sight, never re-fetch).
+    Commits per call so an interrupted backfill keeps its completed work."""
+    if not payload:
+        return False
+    cur = conn.execute(
+        "INSERT INTO workouts (workout_id, payload_json, fetched_at, provenance) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(workout_id) DO NOTHING",
+        (workout_id, json.dumps(payload, ensure_ascii=False), _now(), provenance),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def workout_payload(conn: sqlite3.Connection, workout_id):
+    row = conn.execute(
+        "SELECT payload_json FROM workouts WHERE workout_id = ?",
+        (workout_id,)).fetchone()
+    return json.loads(row[0]) if row and row[0] else None
+
+
+def workouts_missing(conn: sqlite3.Connection) -> list:
+    """The acquisition work-list: distinct workout ids referenced by archived
+    runs' summaries and not yet banked. One workout backs many runs, so this
+    dedupes by workout — the fetch count is the workout count."""
+    return [r[0] for r in conn.execute(
+        f"""SELECT DISTINCT json_extract(a.summary_json, '$.workoutId') AS wid
+            FROM activities a
+            WHERE {_RUN_TYPE_SQL}
+              AND json_extract(a.summary_json, '$.workoutId') IS NOT NULL
+              AND json_extract(a.summary_json, '$.workoutId')
+                  NOT IN (SELECT workout_id FROM workouts)
+            ORDER BY wid""")]
+
+
+def workouts_coverage(conn: sqlite3.Connection) -> dict:
+    """The workouts section --verify-archive reports: banked rows vs the
+    distinct workout ids the archive's runs reference. `unbanked` staying at
+    a small constant is normal — deleted workouts can never be fetched."""
+    banked = conn.execute("SELECT COUNT(*) FROM workouts").fetchone()[0]
+    referenced = conn.execute(
+        f"""SELECT COUNT(DISTINCT json_extract(a.summary_json, '$.workoutId'))
+            FROM activities a
+            WHERE {_RUN_TYPE_SQL}
+              AND json_extract(a.summary_json, '$.workoutId') IS NOT NULL"""
+    ).fetchone()[0]
+    return {"banked": banked, "referenced": referenced,
+            "unbanked": len(workouts_missing(conn))}
 
 
 def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple]:

@@ -1299,9 +1299,10 @@ def test_schema_v11_tables_exist():
     names = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert "run_intervals" in names
+    assert "workouts" in names, "schema v12 (add-workout-prior)"
     cols = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
     assert "laps_json" in cols
-    assert arch.get_meta(conn, "schema_version") == "11"
+    assert arch.get_meta(conn, "schema_version") == "12"
     conn.close()
 
 
@@ -1337,7 +1338,7 @@ def test_v11_migration_recovers_from_interrupted_alter():
     assert "laps_fetched_at" in cols, \
         "each v11 column must be guarded independently (like v5/v7), or a " \
         "mid-migration crash permanently loses laps_fetched_at"
-    assert arch.get_meta(reopened, "schema_version") == "11"
+    assert arch.get_meta(reopened, "schema_version") == "12"
     reopened.close()
 
 
@@ -1514,3 +1515,174 @@ if __name__ == "__main__":
             _fn()
             print("ok", _name)
     print("ALL PASS")
+
+
+# ── add-workout-prior: the workouts table ─────────────────────────────────────
+def test_write_workout_banks_once_and_refuses_empty():
+    """Write-once like write_laps/write_detail, and the M1 lesson made a rule:
+    an empty or failed payload is NEVER cached — caching the miss would make
+    it permanent and starve the backfill."""
+    conn = arch.open_archive(_tmp())
+    payload = {"workoutId": 42, "workoutName": "5x1km",
+               "workoutSegments": [{"workoutSteps": []}]}
+    assert arch.write_workout(conn, 42, payload, "first-sight") is True
+    assert arch.workout_payload(conn, 42) == payload
+    # write-once: a re-fetch never overwrites what was banked
+    edited = dict(payload, workoutName="EDITED")
+    assert arch.write_workout(conn, 42, edited, "backfill") is False
+    assert arch.workout_payload(conn, 42)["workoutName"] == "5x1km"
+    # empty payloads are refused, not cached
+    assert arch.write_workout(conn, 43, None, "first-sight") is False
+    assert arch.write_workout(conn, 43, {}, "first-sight") is False
+    assert arch.workout_payload(conn, 43) is None
+    conn.close()
+
+
+def test_workout_provenance_is_recorded():
+    conn = arch.open_archive(_tmp())
+    arch.write_workout(conn, 1, {"workoutId": 1}, "first-sight")
+    arch.write_workout(conn, 2, {"workoutId": 2}, "backfill")
+    rows = dict(conn.execute("SELECT workout_id, provenance FROM workouts"))
+    assert rows == {1: "first-sight", 2: "backfill"}
+    conn.close()
+
+
+def test_activities_missing_workouts_lists_unbanked_references():
+    """The acquisition work-list: running activities whose summary names a
+    workoutId that is not yet banked. Deduplicated by workout — one workout
+    backs many runs — and empty once everything referenced is banked."""
+    conn = arch.open_archive(_tmp())
+    a1 = _act(101)
+    a1["workoutId"] = 900
+    a2 = _act(102, start="2026-07-02 08:00:00")
+    a2["workoutId"] = 900               # same workout, second run
+    a3 = _act(103, start="2026-07-03 08:00:00")
+    a3["workoutId"] = 901
+    a4 = _act(104, start="2026-07-04 08:00:00")   # no workout at all
+    arch.upsert_activities(conn, [a1, a2, a3, a4])
+    assert sorted(arch.workouts_missing(conn)) == [900, 901]
+    arch.write_workout(conn, 900, {"workoutId": 900}, "first-sight")
+    assert arch.workouts_missing(conn) == [901]
+    conn.close()
+
+
+def test_workouts_coverage_reports_banked_vs_referenced():
+    conn = arch.open_archive(_tmp())
+    a1 = _act(111)
+    a1["workoutId"] = 700
+    a2 = _act(112, start="2026-07-02 08:00:00")
+    a2["workoutId"] = 701
+    arch.upsert_activities(conn, [a1, a2])
+    arch.write_workout(conn, 700, {"workoutId": 700}, "backfill")
+    cov = arch.workouts_coverage(conn)
+    assert cov == {"banked": 1, "referenced": 2, "unbanked": 1}
+    conn.close()
+
+
+# ── add-workout-prior: the acquisition pass ───────────────────────────────────
+def _seed_workout_refs(d: Path):
+    conn = arch.open_archive(d)
+    a1 = _act(201)
+    a1["workoutId"] = 900
+    a2 = _act(202, start="2026-07-02 08:00:00")
+    a2["workoutId"] = 900                    # second run of the same workout
+    a3 = _act(203, start="2026-07-03 08:00:00")
+    a3["workoutId"] = 901
+    a4 = _act(204, start="2026-07-04 08:00:00")   # no workout
+    arch.upsert_activities(conn, [a1, a2, a3, a4])
+    conn.close()
+
+
+def test_workouts_pass_banks_each_referenced_workout_once():
+    """Cache-on-first-sight (D5): two runs of one workout cost one request;
+    a second pass costs zero. And the pass is PHASED — no write-capable
+    archive handle is held across the network call, probed by taking a write
+    lock DURING the fake fetch."""
+    import sqlite3 as _sq
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        _seed_workout_refs(d)
+        calls = []
+
+        class Client:
+            def get_workout_by_id(self, wid):
+                calls.append(wid)
+                # the probe: if the pass held a write handle open across this
+                # call, BEGIN IMMEDIATE on a second connection would fail
+                probe = _sq.connect(arch.archive_path(d))
+                probe.execute("BEGIN IMMEDIATE")
+                probe.rollback()
+                probe.close()
+                return {"workoutId": wid, "workoutName": f"w{wid}"}
+
+        assert sg._workouts_pass(Client(), throttle_s=0) == 2
+        assert sorted(calls) == [900, 901]
+        calls.clear()
+        assert sg._workouts_pass(Client(), throttle_s=0) == 0, "idempotent"
+        assert calls == [], "a banked workout is never re-fetched"
+        conn = arch.open_archive(d)
+        assert arch.workout_payload(conn, 900)["workoutName"] == "w900"
+        assert {r[0] for r in conn.execute("SELECT provenance FROM workouts")} \
+            == {"first-sight"}
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_workouts_pass_survives_a_deleted_workout_and_retries_it():
+    """A deleted workout (Garmin 404s) warns, skips, and is NOT cached — the
+    M1 lesson — so a later pass retries it while the sync completes."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        _seed_workout_refs(d)
+
+        class Client:
+            def get_workout_by_id(self, wid):
+                if wid == 901:
+                    raise RuntimeError("404 Client Error: deleted")
+                return {"workoutId": wid}
+
+        assert sg._workouts_pass(Client(), throttle_s=0) == 1
+        conn = arch.open_archive(d)
+        assert arch.workout_payload(conn, 900) is not None
+        assert arch.workout_payload(conn, 901) is None
+        assert arch.workouts_missing(conn) == [901], "the miss stays fetchable"
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_workouts_backfill_provenance_and_limit():
+    """--backfill-workouts banks under 'backfill' provenance; the nightly pass
+    is bounded by WORKOUTS_PER_SYNC so a large backlog cannot make one sync
+    impolite."""
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        conn = arch.open_archive(d)
+        rows = []
+        for i in range(15):
+            a = _act(300 + i, start=f"2026-06-{i + 1:02d} 08:00:00")
+            a["workoutId"] = 1000 + i
+            rows.append(a)
+        arch.upsert_activities(conn, rows)
+        conn.close()
+
+        class Client:
+            def get_workout_by_id(self, wid):
+                return {"workoutId": wid}
+
+        assert sg._workouts_pass(Client(), limit=sg.WORKOUTS_PER_SYNC,
+                                 throttle_s=0) == sg.WORKOUTS_PER_SYNC
+        assert sg._workouts_pass(Client(), provenance="backfill",
+                                 throttle_s=0) == 15 - sg.WORKOUTS_PER_SYNC
+        conn = arch.open_archive(d)
+        prov = {r[0] for r in conn.execute("SELECT DISTINCT provenance FROM workouts")}
+        assert prov == {"first-sight", "backfill"}
+        assert arch.workouts_coverage(conn) == {"banked": 15, "referenced": 15,
+                                                "unbanked": 0}
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig

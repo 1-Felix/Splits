@@ -1442,6 +1442,77 @@ def _streams_pass(conn) -> int:
     return done
 
 
+WORKOUTS_PER_SYNC = 10       # bounded like LAPS_PER_SYNC; the backfill is unbounded
+
+
+def _workouts_pass(client, limit: int | None = None,
+                   provenance: str = "first-sight",
+                   throttle_s: float = 0.2) -> int:
+    """Bank the workout DEFINITIONS archived runs were started from
+    (add-workout-prior D5): cache-on-first-sight, write-once, never re-fetch.
+
+    PHASED, unlike _laps_pass: the work-list is read and the connection
+    closed, every fetch happens with NO archive handle open, and the writes
+    open a fresh connection afterwards — a fetch hanging mid-network can then
+    never leave a write-capable handle behind (the orphaned-handle hazard the
+    lap backfill hit in production). A deleted workout warns and skips
+    WITHOUT being cached, so it stays on the work-list — the M1 lesson."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        todo = activity_archive.workouts_missing(conn)
+    finally:
+        conn.close()
+    if limit is not None:
+        todo = todo[:limit]
+    fetched = {}
+    for wid in todo:
+        payload = safe(lambda: client.get_workout_by_id(wid), None,
+                       f"get_workout_by_id {wid}")
+        if payload:
+            fetched[wid] = payload
+        if throttle_s:
+            time.sleep(throttle_s)
+    if not fetched:
+        return 0
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        return sum(1 for wid, p in fetched.items()
+                   if activity_archive.write_workout(conn, wid, p, provenance))
+    finally:
+        conn.close()
+
+
+def workouts_step(client) -> None:
+    """The nightly acquisition (add-workout-prior D5): steady state banks the
+    odd new workout; the historical catch-up is --backfill-workouts, out of
+    band. Only ever inside safe()."""
+    n = _workouts_pass(client, limit=WORKOUTS_PER_SYNC)
+    if n:
+        log(f"✓ workouts: {n} definition(s) banked")
+
+
+def run_workouts_backfill(client) -> None:
+    """Unbounded workout sweep — the one-time catch-up for an archive that
+    predates schema v12. Idempotent and resumable: banked ids are never
+    re-fetched, so an interrupted run keeps its completed work. Throttled to
+    stay polite (~89 requests on this archive)."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        todo = len(activity_archive.workouts_missing(conn))
+    finally:
+        conn.close()
+    log(f"… workouts backfill: {todo} referenced definition(s) unbanked")
+    done = _workouts_pass(client, provenance="backfill")
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        cov = activity_archive.workouts_coverage(conn)
+    finally:
+        conn.close()
+    log(f"✓ workouts backfill: {done} banked this pass — "
+        f"{cov['banked']}/{cov['referenced']} referenced covered, "
+        f"{cov['unbanked']} unfetchable (deleted)")
+
+
 def _laps_pass(client, conn, limit: int | None = None) -> int:
     """Fetch lap DTOs for archived runs whose summary claims more than one lap
     and that we have never fetched (add-interval-lens D1). Bounded per nightly
@@ -1660,6 +1731,13 @@ def verify_archive() -> int:
             f"scored at v{interval_lens.INTERVAL_VERSION}, {icov['lapped']} with laps; "
             f"shapes {icov['shapes']}, work floor {floor_desc}")
 
+        # Workouts (add-workout-prior D5): a small constant `unbanked` is the
+        # normal state — deleted workouts can never be fetched.
+        wcov = activity_archive.workouts_coverage(conn)
+        log(f"  workouts   : {wcov['banked']}/{wcov['referenced']} referenced "
+            f"definitions banked"
+            + (f", {wcov['unbanked']} unbanked" if wcov["unbanked"] else ""))
+
         # Courses are opt-in (the plan's race names one or it does not), so an
         # empty table is the normal state and never a failure.
         krcov = activity_archive.course_coverage(conn, course_lens.COURSE_LENS_VERSION)
@@ -1770,6 +1848,10 @@ def main() -> None:
     p.add_argument("--backfill-laps", action="store_true",
                    help="fetch lap DTOs for every multi-lap archived run "
                         "(one-time catch-up for a pre-v11 archive)")
+    p.add_argument("--backfill-workouts", action="store_true",
+                   help="fetch the workout definition behind every archived "
+                        "run that references one (one-time catch-up for a "
+                        "pre-v12 archive; throttled, resumable)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1791,6 +1873,9 @@ def main() -> None:
     if args.backfill_laps:
         run_laps_backfill(client)
         return
+    if args.backfill_workouts:
+        run_workouts_backfill(client)
+        return
 
     # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens
     # D8 + add-interval-lens D6): archive, intervals, metrics, compliance
@@ -1804,6 +1889,9 @@ def main() -> None:
     # every existing key even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
+    # workouts BEFORE intervals: a run archived tonight should be scored with
+    # its prescription in hand on the same sync (add-workout-prior D5).
+    safe(lambda: workouts_step(client), None, "workouts step")
     safe(intervals_step, None, "intervals step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")

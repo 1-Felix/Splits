@@ -235,6 +235,94 @@ def test_z3_is_deliberately_not_vetoed():
     assert prior["vetoed"] == set()
 
 
+# ── set membership by target VALUE, not type (design D3) ─────────────────────
+def test_the_recovery_float_is_not_a_third_rep():
+    """`2025-12-05`: three work-typed steps all on `heart.rate.zone`, being
+    Z4 / Z2 / Z4 — 2×2 km with a 3-minute float, which the lens reads today
+    as `"2-0.32-2 km", found 3`. The type-only rule the design first drafted
+    calls this a 3-rep set; the value rule does not."""
+    doc = build("2025-12-05", workout("2025-12-05"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 2
+    assert doc["set"]["prescribed"] == 2
+    assert doc["label"] != "2-0.32-2 km"
+    roles = [s["role"] for s in doc["segments"]]
+    assert roles.count("work") == 2
+    # the float sits BETWEEN the reps and reads as their recovery
+    w1, w2 = [i for i, r in enumerate(roles) if r == "work"]
+    assert "recovery" in roles[w1 + 1:w2]
+
+
+def test_the_genuine_pyramid_survives_the_value_rule():
+    """`2026-06-26`: three differently-sized efforts whose pace bands are
+    materially the same — all three stay one varied set."""
+    doc = build("2026-06-26", workout("2026-06-26"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 3
+    assert doc["set"]["prescribed"] == 3
+    assert doc["set"]["varied"] is True
+    assert doc["label"] == "1-2-1 km"
+
+
+def _synth_workout(steps):
+    """A minimal Connect-shaped payload for value-grouping edge cases the
+    real 85 workouts do not contain."""
+    return {"workoutId": 1, "updatedDate": "2026-01-01T00:00:00.0",
+            "workoutSegments": [{"workoutSteps": steps}]}
+
+
+def _pace_step(order, dist, lo_mps, hi_mps, key="interval"):
+    return {"type": "ExecutableStepDTO", "stepOrder": order,
+            "stepType": {"stepTypeKey": key},
+            "endCondition": {"conditionTypeKey": "distance"},
+            "endConditionValue": float(dist),
+            "targetType": {"workoutTargetTypeKey": "pace.zone"},
+            "targetValueOne": hi_mps, "targetValueTwo": lo_mps}
+
+
+def test_materially_different_pace_bands_do_not_group():
+    """Spec: steps sharing a TYPE but prescribing materially different
+    intensities are not one set. Two fast 1 km reps at ~4:30/km plus a slow
+    'interval'-typed kilometre at ~6:30/km: the type-only rule the design
+    first drafted calls all three one set of 3; the value rule keeps the set
+    at the two that share a band. No real workout in the 85 exercises this —
+    the fixture is synthetic by necessity."""
+    w = _synth_workout([
+        _pace_step(1, 1000, 3.6, 3.8),
+        _pace_step(2, 1000, 2.5, 2.6),
+        _pace_step(3, 1000, 3.6, 3.8),
+    ])
+    prior = il.derive_prior(w, None)
+    assert prior["count"] == 2, "the slow kilometre is not a third rep"
+    assert prior["setSteps"] == {0, 2}
+
+
+# ── ADMIT: a prescribed rep is a rep regardless of size (handoff N4) ──────────
+def test_prescribed_twenty_second_strides_are_found_not_filtered():
+    """`2026-07-29` (`5km easy + 4x20s strides`): all four strides sit below
+    WORK_MIN_S, the floor dropped every one, and the easy 5 km was promoted
+    to `"32 min block"` — asserted at 1.00 until fix-lap-confidence hedged
+    it. The prescription admits them: the size floors exist to reject
+    fragments the detector invented, not reps the athlete was told to run."""
+    doc = build("2026-07-29", workout("2026-07-29"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 4
+    assert doc["set"]["prescribed"] == 4
+    assert doc["label"] != "32 min block"
+    # the easy 5 km is the warm-up it always was
+    assert doc["segments"][0]["role"] == "warmup"
+    assert doc["segments"][0]["distM"] == 5000
+
+
+def test_prescribed_thirty_second_reps_are_found_not_filtered():
+    """`2025-12-26` fails identically at 4×30 s → `"24 min block"`."""
+    doc = build("2025-12-26", workout("2025-12-26"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 4
+    assert doc["set"]["prescribed"] == 4
+    assert doc["label"] != "24 min block"
+
+
 def test_two_unprescribed_work_laps_are_not_a_set():
     """The other half of the unified floor (P2.7b retired): WITHOUT a
     prescription, two work laps meet the same 3-rep inference minimum the

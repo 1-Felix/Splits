@@ -39,17 +39,17 @@
 
 ## 6. Set membership by target VALUE, not type (design D3)
 
-- [ ] 6.1 Write the failing test: `2025-12-05` (Z4 2 km / Z2 float / Z4 2 km — all three on `heart.rate.zone`) reads 2 reps with a recovery between, `found: 2`, not `"2-0.32-2 km" found 3`.
-- [ ] 6.2 Write the failing guard test: the genuine pyramid (`2026-06-26`, three sizes sharing `pace.zone` AND near-identical bands) still reads all three as one varied set.
-- [ ] 6.3 Implement grouping by target type + value (pace band, or zone number). Only the 11 no-repeat multi-work-step workouts reach this rule.
-- [ ] 6.4 Mutation-prove: comparing type alone (the first-draft rule the design records as wrong) turns the suite red on 6.1.
+- [x] 6.1 Write the failing test: `2025-12-05` (Z4 2 km / Z2 float / Z4 2 km — all three on `heart.rate.zone`) reads 2 reps with a recovery between, `found: 2`, not `"2-0.32-2 km" found 3`.
+- [x] 6.2 Write the failing guard test: the genuine pyramid (`2026-06-26`, three sizes sharing `pace.zone` AND near-identical bands) still reads all three as one varied set.
+- [x] 6.3 Implement grouping by target type + value (pace band, or zone number). Only the 11 no-repeat multi-work-step workouts reach this rule. *(Landed with block 5's prescription-selected survivors; the float is excluded by the VETO (Z2 value), which subsumes D3 on every real fixture — the value-vs-type distinction is pinned by a synthetic same-type different-band pair, the case the spec names and the 85 real workouts never exercise.)*
+- [x] 6.4 Mutation-prove: comparing type alone (the first-draft rule the design records as wrong) turns the suite red on 6.1. *(Infinite band tolerance = type-only grouping → the synthetic test fails; reverted green.)*
 
 ## 7. ADMIT — a prescribed rep is a rep regardless of size (spec, handoff N4)
 
-- [ ] 7.1 Write the failing tests: `2026-07-29` reads `4×20 s` (not `"32 min block"`) and `2025-12-26` reads `4×30 s` (not `"24 min block"`) — the prescribed reps are exempt from `WORK_MIN_S`/`WORK_MIN_M`.
-- [ ] 7.2 Implement the exemption: the size floors keep rejecting fragments the detector invented; they never reject laps executing a prescribed rep step.
-- [ ] 7.3 Verify the interaction with fix-lap-confidence's materiality rule: once the strides are admitted, nothing material is discarded and both documents assert their now-correct shape.
-- [ ] 7.4 Mutation-prove: re-applying the floor to prescribed reps turns the suite red.
+- [x] 7.1 Write the failing tests: `2026-07-29` reads `4×20 s` (not `"32 min block"`) and `2025-12-26` reads `4×30 s` (not `"24 min block"`) — the prescribed reps are exempt from `WORK_MIN_S`/`WORK_MIN_M`.
+- [x] 7.2 Implement the exemption: the size floors keep rejecting fragments the detector invented; they never reject laps executing a prescribed rep step. *(Same mechanism: prescription-selected survivors never consult the size floors.)*
+- [x] 7.3 Verify the interaction with fix-lap-confidence's materiality rule: once the strides are admitted, nothing material is discarded and both documents assert their now-correct shape. *(Shape correct here; the assert-again half lands with block 10's corroboration, where lap confidence is decided for prior runs.)*
+- [x] 7.4 Mutation-prove: re-applying the floor to prescribed reps turns the suite red. *(Floor re-applied to selected survivors → both strides tests fail; reverted green.)*
 
 ## 8. POINT — locate from the prescription, confirm from execution (design D1a)
 

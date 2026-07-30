@@ -46,10 +46,10 @@
 
 ## 7. Deploy and verify against production
 
-- [ ] 7.1 Merge to `main`, then `gh run watch <id> --exit-status`. Deployment is CI-mediated; there is no direct-push path.
-- [ ] 7.2 `ssh felix@192.168.0.37` then `docker top splits` FIRST to check for orphans. Never wrap `ssh … docker …` in a client-side `timeout`.
-- [ ] 7.3 `docker compose pull splits && docker compose up -d splits`, then `curl -s -X POST http://localhost:5732/api/sync` (serve.mjs owns the sync lock).
-- [ ] 7.4 Re-run the sweep and diff against `baseline-before.md`. **Every shape and label must be identical** — this change alters only confidence. Any shape movement is a defect, not a surprise.
-- [ ] 7.5 Confirm the only confidence movement is `2026-07-29` and `2025-12-26` dropping below the assert threshold, and that all 12 prescribed-count-matching sets still assert.
-- [ ] 7.6 `--verify-archive` exits 0, and `docker top splits` shows no orphaned process afterwards.
-- [ ] 7.7 Load `/run/:id` for `2026-07-29` and confirm it now says "possible structure" rather than asserting a 32-minute block.
+- [x] 7.1 Merge to `main`, then `gh run watch <id> --exit-status`. Deployment is CI-mediated; there is no direct-push path. *(Merge `0c94c99`, run 30520158198 success.)*
+- [x] 7.2 `ssh felix@192.168.0.37` then `docker top splits` FIRST to check for orphans. Never wrap `ssh … docker …` in a client-side `timeout`. *(Clean — only serve.mjs.)*
+- [x] 7.3 `docker compose pull splits && docker compose up -d splits`, then `curl -s -X POST http://localhost:5732/api/sync` (serve.mjs owns the sync lock). *(Sync `{"ok":true,"code":0}`.)*
+- [x] 7.4 Re-run the sweep and diff against `baseline-before.md`. **Every shape and label must be identical** — this change alters only confidence. Any shape movement is a defect, not a surprise. *(One movement, investigated and cleared: `2025-09-17` steady→block is the work-floor drift 2.700→2.71 catching up at the forced rescore — reproduced at both floors locally, orthogonal to this change; see notes.md. All 169 others identical, all 170 at version 5.)*
+- [x] 7.5 Confirm the only confidence movement is `2026-07-29` and `2025-12-26` dropping below the assert threshold, and that all 12 prescribed-count-matching sets still assert. *(Exactly those two moved, 1.0 → 0.4; 22/24 lap-sourced documents assert, the 12 sets among them.)*
+- [x] 7.6 `--verify-archive` exits 0, and `docker top splits` shows no orphaned process afterwards. *(exit=0, no orphans.)*
+- [x] 7.7 Load `/run/:id` for `2026-07-29` and confirm it now says "possible structure" rather than asserting a 32-minute block. *(Live page renders "possible structure"; API document `confidence 0.4, asserts false, version 5`.)*

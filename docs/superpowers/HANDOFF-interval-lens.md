@@ -3,6 +3,22 @@
 This file is the list of what is **not** done. Everything here was found, understood
 and deliberately deferred; none of it is a surprise waiting to be discovered.
 
+> **2026-07-30 — BOTH OpenSpec changes below SHIPPED and NUC-verified the
+> same day.** `fix-lap-confidence` (INTERVAL_VERSION 5, closes **M2**) and
+> `add-workout-prior` (INTERVAL_VERSION 6, closes/dissolves **N3, N4, N5,
+> P2.7b, P3.1**, retires **P2.3**'s windowed baseline, answers **N2**'s
+> circularity with the 12/12 independent confirmation). The new production
+> baseline: 170 docs, `steady 130 / reps 19 / block 19 / progression 2`,
+> 85/89 workout definitions banked (4 deleted), floor 2.710. The movement
+> audit is `openspec/changes/add-workout-prior/notes.md` — 22 documents, all
+> intended, including the half-marathon race correcting to `139 min block`.
+> Two of this file's premises were falsified during implementation and are
+> corrected in the change's design: **`updatedDate` IS populated** (the
+> exploration read the wrong key — staleness is per-run detectable, and
+> `2025-10-17` really was edited after the fact), and POINT's hedge follows
+> **evidence of interruption**, not the 304 s gap (which within-window pace
+> cannot see). Next: P3.2, the `plan-data.js` parser — the coach's intent.
+
 > **2026-07-29 — read "The 2026-07-29 exploration" (below "What to do next")
 > before trusting the priorities in this file.** A read-only exploration against
 > production measured the archive against the Garmin *workout* definitions the

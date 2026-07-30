@@ -69,11 +69,11 @@
 
 ## 10. Confidence corroboration and provenance (design D5, D8)
 
-- [ ] 10.1 Write the failing tests, extending fix-lap-confidence's levels: a prescription that corroborates (`found == prescribed`) asserts; a prescription that disagrees hedges; a POINT block merged across a gap hedges (8.5).
-- [ ] 10.2 Implement, on top of `_lap_confidence`/`_verdict` — the assert threshold comparison stays in exactly one place.
-- [ ] 10.3 Write the failing tests: the document records where its prescription came from — `first-sight` with full authority, `backfill` marked best-effort (silent edits undetectable, `updateDate` is None on every workout), and explicit absence when no workout exists.
-- [ ] 10.4 Implement the provenance marker in the document; `compact()` carries it to the cockpit.
-- [ ] 10.5 Mutation-prove: inverting corroboration (disagreement asserts) turns the suite red.
+- [x] 10.1 Write the failing tests, extending fix-lap-confidence's levels: a prescription that corroborates (`found == prescribed`) asserts; a prescription that disagrees hedges; a POINT block merged across a gap hedges (8.5).
+- [x] 10.2 Implement, on top of `_lap_confidence`/`_verdict` — the assert threshold comparison stays in exactly one place. *(Lap path: fresh prescription agreeing → 1.0, disagreeing → 0.4; stream path: same rule via `stats.found`; POINT confirmed → 0.9, interrupted → 0.4. The one `CONFIDENCE_ASSERT_MIN` comparison in `_verdict` is untouched.)*
+- [x] 10.3 Write the failing tests: the document records where its prescription came from — `first-sight` with full authority, `backfill` marked best-effort (silent edits undetectable, `updateDate` is None on every workout), and explicit absence when no workout exists. *(`guidedBy` — null on every document since the lens shipped, reserved for this — carries `{workoutId, stale}`; a run with no workout keeps the explicit null. Acquisition provenance (first-sight/backfill) stays in the workouts table for audit; the corrected spec's per-run trust signal is `stale`.)*
+- [x] 10.4 Implement the provenance marker in the document; `compact()` carries it to the cockpit. *(`compact()` carries every non-segments key, so the cockpit sees it.)*
+- [x] 10.5 Mutation-prove: inverting corroboration (disagreement asserts) turns the suite red. *(Inverted → 4 tests fail; reverted green.)*
 
 ## 11. Version bump and local verification
 

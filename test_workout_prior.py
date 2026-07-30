@@ -473,6 +473,63 @@ def test_an_abandoned_workout_reports_found_zero(monkeypatch):
     assert doc["set"]["prescribed"] == 5
 
 
+# ── corroboration and provenance (design D5 corrected, D8) ───────────────────
+def test_a_prescription_corroborated_set_asserts():
+    """D8: found == prescribed is the strongest evidence the lap path can
+    have. The strides run — hedged by fix-lap-confidence as an eliminated
+    shape — asserts again now that it reads its prescribed 4×20 s (task 7.3's
+    second half)."""
+    doc = build("2026-07-29", workout("2026-07-29"))
+    assert doc["set"]["found"] == 4 and doc["set"]["prescribed"] == 4
+    assert doc["asserts"] is True
+    assert build("2026-07-10", workout("2026-07-10"))["asserts"] is True
+
+
+def test_a_corroborated_block_asserts():
+    """A prescribed single block found as a block agrees with its
+    prescription — 2026-06-05 and 2026-01-16."""
+    assert build("2026-06-05", workout("2026-06-05"))["asserts"] is True
+    assert build("2026-01-16", workout("2026-01-16"))["asserts"] is True
+
+
+def test_a_disagreement_hedges():
+    """D8: prescription and execution disagree — the bailed 2-of-5 reports
+    honestly AND hedges."""
+    real = laps_of("2026-07-10")
+    bailed = real[:4] + [dict(real[11])]
+    doc = build("2026-07-10", workout("2026-07-10"), laps=bailed)
+    assert doc["set"]["found"] == 2 and doc["set"]["prescribed"] == 5
+    assert doc["asserts"] is False
+
+
+def test_the_document_records_its_prescription_provenance():
+    """Corrected spec: `guidedBy` — null on every document since the lens
+    shipped, reserved for exactly this — carries the workout id and the
+    per-run staleness verdict; a run with no workout keeps the explicit
+    null."""
+    doc = build("2026-07-10", workout("2026-07-10"))
+    assert doc["guidedBy"] == {"workoutId": 1626627551, "stale": False}
+    assert build("2026-07-10")["guidedBy"] is None
+
+
+def test_a_stale_prior_never_corroborates():
+    """Corrected D5: a payload updated AFTER the run's start is marked stale
+    and cannot be corroborating evidence — the bailed 2-of-5, which a fresh
+    prior hedges by disagreement, falls back to inference confidence under a
+    stale one instead of reading the disagreement as meaningful."""
+    stale = dict(workout("2026-07-10"))
+    stale["updatedDate"] = "2026-07-11T09:00:00.0"    # after the run
+    doc = build("2026-07-10", stale)
+    assert doc["guidedBy"]["stale"] is True
+    real = laps_of("2026-07-10")
+    bailed = real[:4] + [dict(real[11])]
+    fresh_bailed = build("2026-07-10", workout("2026-07-10"), laps=bailed)
+    stale_bailed = build("2026-07-10", stale, laps=bailed)
+    assert fresh_bailed["asserts"] is False, "fresh disagreement hedges"
+    assert stale_bailed["confidence"] != fresh_bailed["confidence"], \
+        "a stale prescription's disagreement is not evidence"
+
+
 # ── POINT against the six real runs (local archive streams; skips without) ───
 import sqlite3
 

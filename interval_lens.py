@@ -1220,7 +1220,14 @@ def build_document(streams: dict | None, summary: dict | None = None,
     prior = derive_prior(workout, laps, summary.get("startTimeLocal"))
     expect = prior["count"] if prior else None
 
-    base = {"version": INTERVAL_VERSION, "guidedBy": None}
+    # `guidedBy` has been null on every document since the lens shipped,
+    # reserved for exactly this: which prescription read this run, and
+    # whether it can be trusted FOR THIS RUN (corrected D5 — a payload
+    # updated after the run's start provably postdates what was executed).
+    # A run with no usable workout keeps the explicit null.
+    base = {"version": INTERVAL_VERSION,
+            "guidedBy": {"workoutId": (workout or {}).get("workoutId"),
+                         "stale": prior["stale"]} if prior else None}
 
     if laps and laps_are_structured(summary, laps):
         raw_segments = segments_from_laps(laps, gap_grid)
@@ -1239,10 +1246,6 @@ def build_document(streams: dict | None, summary: dict | None = None,
             segments, discards = _lap_rep_segments(raw_segments, laps, selected)
         else:
             segments, discards = _lap_rep_segments(raw_segments, laps)
-        # confidence reads the RAW segments — _lap_rep_segments re-roles the
-        # demoted laps, and the materiality re-run has to see the same
-        # work-role population the original selection saw
-        _level, confidence = _lap_confidence(raw_segments, laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -1276,6 +1279,20 @@ def build_document(streams: dict | None, summary: dict | None = None,
             # fatigue, not the set. Uniform by construction: the reps all
             # executed one time-prescribed step.
             nominal, varied = None, False
+        # Confidence (D8, on the base fix-lap-confidence laid): a FRESH
+        # prescription is the strongest evidence available — execution
+        # agreeing with it asserts, disagreeing hedges. A stale prescription
+        # (corrected D5) is never evidence either way, and a run with no
+        # usable prior keeps the inference levels.
+        if prior_joins and not prior["stale"]:
+            agreed = ((shape == "reps" and len(work) == expect)
+                      or (shape == "block" and prior["count"] == 1))
+            confidence = 1.0 if agreed else _PRIOR_HEDGED
+        else:
+            # reads the RAW segments — _lap_rep_segments re-roles the demoted
+            # laps, and the materiality re-run has to see the same work-role
+            # population the original selection saw
+            _level, confidence = _lap_confidence(raw_segments, laps)
         if shape == "reps":
             label = (f"{len(work)}×{prior['repValue']:g} s" if by_time
                      else _reps_label([s["distM"] for s in work]))
@@ -1379,12 +1396,16 @@ def build_document(streams: dict | None, summary: dict | None = None,
                                         raw_grid, gap_grid)
     if point:
         # D8: a POINT block is prescription-corroborated — it asserts, unless
-        # it was merged across a standstill, in which case the shape is the
-        # best reading available but not a certainty.
+        # its execution was interrupted, in which case the shape is the best
+        # reading available but not a certainty.
         confidence = _PRIOR_HEDGED if gap_hedged else _PRIOR_CONFIRMED
     else:
         confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
                                  stats["paceCvPct"] if stats else None)
+        if prior and not prior["stale"] and expect and expect >= 2 and stats:
+            # D8 on the stream path too: one prescription, one rule.
+            confidence = (_PRIOR_CONFIRMED if stats.get("found") == expect
+                          else _PRIOR_HEDGED)
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,

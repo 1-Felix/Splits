@@ -30,9 +30,7 @@
 | steady tolerance unbounded | `test_quality_verdict_steady_target_tolerance` | RED (killed) |
 | drop the plan-card quality node | run-page quality case | RED (killed) |
 | drop the briefing verdict append | `test_render_speaks_the_rep_verdict_beside_the_status` | RED (killed) |
-
 | drop the `_is_run_slot` guard in the annotator | `test_a_cross_days_bike_intervals_are_not_a_rep_verdict_question` | RED (killed) |
-
 | drop the unplanned-row guard | `test_an_unplanned_same_day_run_gets_no_verdict` | RED (killed) |
 
 13 mutations, 13 killed.
@@ -66,8 +64,8 @@ conversation the coach loop exists for), and `2026-07-29`'s strides read
 
 ## Suite at merge
 
-Python `591 passed / 2 skipped` (569 before this change); all four JS suites
-ALL PASS; style-audit `/run` clean at 390.
+Python `593 passed / 2 skipped` at the final commit (569 before this change);
+all four JS suites ALL PASS; style-audit `/run` clean at 390.
 
 ## Pre-deploy status capture (for 4.3's byte-identical check)
 

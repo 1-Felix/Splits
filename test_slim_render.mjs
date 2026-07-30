@@ -206,10 +206,17 @@ try {
   step = "slim cockpit";
   {
     // settled = heatmap up AND the status fetch landed (the Garmin pill is
-    // gone) — the pill/nav assertions below are deterministic after that
+    // gone) AND the REAL dataset is on screen — "First Half" is this
+    // fixture's race name, which the built-in placeholder ("Lakeside Half")
+    // never renders. Without that last clause the gate can fire while the
+    // placeholder is still up (its heatmap also has >300 cells), and the
+    // readiness assertions below then read the placeholder's readiness card:
+    // a race the ingest-coach-loop build made likely by lengthening the boot
+    // rebuild the page load runs beside.
     const r = await render(BASE_PORT, "/", () =>
       document.querySelectorAll('rect[data-hb="heat"]').length > 300 &&
-      !document.body.innerText.includes("Garmin ·"));
+      !document.body.innerText.includes("Garmin ·") &&
+      document.body.innerText.includes("First Half"));
     assert.ok(!r.text.includes("Garmin"), "no Garmin sync pill on an ingest-fed instance");
     assert.ok(r.text.includes("Archive"),
       "the Archive nav tab is BACK — the build provisioned a real archive db");

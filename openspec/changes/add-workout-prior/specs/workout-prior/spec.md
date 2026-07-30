@@ -52,16 +52,25 @@ SHALL fall back to inference. A partial or best-guess mapping SHALL NOT be used.
 - **WHEN** every observed index maps to exactly one flattened step
 - **THEN** the prior is applied
 
-### Requirement: The document records where its prescription came from
-The system SHALL distinguish a workout cached at first sight from one recovered
-by backfill, and SHALL carry that distinction in the interval document. Because
-the workout service reports no update stamp for these workouts, a backfilled
-prescription SHALL be treated as best-effort and SHALL NOT be presented with the
-same authority as one banked when the run was new.
+### Requirement: The document records whether its prescription is trustworthy for THIS run
+*(Corrected 2026-07-30: the premise "the workout service reports no update
+stamp" was wrong — the payload's `updatedDate` is populated, so staleness is
+per-run detectable and the provenance-only rule is superseded.)*
 
-#### Scenario: A backfilled prescription is marked as such
-- **WHEN** a document is built from a workout recovered by the historical backfill
-- **THEN** the document records best-effort provenance
+The system SHALL record each banked workout's provenance (first sight vs
+backfill) for audit, and SHALL decide the prior's authority per activity: a
+prior whose payload was updated AFTER the activity's start time SHALL be
+marked stale in the document and SHALL NOT be treated as corroborating
+evidence. A workout unedited since before the run carries full authority
+regardless of how it was acquired.
+
+#### Scenario: An edited workout is stale for runs that predate the edit
+- **WHEN** a workout's `updatedDate` is after one activity's start and before another's
+- **THEN** the first activity's document marks its prior stale and the second's does not
+
+#### Scenario: An unedited backfilled workout carries full authority
+- **WHEN** a backfilled workout's `updatedDate` precedes the activity's start
+- **THEN** the document's prior is not marked stale
 
 #### Scenario: A document with no workout says so
 - **WHEN** no workout is available for the run

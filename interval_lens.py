@@ -590,6 +590,70 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     return segs
 
 
+def flatten_workout(payload: dict) -> list[dict]:
+    """A Connect workout definition's EXECUTABLE steps, flattened depth-first,
+    each carrying the `wktStepIndex` the FIT encoding gives it and the
+    enclosing repeat group's `numberOfIterations` (add-workout-prior D7).
+
+    The index rule is the whole subtlety: one index position is consumed
+    AFTER each repeat group's children, because in FIT the `repeat_steps`
+    instruction follows the steps it repeats. Verified to reproduce
+    2026-06-05, 2026-07-10 and 2026-07-29 exactly.
+
+    `zoneNumber` is load-bearing and easy to miss — a `heart.rate.zone`
+    target carries its intensity there, not in `targetValueOne/Two`; a first
+    measurement pass that read only the target values mistook four correct
+    HR-Z4 tempo blocks for "no target"."""
+    out: list[dict] = []
+    idx = 0
+
+    def walk(steps, iterations):
+        nonlocal idx
+        for s in steps or []:
+            if s.get("type") == "RepeatGroupDTO":
+                walk(s.get("workoutSteps"), s.get("numberOfIterations"))
+                idx += 1        # the repeat instruction follows its children
+            else:
+                out.append({
+                    "index": idx,
+                    "stepType": (s.get("stepType") or {}).get("stepTypeKey"),
+                    "endCondition": (s.get("endCondition") or {}).get("conditionTypeKey"),
+                    "endConditionValue": s.get("endConditionValue"),
+                    "targetType": (s.get("targetType") or {}).get("workoutTargetTypeKey"),
+                    "targetValueOne": s.get("targetValueOne"),
+                    "targetValueTwo": s.get("targetValueTwo"),
+                    "zoneNumber": s.get("zoneNumber"),
+                    "iterations": iterations,
+                })
+                idx += 1
+
+    for seg in payload.get("workoutSegments") or []:
+        walk(seg.get("workoutSteps"), None)
+    return out
+
+
+def workout_steps_for(laps: list[dict] | None, payload: dict) -> dict | None:
+    """`{wktStepIndex: flattened step}` for one activity, or None — the
+    all-or-nothing validation (add-workout-prior D7): every index observed on
+    the executed laps must land on a flattened step, and when any does not,
+    the prior for that activity is discarded ENTIRELY and the run falls back
+    to inference. A partial mapping is never used: a half-applied prior is
+    worse than none, because it looks authoritative.
+
+    Laps with no indices at all (manual laps) trivially validate — there is
+    nothing to contradict, and the prior can still contribute counts and
+    targets."""
+    flat = flatten_workout(payload)
+    if not flat:
+        return None
+    by_index = {s["index"]: s for s in flat}
+    observed = {l.get("wktStepIndex") for l in laps or []
+                if l.get("wktStepIndex") is not None}
+    if not observed <= set(by_index):
+        return None
+    return by_index
+
+
 def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
     """Which workout STEP indices identify reps — or None when this activity
     carries no usable step evidence and the caller must keep every work lap.

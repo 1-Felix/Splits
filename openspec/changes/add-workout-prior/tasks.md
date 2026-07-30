@@ -16,11 +16,11 @@
 
 ## 3. The step-tree reader (design D6, D7)
 
-- [ ] 3.1 Write the failing tests from the spec's scenarios: flatten `workoutSegments[].workoutSteps` depth-first descending into `RepeatGroupDTO` carrying `numberOfIterations` onto its children; a repeat group consumes one index position AFTER its children (warmup 0, repeated pair 1 and 2, cooldown 4); a no-repeat workout maps consecutive from zero.
-- [ ] 3.2 Implement the flattener + index mapper in `interval_lens.py` (the engine stays pure: raw payload in, prior out, no database). Note `zoneNumber` is load-bearing — `heart.rate.zone` targets carry intensity there, not in `targetValueOne/Two`.
-- [ ] 3.3 Write the failing test: an observed `wktStepIndex` with no corresponding flattened step discards the prior for that activity ENTIRELY — the document is built by inference alone and records the absence. A partial mapping is never used.
-- [ ] 3.4 Implement per-activity validation (all-or-nothing), and verify the mapping reproduces `2026-06-05`, `2026-07-10` and `2026-07-29` exactly against the real fixtures.
-- [ ] 3.5 Mutation-prove: dropping the consume-after-repeat rule (mapping `out` positions straight to `wktStepIndex`) turns the suite red on the repeat-group fixture.
+- [x] 3.1 Write the failing tests from the spec's scenarios: flatten `workoutSegments[].workoutSteps` depth-first descending into `RepeatGroupDTO` carrying `numberOfIterations` onto its children; a repeat group consumes one index position AFTER its children (warmup 0, repeated pair 1 and 2, cooldown 4); a no-repeat workout maps consecutive from zero.
+- [x] 3.2 Implement the flattener + index mapper in `interval_lens.py` (the engine stays pure: raw payload in, prior out, no database). Note `zoneNumber` is load-bearing — `heart.rate.zone` targets carry intensity there, not in `targetValueOne/Two`.
+- [x] 3.3 Write the failing test: an observed `wktStepIndex` with no corresponding flattened step discards the prior for that activity ENTIRELY — the document is built by inference alone and records the absence. A partial mapping is never used.
+- [x] 3.4 Implement per-activity validation (all-or-nothing), and verify the mapping reproduces `2026-06-05`, `2026-07-10` and `2026-07-29` exactly against the real fixtures. *(The whole 28-pair population maps except `2025-10-17` — the stale-edit case, refused STRUCTURALLY by the all-or-nothing rule: the payload edited 2025-11-14 has four executable steps where that run observed five. Same payload maps cleanly for `2025-11-14`.)*
+- [x] 3.5 Mutation-prove: dropping the consume-after-repeat rule (mapping `out` positions straight to `wktStepIndex`) turns the suite red on the repeat-group fixture. *(13 tests fail with the consume-after-repeat rule dropped; reverted green.)*
 
 ## 4. The prior sits upstream of the branch (design D4)
 

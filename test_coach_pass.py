@@ -163,3 +163,25 @@ def test_no_plan_still_assembles_the_plan_free_blocks():
         conn.close()
     assert "compliance" not in keys and "courseLens" not in keys
     assert "insights" in keys and "blockLens" in keys
+
+
+def test_derive_banks_a_snapshot_and_scores_the_weeks():
+    """D1: the archive-writing half of the pass — what compliance_step and
+    block_lens_step did, in one place."""
+    import coach_pass
+
+    tmp = Path(tempfile.mkdtemp())
+    conn = arch.open_archive(tmp)
+    arch.upsert_activities(conn, [
+        _act(401, "2026-07-06", 5.0), _act(402, "2026-07-07", 5.0),
+        _act(403, "2026-07-09", 5.0), _act(404, "2026-07-11", 5.0),
+    ])
+    stats = coach_pass.derive(conn, PLAN_RAW, PLAN, TODAY, MAX_HR)
+    snapshots = conn.execute("SELECT COUNT(*) FROM plan_snapshots").fetchone()[0]
+    scored = conn.execute("SELECT COUNT(*) FROM plan_compliance").fetchone()[0]
+    ratchet = arch.get_meta(conn, "expected_compliance_weeks")
+    conn.close()
+    assert snapshots == 1, "today's plan text banked once"
+    assert scored > 0 and stats["weeks_scored"] > 0
+    assert int(ratchet) == stats["weeks_scored"]
+    assert "blocks" in stats and "recomputed" in stats

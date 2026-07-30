@@ -33,6 +33,38 @@ def _safe(fn, label: str, log):
         return None
 
 
+def derive(conn, plan_raw, plan, today, max_hr, log=_noop) -> dict:
+    """Bank today's plan snapshot, rescore compliance, refresh the block-lens
+    rows. Writes the archive; assembles nothing.
+
+    Runs AFTER the archive is current (it matches against archived activities)
+    and BEFORE the telemetry is assembled (attach_blocks reads what this
+    wrote). The caller wraps it fail-soft: a plan problem is a warning, never a
+    failed build."""
+    stats = plan_compliance.run_compliance(conn, plan_raw, plan, today, max_hr)
+
+    # Ratchet the coverage expectation --verify-archive checks against: scored
+    # weeks only ever accumulate, so a shrink is a regression.
+    weeks_now = activity_archive.compliance_coverage(
+        conn, plan_compliance.COMPLIANCE_VERSION)["weeks_scored"]
+    prev = activity_archive.get_meta(conn, "expected_compliance_weeks")
+    if weeks_now > int(prev or 0):
+        activity_archive.set_meta(conn, "expected_compliance_weeks", weeks_now)
+
+    parts = [f"{stats['weeks_scored']} weeks scored"]
+    if stats["weeks_healed"]:
+        parts.append(f"{stats['weeks_healed']} stale weeks healed")
+    log("✓ compliance: " + ", ".join(parts))
+
+    lens = block_lens.derive_block_lens(conn, today)
+    if lens["blocks"]:
+        log(f"✓ block lens: {lens['blocks']} blocks, {lens['recomputed']} recomputed")
+    else:
+        log("✓ block lens: no plan snapshots — nothing to derive")
+
+    return {**stats, **lens}
+
+
 def attach_blocks(conn, plan, today, data, log=_noop) -> list[str]:
     """Assemble every archive-derived block into `data` and fill
     predictions.trend from the trajectory. Returns the keys attached.

@@ -93,11 +93,11 @@
       node test_coach_read.mjs` — all green.
 - [x] 7.3 Re-run every mutation in design D5's table one final time on the
       finished branch; record each red in notes.md.
-- [ ] 7.4 Merge to `main`, `gh run watch` the docker-publish build,
+- [x] 7.4 Merge to `main`, `gh run watch` the docker-publish build,
       `docker compose pull && up -d` on the NUC (check `docker top splits` for
       orphans first).
-- [ ] 7.5 Post-deploy read-only sweep: document distribution byte-identical to
+- [x] 7.5 Post-deploy read-only sweep: document distribution byte-identical to
       the 1.2 baseline (no shape, source, or floor movement); `verify_archive`
       exit 0; spot-check `/run/:id` lensVersion and a rep card in the browser.
-- [ ] 7.6 Update HANDOFF-interval-lens.md: mark the swept items closed, note
+- [x] 7.6 Update HANDOFF-interval-lens.md: mark the swept items closed, note
       M8+P2.4 as the next change.

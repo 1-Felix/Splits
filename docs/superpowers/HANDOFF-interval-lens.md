@@ -3,6 +3,32 @@
 This file is the list of what is **not** done. Everything here was found, understood
 and deliberately deferred; none of it is a surprise waiting to be discovered.
 
+> **2026-07-30 (later the same day) — `sweep-lens-tail` SHIPPED.** A verification
+> pass measured every open item below against the code at `3f0b9ff`, then one
+> OpenSpec change (`openspec/changes/sweep-lens-tail/`) closed the whole
+> mechanical tail: **M1** (empty lap envelope no longer cached), **N1** (rep
+> card pairs recoveries by time — reachability had *grown*: VETO/set-membership
+> demotions create exactly the mid-set recovery that shifted `recs[i]`), **M4**
+> (list + by-id expose `lensVersion`; expose, never filter), **M5+N6** as a pair
+> (`_pace_s_per_km` → `None`, GAP renders by presence), **M6**, **M7**, **M9**,
+> **M10**, **M12** (stream half), **N2** (real unstructured fixture
+> `2025-09-14`, `tests/fixtures/lap_unstructured.json`), **N7** (`/run` audited;
+> rep card fits 390 px — was 408), and the **P2.5/P2.6a/c/d** mutation
+> survivors are all pinned (13 mutations run, 13 killed — ledger in the
+> change's notes.md). No `INTERVAL_VERSION` bump; production documents did not
+> move. The July-30 morning ships had already closed M2, M11 (+N3), M13/P3.1
+> and P2.7b.
+>
+> **Still open after the sweep:** M3 (second half, documented as fallback-only),
+> M8 + P2.4 (cockpit distill parity + Garmin distill version marker — agreed
+> as the NEXT change, with its own design), P2.2 (partially mitigated by
+> `_point_window` for prescribed blocks), the `corroborated`-vs-`structured`
+> confidence distinction (both 1.0; open question inherited from
+> fix-lap-confidence), POINT's variance guard (revisit on a real case), and a
+> **pre-existing `/progress` overflow at 390 px** (scrollWidth 451, verified on
+> a clean tree, partly data-dependent) that the extended audit now surfaces on
+> every run. Then P3.2, the `plan-data.js` parser.
+
 > **2026-07-30 — BOTH OpenSpec changes below SHIPPED and NUC-verified the
 > same day.** `fix-lap-confidence` (INTERVAL_VERSION 5, closes **M2**) and
 > `add-workout-prior` (INTERVAL_VERSION 6, closes/dissolves **N3, N4, N5,

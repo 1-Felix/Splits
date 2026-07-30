@@ -63,9 +63,9 @@
 
 ## 9. Time-prescribed sets are named by time (spec, handoff N3)
 
-- [ ] 9.1 Write the failing tests: `2026-02-06` reads `6×90 s` (not `6×0.23 km`) and `2025-11-21` reads `8×90 s` (not `8×200 m`) — `endCondition: time` names and compares the set by duration.
-- [ ] 9.2 Implement the duration form in `_reps_label` and the set naming path; `set.nominalDistM` semantics stay intact for distance-prescribed sets.
-- [ ] 9.3 Confirm handoff N4's one-metre margin dissolves: `2025-11-21` lap 8 (151 m vs the 150 m floor) is admitted by its 90 s prescription, not by luck.
+- [x] 9.1 Write the failing tests: `2026-02-06` reads `6×90 s` (not `6×0.23 km`) and `2025-11-21` reads `8×90 s` (not `8×200 m`) — `endCondition: time` names and compares the set by duration.
+- [x] 9.2 Implement the duration form in `_reps_label` and the set naming path; `set.nominalDistM` semantics stay intact for distance-prescribed sets. *(Time-prescribed sets are uniform by construction: `varied` False, `nominalDistM` None, label `N×V s`.)*
+- [x] 9.3 Confirm handoff N4's one-metre margin dissolves: `2025-11-21` lap 8 (151 m vs the 150 m floor) is admitted by its 90 s prescription, not by luck. *(Confirmed: lap 8 shrunk below the distance floor is still the eighth rep — ADMIT covers it by construction.)*
 
 ## 10. Confidence corroboration and provenance (design D5, D8)
 

@@ -1268,8 +1268,17 @@ def build_document(streams: dict | None, summary: dict | None = None,
         else:
             shape = "steady"
         nominal, varied = _rep_variation([s["distM"] for s in work])
+        by_time = bool(prior_joins and prior["byTime"] and prior["repValue"])
+        if by_time:
+            # A set prescribed by TIME is named and compared by time (handoff
+            # N3): 2026-02-06's six 90 s hill reps cover different distances
+            # precisely because the athlete tires — "6×0.23 km" measured the
+            # fatigue, not the set. Uniform by construction: the reps all
+            # executed one time-prescribed step.
+            nominal, varied = None, False
         if shape == "reps":
-            label = _reps_label([s["distM"] for s in work])
+            label = (f"{len(work)}×{prior['repValue']:g} s" if by_time
+                     else _reps_label([s["distM"] for s in work]))
         elif shape == "block":
             # Same wording as label_for's block branch, over the ONE
             # surviving work segment's own duration.

@@ -323,6 +323,39 @@ def test_prescribed_thirty_second_reps_are_found_not_filtered():
     assert doc["label"] != "24 min block"
 
 
+# ── a set prescribed by time is named by time (handoff N3) ───────────────────
+def test_time_prescribed_hill_reps_are_named_by_duration():
+    """`2026-02-06`'s six 90 s hill reps read `6×0.23 km` — their distances
+    vary precisely BECAUSE the athlete tires, and the device confirms the
+    prescription is literally `interval / time 90 s ×6`. Same for
+    `2025-11-21`'s `8×200 m`, prescribed `time 90 s ×8`."""
+    doc = build("2026-02-06", workout("2026-02-06"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 6
+    assert doc["label"] == "6×90 s"
+    doc2 = build("2025-11-21", workout("2025-11-21"))
+    assert doc2["set"]["found"] == 8
+    assert doc2["label"] == "8×90 s"
+
+
+def test_the_strides_label_is_time_named_too():
+    doc = build("2026-07-29", workout("2026-07-29"))
+    assert doc["label"] == "4×20 s"
+
+
+def test_the_one_metre_margin_dissolves_under_the_time_prescription():
+    """Handoff N4's escalation: `2025-11-21` lap 8 is 151 m against the 150 m
+    floor — one metre of GPS noise from demotion. Prescribed `90 s`, the
+    margin stops existing: shrink the lap below the distance floor and it is
+    still the eighth rep."""
+    laps = [dict(l) for l in laps_of("2025-11-21")]
+    for l in laps:
+        if l.get("wktStepIndex") == 2 and abs(l.get("distance", 0) - 151) < 60:
+            l["distance"] = 140.0          # now below WORK_MIN_M
+    doc = build("2025-11-21", workout("2025-11-21"), laps=laps)
+    assert doc["set"]["found"] == 8, "the eighth rep is prescribed, not lucky"
+
+
 # ── POINT: locate from the prescription, confirm from execution (D1a) ────────
 def _tempo_workout(dist_m, lo_mps, hi_mps):
     """A Z2-warmup / paced-block / Z2-cooldown prescription — the shape of

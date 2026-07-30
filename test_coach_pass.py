@@ -129,3 +129,37 @@ def test_attach_blocks_matches_the_recorded_golden():
     assert data["predictions"]["trend"] == (golden["trend"] or "")
     assert set(keys) == {k for k in ("insights", "compliance", "blockLens",
                                      "courseLens") if golden[k] is not None}
+
+
+def test_one_dead_assembly_omits_only_its_own_key(monkeypatch):
+    """D4: an exception assembling one block must not take the others down."""
+    import coach_pass
+    import insight_metrics as im2
+
+    def boom(*_a, **_k):
+        raise ValueError("no run_metrics rows at the current METRICS_VERSION")
+
+    monkeypatch.setattr(im2, "assemble_insights", boom)
+    conn, plan = _fixture_archive(Path(tempfile.mkdtemp()))
+    data = {"predictions": {}}
+    try:
+        keys = coach_pass.attach_blocks(conn, plan, TODAY, data)
+    finally:
+        conn.close()
+    assert "insights" not in data and "insights" not in keys
+    assert "compliance" in data, "a dead trajectory must not kill compliance"
+    assert "blockLens" in data
+
+
+def test_no_plan_still_assembles_the_plan_free_blocks():
+    """An unreadable plan-data.js omits compliance and courseLens only."""
+    import coach_pass
+
+    conn, _plan = _fixture_archive(Path(tempfile.mkdtemp()))
+    data = {"predictions": {}}
+    try:
+        keys = coach_pass.attach_blocks(conn, None, TODAY, data)
+    finally:
+        conn.close()
+    assert "compliance" not in keys and "courseLens" not in keys
+    assert "insights" in keys and "blockLens" in keys

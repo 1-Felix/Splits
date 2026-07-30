@@ -1638,8 +1638,8 @@ def test_step_index_zero_is_evidence_not_no_evidence():
 
 def test_interval_version_is_current():
     """A stored document is only trustworthy if its version moved whenever the
-    rules that produced it did. Tasks 2-5 changed which laps are reps, what a
-    lap-sourced block must clear, where GAP comes from, and the basis of
-    spread and fade — every stored document must be recomputed."""
-    assert il.INTERVAL_VERSION == 4
-    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 4
+    rules that produced it did. fix-lap-confidence changed how a lap-sourced
+    document's confidence is derived and added the `asserts` verdict to every
+    document — every stored document must be recomputed."""
+    assert il.INTERVAL_VERSION == 5
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 5

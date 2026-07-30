@@ -39,10 +39,10 @@
 
 ## 6. Version bump and local verification
 
-- [ ] 6.1 `INTERVAL_VERSION` → 5 with a comment naming this change, in the existing running-history style at the top of `interval_lens.py`.
-- [ ] 6.2 `rm -rf __pycache__` then `.venv/Scripts/python.exe -m pytest -q` — full suite green. The `rm` is not optional: a stale `.pyc` has twice made a must-fail test pass.
-- [ ] 6.3 Browser suites green: `node test_run_page.mjs`, `node test_archive_page.mjs`, `node test_coach_read.mjs`.
-- [ ] 6.4 `node tools/style-audit.mjs layout` unchanged (it does not visit `/run` — handoff N7 — so this only confirms no collateral damage).
+- [x] 6.1 `INTERVAL_VERSION` → 5 with a comment naming this change, in the existing running-history style at the top of `interval_lens.py`. *(Also updated `test_interval_version_is_current`'s pin 4 → 5.)*
+- [x] 6.2 `rm -rf __pycache__` then `.venv/Scripts/python.exe -m pytest -q` — full suite green. The `rm` is not optional: a stale `.pyc` has twice made a must-fail test pass. *(472 passed, 2 skipped.)*
+- [x] 6.3 Browser suites green: `node test_run_page.mjs`, `node test_archive_page.mjs`, `node test_coach_read.mjs`. *(ALL PASS × 3.)*
+- [x] 6.4 `node tools/style-audit.mjs layout` unchanged (it does not visit `/run` — handoff N7 — so this only confirms no collateral damage). *(LAYOUT: ALL PASS.)*
 
 ## 7. Deploy and verify against production
 

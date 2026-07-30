@@ -337,6 +337,12 @@ def _annotate_quality(conn, week: dict, rows: list[dict]) -> None:
         day = days.get(row.get("date"))
         if not day or not row.get("activity_id"):
             continue
+        if row.get("planned_kind") is None:
+            # an UNPLANNED same-day activity shares the date but is not the
+            # session the prescription was written for — found live on
+            # 2026-07-29, where a 2.3 km shuffle after the strides session
+            # was annotated "0/4 reps" it was never asked to run
+            continue
         if not _is_run_slot(day):
             # a cross day's segments can parse (the plan prescribes bike
             # intervals in the same notation) but the rep verdict is a RUNNING

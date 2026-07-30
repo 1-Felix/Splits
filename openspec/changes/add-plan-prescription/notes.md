@@ -33,7 +33,21 @@
 
 | drop the `_is_run_slot` guard in the annotator | `test_a_cross_days_bike_intervals_are_not_a_rep_verdict_question` | RED (killed) |
 
-12 mutations, 12 killed.
+| drop the unplanned-row guard | `test_an_unplanned_same_day_run_gets_no_verdict` | RED (killed) |
+
+13 mutations, 13 killed.
+
+## Second live seam: the unplanned same-day run
+
+The first deploy's briefing annotated 2026-07-29's UNPLANNED second activity
+(a 2.3 km shuffle after the strides session) with `0/4 reps, no structured
+set detected` — the date-keyed day lookup handed the planned day's
+prescription to a row that was never its subject. The annotator now skips
+rows with `planned_kind IS NULL`. The current week is open (rescored every
+sync), so this healed on the next rescore without a version bump. Writing the
+fixture found a subtlety worth recording: a closed week's swap pass will
+rescue a same-day leftover ≥ 50 % of any missed slot's km into `swapped`, so
+the test's shuffle had to be 1.5 km to land as `unplanned` at all.
 
 ## Found live on first deploy, fixed before final: the bike-intervals seam
 

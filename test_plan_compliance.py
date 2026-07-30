@@ -636,6 +636,32 @@ def test_a_cross_days_bike_intervals_are_not_a_rep_verdict_question():
         "a bike prescription is not a running rep-verdict question"
 
 
+def test_an_unplanned_same_day_run_gets_no_verdict():
+    """Found live on 2026-07-29: two runs on a quality day — the planned
+    strides session plus an unplanned 2.3 km shuffle. The unplanned row
+    shares the DATE, so the date-keyed day lookup annotated it '0/4 reps'
+    against a prescription it was never given. Only the planned row is the
+    prescription's subject. Mutation-proven: dropping the planned_kind guard
+    → red."""
+    week = _quality_week("4×20 s fast-relaxed")
+    acts = [_a(1, "2026-07-03", "run", 6.3),   # the planned session
+            # the unplanned shuffle — 1.5 km, under DIST_PARTIAL_RATIO of
+            # every planned slot, so the closed week's swap pass cannot
+            # rescue it into a missed day; it must land as `unplanned`
+            _a(2, "2026-07-03", "run", 1.5)]
+    conn = _doc_conn({"shape": "reps", "label": "4×20 s", "set": {"found": 4},
+                      "segments": [], "quality": {"zone": None}})
+    rows = pc.score_week(week, acts, TODAY, MAX_HR, SNAP)
+    pc._annotate_quality(conn, week, rows)
+    conn.close()
+    planned = _by_date(rows, "2026-07-03")
+    unplanned = next(r for r in rows
+                     if r["date"] == "2026-07-03" and r["planned_kind"] is None)
+    assert planned["quality_json"], "the planned session carries its verdict"
+    assert unplanned.get("quality_json") is None, \
+        "the shuffle was never asked to run 4×20 s"
+
+
 def test_unparseable_day_gets_no_quality_json():
     r = _annotated(_quality_week("2 km easy — shin gate: pain-free before any rep"),
                    _REPS_DOC, _a(1, "2026-07-03", "run", 7.0))

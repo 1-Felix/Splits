@@ -26,13 +26,14 @@ import hashlib
 import json
 import math
 import os
-import re
 import sys
 from pathlib import Path
 
 import activity_archive
+import coach_pass
 import insight_metrics
 import interval_lens
+import plan_compliance
 
 # Windows consoles default to cp1252, which can't encode the ✓ glyph below
 # (mirrors sync_garmin.py). Without this the build's success print raises.
@@ -934,17 +935,19 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
 
 
 # ── file I/O (used by the ingest trigger and on boot) ────────────────────────
-def _plan_goal(data_dir: Path) -> str | None:
-    """Best-effort read of race.goalTime from plan-data.js for predictions.halfGoal.
-    Tolerant regex — never parses JS, never fails the build."""
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _safe(fn, label: str):
+    """Run a derived step, returning None (and warning) if it throws. The
+    telemetry build is never sunk by anything derived from it (design D4)."""
     try:
-        text = (data_dir / "plan-data.js").read_text(encoding="utf-8")
-    except OSError:
+        return fn()
+    except Exception as e:  # noqa: BLE001 — resilience is the point here
+        print(f"  ! {label} failed ({type(e).__name__}: {e}) — "
+              f"telemetry build unaffected", file=sys.stderr, flush=True)
         return None
-    # the key may be bare (hand-written plan) or quoted (max-plan-generator
-    # emits json.dumps output: "goalTime": "2:29:59") — accept both
-    m = re.search(r"[\"']?goalTime[\"']?\s*:\s*[\"']([^\"']+)[\"']", text)
-    return m.group(1) if m else None
 
 
 def build_garmin_data_js(data: dict) -> str:
@@ -998,22 +1001,59 @@ def main() -> None:
     # independently on this same `runs` list for a guaranteed-identical
     # result, doubling that scan for no reason on a real archive.
     calibration = _calibration(runs, profile, rhr_days)
+    max_hr = calibration[0]
+    today = dt.date.today()
 
-    data = build_athlete_data(runs, profile, dt.date.today(), _plan_goal(data_dir),
+    # D7 — one plan load per build: the goal for predictions.halfGoal and the
+    # goal for the trajectory come from the same parsed object.
+    loaded = _safe(lambda: plan_compliance.load_plan(data_dir / "plan-data.js"),
+                   "plan load")
+    plan_raw, plan = loaded if loaded else (None, None)
+    plan_goal = ((plan or {}).get("race") or {}).get("goalTime")
+
+    # D3 — the archive must be current before compliance and insights read it,
+    # and both must be derived before the telemetry is assembled. D4 — every
+    # step here is fail-soft and the write below is unconditional, so the
+    # telemetry lands even if all of them fail.
+    n = _safe(lambda: build_archive(
+        data_dir, runs, profile, rhr_days,
+        prune_uids=[loser["sessionUid"] for loser, _ in duplicates],
+        calibration=calibration), "archive pass")
+    if n is not None:
+        print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
+
+    data = build_athlete_data(runs, profile, today, plan_goal,
                               rhr_days=rhr_days, calibration=calibration)
+
+    # The archive-existence guard matters: a zero-run instance must stay
+    # unprovisioned (the db is never created), so the derive pass must not be
+    # what creates it.
+    if activity_archive.archive_path(data_dir).exists():
+        conn = activity_archive.open_archive(data_dir)
+        try:
+            if plan:
+                _safe(lambda: coach_pass.derive(conn, plan_raw, plan, today,
+                                                max_hr, log=_log), "derive pass")
+            _safe(lambda: coach_pass.attach_blocks(conn, plan, today, data,
+                                                   log=_log), "block assembly")
+        finally:
+            conn.close()
+
     tmp = data_dir / f".garmin-data.{os.getpid()}.tmp.js"
     tmp.write_text(build_garmin_data_js(data), encoding="utf-8")
     tmp.replace(data_dir / "garmin-data.js")
     print(f"✓ built garmin-data.js from {len(runs)} ingested run(s)", flush=True)
-    try:
-        n = build_archive(data_dir, runs, profile, rhr_days,
-                          prune_uids=[loser["sessionUid"] for loser, _ in duplicates],
-                          calibration=calibration)
-        print(f"✓ archived {n} run(s) → {activity_archive.DB_NAME}", flush=True)
-    except Exception as e:  # noqa: BLE001 — the archive is a derived cache; a
-        # failure here must never sink the telemetry build (task 3.7)
-        print(f"  ! archive pass failed ({type(e).__name__}: {e}) — "
-              f"telemetry build unaffected", file=sys.stderr, flush=True)
+
+    # strictly after the write — a briefing problem can never affect the
+    # contract file
+    if plan and activity_archive.archive_path(data_dir).exists():
+        conn = activity_archive.open_archive(data_dir)
+        try:
+            _safe(lambda: coach_pass.briefing(
+                conn, plan, data, today, data_dir / "coach-briefing.md",
+                log=_log), "coach briefing")
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

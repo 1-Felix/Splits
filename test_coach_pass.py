@@ -211,6 +211,37 @@ def test_briefing_publishes_atomically():
     assert not list(tmp.glob(".coach-briefing-*.tmp")), "no temp file left behind"
 
 
+def test_goal_seconds_come_from_the_plan_not_the_constant():
+    """D5: GOAL_HALF_S is one athlete's goal. The trajectory must measure each
+    instance against its own plan."""
+    import coach_pass
+
+    conn, plan = _fixture_archive(Path(tempfile.mkdtemp()))
+    slow = json.loads(json.dumps(plan))
+    slow["race"]["goalTime"] = "2:29:59"
+    data = {"predictions": {}}
+    try:
+        coach_pass.attach_blocks(conn, slow, TODAY, data)
+    finally:
+        conn.close()
+    assert data["insights"]["trajectory"]["goalSec"] == 8999
+
+
+def test_unparseable_goal_falls_back_to_the_constant():
+    import coach_pass
+    import insight_metrics as im3
+
+    conn, plan = _fixture_archive(Path(tempfile.mkdtemp()))
+    junk = json.loads(json.dumps(plan))
+    junk["race"]["goalTime"] = "as fast as possible"
+    data = {"predictions": {}}
+    try:
+        coach_pass.attach_blocks(conn, junk, TODAY, data)
+    finally:
+        conn.close()
+    assert data["insights"]["trajectory"]["goalSec"] == im3.GOAL_HALF_S
+
+
 def test_briefing_without_a_plan_is_a_no_op():
     import coach_pass
 

@@ -73,8 +73,11 @@ def attach_blocks(conn, plan, today, data, log=_noop) -> list[str]:
     then omitted and insights/blockLens still assemble."""
     attached = []
 
-    insights = _safe(lambda: insight_metrics.assemble_insights(conn, today),
-                     "insights assembly", log)
+    goal_sec = block_lens.parse_goal_seconds(
+        ((plan or {}).get("race") or {}).get("goalTime"))
+    insights = _safe(
+        lambda: insight_metrics.assemble_insights(conn, today, goal_sec),
+        "insights assembly", log)
     if insights:
         data["insights"] = insights
         attached.append("insights")

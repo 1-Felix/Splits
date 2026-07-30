@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -368,6 +368,24 @@ def _apply_schema_v11(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {name} {decl}")
 
 
+# v13 (fix-distill-parity): a distilled copy knows when and by what version it
+# was computed, so it can heal itself when it predates its run's laps, its
+# workout definition, or the distiller version. NULL on every pre-v13 row —
+# which is exactly what makes the first post-deploy pass re-distill the
+# archive (design D2/D5).
+_ACTIVITIES_V13_COLUMNS = (
+    ("distilled_version", "INTEGER"),
+    ("distilled_at", "TEXT"),
+)
+
+
+def _apply_schema_v13(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(activities)")}
+    for name, decl in _ACTIVITIES_V13_COLUMNS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE activities ADD COLUMN {name} {decl}")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -409,7 +427,8 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V11_SQL)
         _apply_schema_v11(conn)
         conn.executescript(SCHEMA_V12_SQL)
-        # Forward-only migration: v1→…→v12 is purely additive (CREATE IF
+        _apply_schema_v13(conn)
+        # Forward-only migration: v1→…→v13 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -1186,30 +1205,60 @@ def course_map_row(conn: sqlite3.Connection, course_id: int) -> dict | None:
 # distilled run detail (schema v4 — filled by sync_garmin's distiller; the
 # archive API serves detail_distilled_json verbatim, never the raw payloads)
 # ──────────────────────────────────────────────────────────────────────────────
-def write_distilled(conn: sqlite3.Connection, activity_id, distilled) -> bool:
+def write_distilled(conn: sqlite3.Connection, activity_id, distilled,
+                    version: int | None = None) -> bool:
     """Store a run's distilled detail. Unlike raw detail (write-once), the
     distilled copy is derived and disposable — a recompute simply replaces it.
     Empty payloads are refused; commits per call so an interrupted pass never
-    loses completed work."""
+    loses completed work.
+
+    v13 (fix-distill-parity): every write stamps `distilled_at`, and the
+    Garmin distiller passes its `version` so `runs_missing_distilled` can see
+    a stale copy. The Health Connect side keeps its own archive-level
+    `INGEST_DISTILL_VERSION` marker and passes no version here."""
     if not distilled:
         return False
     cur = conn.execute(
-        "UPDATE activities SET detail_distilled_json = ? WHERE activity_id = ?",
-        (json.dumps(distilled, ensure_ascii=False), activity_id),
+        "UPDATE activities SET detail_distilled_json = ?, "
+        "distilled_version = ?, distilled_at = ? WHERE activity_id = ?",
+        (json.dumps(distilled, ensure_ascii=False), version, _now(), activity_id),
     )
     conn.commit()
     return cur.rowcount == 1
 
 
-def runs_missing_distilled(conn: sqlite3.Connection) -> list:
-    """activity_ids of archived runs holding raw detail but no distilled copy —
-    the distillation pass's work list, oldest first."""
+def runs_missing_distilled(conn: sqlite3.Connection,
+                           version: int | None = None) -> list:
+    """activity_ids of archived runs whose distilled copy is missing OR stale —
+    the distillation pass's work list, oldest first.
+
+    Stale (fix-distill-parity D2), when a `version` is given:
+      - the stored `distilled_version` is absent (every pre-v13 row — the
+        one-off self-heal) or older than `version`;
+      - the run's laps were fetched AFTER the distilled copy was computed
+        (the same clause shape `runs_missing_intervals` uses);
+      - the run references a workout definition banked AFTER the distilled
+        copy was computed.
+    Without a `version` (the Health Connect builder's archives), only the
+    missing-copy clause applies — that side versions via its own marker."""
+    stale = ""
+    args: tuple = ()
+    if version is not None:
+        stale = """
+              OR a.distilled_version IS NULL OR a.distilled_version < ?
+              OR (a.laps_fetched_at IS NOT NULL AND a.distilled_at IS NOT NULL
+                  AND a.laps_fetched_at > a.distilled_at)
+              OR EXISTS (SELECT 1 FROM workouts w
+                         WHERE w.workout_id = json_extract(a.summary_json, '$.workoutId')
+                           AND a.distilled_at IS NOT NULL
+                           AND w.fetched_at > a.distilled_at)"""
+        args = (version,)
     rows = conn.execute(
         f"""SELECT a.activity_id FROM activities a
             WHERE a.detail_json IS NOT NULL
-              AND a.detail_distilled_json IS NULL
               AND {_RUN_TYPE_SQL}
-            ORDER BY a.start_time_local""").fetchall()
+              AND (a.detail_distilled_json IS NULL{stale})
+            ORDER BY a.start_time_local""", args).fetchall()
     return [r[0] for r in rows]
 
 

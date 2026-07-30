@@ -687,11 +687,17 @@ def test_distill_on_topup_and_recovery_pass():
     orig = _patched_dirs(d)
     try:
         sg.archive_step(_FakeClient(), [_act(1), _act(2, start="2026-07-02 08:00:00")])
+        # fix-distill-parity D3: distillation is its own step now, AFTER
+        # archive_step's lap fetch and workouts_step — never inside archive_step
+        conn = arch.open_archive(d)
+        assert arch.distilled_coverage(conn)["distilled"] == 0, \
+            "archive_step no longer distills — that is distill_step's job"
+        conn.close()
+        sg.distill_step()
         conn = arch.open_archive(d)
         assert arch.distilled_coverage(conn) == \
             {"detailed_runs": 2, "distilled": 2, "missing": 0}, \
-            "topped-up runs distilled within the same archive step"
-        assert arch.get_meta(conn, "expected_distilled_runs") == "2", "ratchet recorded"
+            "topped-up runs distilled by the distill step of the same sync"
 
         # the stored copy IS the recent-run contract from the same distiller
         stored = json.loads(conn.execute(
@@ -699,6 +705,12 @@ def test_distill_on_topup_and_recovery_pass():
         ).fetchone()[0])
         fresh = sg.fetch_run_detail(_FakeClient(), _act(1))
         assert stored == fresh, "one distiller, two callers"
+        # v13: the write stamped the distiller version and a timestamp
+        ver, at = conn.execute(
+            "SELECT distilled_version, distilled_at FROM activities "
+            "WHERE activity_id = 1").fetchone()
+        assert ver == sg.GARMIN_DISTILL_VERSION and at, \
+            "the distilled copy records what computed it, and when"
 
         # recovery: blank one row's distilled copy (a pre-v4 archive in
         # miniature) and heal it from the stored raw payload
@@ -715,6 +727,128 @@ def test_distill_on_topup_and_recovery_pass():
         conn.close()
     finally:
         sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_distilled_compact_agrees_with_the_lap_sourced_document():
+    """fix-distill-parity M8: the distiller is given the run's banked laps
+    (and workout, when one exists), so the compact `intervals` summary is the
+    SAME reading as /run/:id's full document — before this it was stream-only
+    even for lap-sourced runs. Mutation-proven: restoring `laps=None` at the
+    distiller's build_document call sends the source assertion red."""
+    import json
+    d = _tmp()
+    orig = _patched_dirs(d)
+    try:
+        conn = arch.open_archive(d)
+        a = _act(1)
+        a["hasIntensityIntervals"] = True
+        arch.upsert_activities(conn, [a])
+        # _steady_detail carries no sumDuration/directSpeed, so the lens would
+        # get no usable stream from it — this detail does (flat 2.8 m/s; the
+        # device laps decide everything on the lap path anyway)
+        keys = ("sumDuration", "sumDistance", "directHeartRate", "directSpeed")
+        det = {
+            "metricDescriptors": [
+                {"key": k, "metricsIndex": i} for i, k in enumerate(keys)],
+            "activityDetailMetrics": [
+                {"metrics": [i, 2.8 * i, 150, 2.8]} for i in range(1400)],
+        }
+        arch.write_detail(conn, 1, det)
+        laps = [{"intensityType": "WARMUP", "duration": 200.0, "distance": 500.0,
+                 "averageSpeed": 2.5, "wktStepIndex": 0}]
+        for _ in range(3):
+            laps.append({"intensityType": "ACTIVE", "duration": 250.0,
+                         "distance": 1000.0, "averageSpeed": 4.0,
+                         "wktStepIndex": 1})
+            laps.append({"intensityType": "REST", "duration": 60.0,
+                         "distance": 130.0, "averageSpeed": 2.2,
+                         "wktStepIndex": 2})
+        laps.append({"intensityType": "COOLDOWN", "duration": 170.0,
+                     "distance": 400.0, "averageSpeed": 2.4, "wktStepIndex": 3})
+        assert arch.write_laps(conn, 1, laps) is True
+        assert sg._distill_pass(conn) == 1
+        iv = json.loads(conn.execute(
+            "SELECT detail_distilled_json FROM activities WHERE activity_id = 1"
+        ).fetchone()[0])["intervals"]
+        assert iv["source"] == "laps", \
+            "the compact summary reads the device laps, same as the full document"
+        assert iv["shape"] == "reps"
+        assert iv["label"] == "3×1 km"
+        conn.close()
+    finally:
+        sg.DATA_DIR, sg.CACHE_DIR = orig
+
+
+def test_sync_distills_after_workouts_and_before_intervals():
+    """fix-distill-parity D3: archive → workouts → distill → intervals. The
+    behavioral tests call distill_step directly, so only this pins that
+    main() actually invokes it, in the position that guarantees tonight's
+    run is distilled with its laps and prescription in hand. Mutation-proven:
+    deleting the distill_step call (or moving it before workouts_step) goes
+    red."""
+    import inspect
+    src = inspect.getsource(sg.main)
+    order = [src.index(name) for name in
+             ("archive_step", "workouts_step", "distill_step", "intervals_step")]
+    assert -1 not in order
+    assert order == sorted(order), \
+        "main() must run archive, workouts, distill, intervals — in that order"
+
+
+def test_distilled_staleness_clauses():
+    """fix-distill-parity D2, all four ways a distilled copy goes stale — and
+    the fifth case: a current, complete copy is NOT stale (the pass stays
+    idempotent). Each clause mutation-proven by deleting it from the SQL."""
+    V = sg.GARMIN_DISTILL_VERSION
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [_act(1)])
+    arch.write_detail(conn, 1, {"d": 1})
+
+    # missing copy → listed (the pre-existing clause)
+    assert arch.runs_missing_distilled(conn, V) == [1]
+
+    # current version, complete → NOT stale
+    assert arch.write_distilled(conn, 1, {"splits": []}, version=V) is True
+    assert arch.runs_missing_distilled(conn, V) == [], "idempotent when current"
+
+    # pre-v13 row (NULL version) → stale: the one-off self-heal
+    conn.execute("UPDATE activities SET distilled_version = NULL WHERE activity_id = 1")
+    conn.commit()
+    assert arch.runs_missing_distilled(conn, V) == [1], "NULL version is stale"
+
+    # older version → stale
+    arch.write_distilled(conn, 1, {"splits": []}, version=V)
+    conn.execute("UPDATE activities SET distilled_version = ? WHERE activity_id = 1",
+                 (V - 1,))
+    conn.commit()
+    assert arch.runs_missing_distilled(conn, V) == [1], "older version is stale"
+
+    # laps fetched AFTER the distill → stale
+    arch.write_distilled(conn, 1, {"splits": []}, version=V)
+    arch.write_laps(conn, 1, [{"distance": 1000, "duration": 250}])
+    conn.execute("""UPDATE activities SET distilled_at = '2026-07-11T06:00:00+02:00',
+                    laps_fetched_at = '2026-07-12T06:00:00+02:00'
+                    WHERE activity_id = 1""")
+    conn.commit()
+    assert arch.runs_missing_distilled(conn, V) == [1], "late laps make it stale"
+
+    # workout banked AFTER the distill → stale
+    arch.write_distilled(conn, 1, {"splits": []}, version=V)
+    conn.execute("""UPDATE activities SET laps_fetched_at = NULL,
+                    summary_json = json_set(summary_json, '$.workoutId', 42),
+                    distilled_at = '2026-07-11T06:00:00+02:00'
+                    WHERE activity_id = 1""")
+    conn.commit()
+    arch.write_workout(conn, 42, {"workoutName": "w"}, provenance="first-sight")
+    conn.execute("UPDATE workouts SET fetched_at = '2026-07-12T06:00:00+02:00' "
+                 "WHERE workout_id = 42")
+    conn.commit()
+    assert arch.runs_missing_distilled(conn, V) == [1], "late workout makes it stale"
+
+    # …and once re-distilled after all that, the run settles again
+    arch.write_distilled(conn, 1, {"splits": []}, version=V)
+    assert arch.runs_missing_distilled(conn, V) == [], "re-distilled → settled"
+    conn.close()
 
 
 def test_verify_archive_distilled_coverage_paths():
@@ -1302,7 +1436,12 @@ def test_schema_v11_tables_exist():
     assert "workouts" in names, "schema v12 (add-workout-prior)"
     cols = {r[1] for r in conn.execute("PRAGMA table_info(activities)")}
     assert "laps_json" in cols
-    assert arch.get_meta(conn, "schema_version") == "12"
+    assert "distilled_version" in cols, "schema v13 (fix-distill-parity)"
+    assert "distilled_at" in cols, "schema v13 (fix-distill-parity)"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM activities WHERE distilled_version IS NOT NULL"
+    ).fetchone()[0] == 0, "migration leaves every pre-v13 row NULL (the self-heal)"
+    assert arch.get_meta(conn, "schema_version") == "13"
     conn.close()
 
 
@@ -1338,7 +1477,7 @@ def test_v11_migration_recovers_from_interrupted_alter():
     assert "laps_fetched_at" in cols, \
         "each v11 column must be guarded independently (like v5/v7), or a " \
         "mid-migration crash permanently loses laps_fetched_at"
-    assert arch.get_meta(reopened, "schema_version") == "12"
+    assert arch.get_meta(reopened, "schema_version") == "13"
     reopened.close()
 
 

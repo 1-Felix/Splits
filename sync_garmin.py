@@ -339,20 +339,35 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
                       work_floor: float | None = None) -> list[dict]:
     runs = [a for a in acts if is_run(a) and act_km(a) > 0]
     runs.sort(key=act_date, reverse=True)
-    out = []
-    for a in runs[:n]:
-        out.append({
-            "date": act_date(a),
-            "type": classify(a),
-            "km": round(act_km(a), 1),
-            "time": fmt_hms(act_dur(a)),
-            "pace": act_pace(a),
-            "hr": act_hr(a) or 0,
-            "cad": act_cad(a),
-            "vo2": round(act_vo2(a), 1) if act_vo2(a) else None,
-            "detail": fetch_run_detail(client, a, work_floor=work_floor),
-        })
-    return out
+    # fix-distill-parity M8: ONE archive connection for the whole loop, so
+    # each run's laps and banked workout ride into the distiller and the
+    # cockpit's compact summary agrees with /run/:id. The archive, lap and
+    # workout steps all run before build_data (design order in main()). No
+    # archive → conn stays None and the distill is stream-only, as before.
+    conn = None
+    try:
+        conn = activity_archive.open_archive(DATA_DIR)
+    except Exception:  # noqa: BLE001 — a missing archive must not sink the build
+        conn = None
+    try:
+        out = []
+        for a in runs[:n]:
+            out.append({
+                "date": act_date(a),
+                "type": classify(a),
+                "km": round(act_km(a), 1),
+                "time": fmt_hms(act_dur(a)),
+                "pace": act_pace(a),
+                "hr": act_hr(a) or 0,
+                "cad": act_cad(a),
+                "vo2": round(act_vo2(a), 1) if act_vo2(a) else None,
+                "detail": fetch_run_detail(client, a, work_floor=work_floor,
+                                           conn=conn),
+            })
+        return out
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _fetch_raw_detail(client, aid) -> dict | None:
@@ -402,19 +417,43 @@ def _fetch_raw_laps(client, aid) -> list | None:
     return doc.get("lapDTOs") if isinstance(doc, dict) else doc
 
 
-def fetch_run_detail(client, activity, work_floor: float | None = None) -> dict | None:
+def fetch_run_detail(client, activity, work_floor: float | None = None,
+                     conn=None) -> dict | None:
     """Per-run drill-down detail (splits, HR-drift, zones, temp, TE). Cached per
-    activity id so re-syncs only fetch genuinely new runs."""
-    det = _fetch_raw_detail(client, activity.get("activityId"))
-    return distill_run_detail(det, activity, work_floor=work_floor)
+    activity id so re-syncs only fetch genuinely new runs.
+
+    `conn` (fix-distill-parity M8) is an optional archive connection; when
+    given, the run's banked laps and workout definition ride into the
+    distiller so the compact summary matches the full document."""
+    aid = activity.get("activityId")
+    det = _fetch_raw_detail(client, aid)
+    laps = workout = None
+    if conn is not None:
+        laps = safe(lambda: activity_archive.laps_payload(conn, aid),
+                    None, f"laps lookup {aid}")
+        wid = activity.get("workoutId")
+        if wid:
+            workout = safe(lambda: activity_archive.workout_payload(conn, wid),
+                           None, f"workout lookup {aid}")
+    return distill_run_detail(det, activity, laps=laps, workout=workout,
+                              work_floor=work_floor)
 
 
 def distill_run_detail(det: dict | None, activity: dict,
+                       laps: list | None = None,
+                       workout: dict | None = None,
                        work_floor: float | None = None) -> dict | None:
     """Distill a RAW `get_activity_details` payload + its raw activity summary
     into the recent-run `detail` contract of garmin-data.js. Pure over its
     inputs — one distiller, two callers: fetch_run_detail (fresh from the API)
     and the archive's distillation pass (stored payloads, no network).
+
+    `laps` and `workout` (fix-distill-parity M8): the compact `intervals`
+    summary must be the SAME reading as the run's full document — same
+    source, shape, label, confidence — so the distiller is given the device
+    laps and the banked workout definition when the caller has them. Before
+    this, the compact was stream-only even for lap-sourced runs, and the
+    cockpit quietly disagreed with /run/:id.
 
     `work_floor` (add-interval-lens Task 11) is this athlete's own interval
     calibration floor, banked by `derive_intervals` in `archive_meta` and
@@ -445,8 +484,8 @@ def distill_run_detail(det: dict | None, activity: dict,
     streams = distill_run_streams(det)
     bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
     intervals = interval_lens.compact(
-        interval_lens.build_document(streams, activity, None, bounds=bounds,
-                                     floor=work_floor))
+        interval_lens.build_document(streams, activity, laps, workout,
+                                     bounds=bounds, floor=work_floor))
 
     return {
         "splits": splits,
@@ -1080,6 +1119,11 @@ DETAIL_TOPUP_PER_SYNC = 25   # backlog drains over successive nights (design D4)
 MAPS_PER_SYNC = 10           # basemap backlog drains the same way; the full
                              # sweep is `--backfill-maps` (route-basemap D5)
 LAPS_PER_SYNC = 40           # bounded so a nightly sync stays polite to Garmin
+GARMIN_DISTILL_VERSION = 1   # fix-distill-parity P2.4: the Garmin mirror of
+                             # INGEST_DISTILL_VERSION. Bump whenever the
+                             # distilled contract or its inputs change meaning;
+                             # runs_missing_distilled then re-lists every
+                             # older-stamped run and the pass self-heals.
 INTERVAL_FLOOR_DRIFT_GATE = 0.02   # add-interval-lens D6/Task 7b: a banked
                                    # work floor that has moved more than this
                                    # since the last pass makes every stored
@@ -1094,16 +1138,32 @@ def archive_step(client, acts: list[dict]) -> None:
     try:
         added = activity_archive.upsert_activities(conn, acts)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
-        distilled = _distill_pass(conn)
+        # fix-distill-parity D3: the distill pass no longer runs here — it
+        # moved to distill_step in main(), AFTER _laps_pass (below) and
+        # workouts_step, so a run is never distilled before its laps and its
+        # prescription are in hand.
         streamed = _streams_pass(conn)
         lapped = _laps_pass(client, conn, limit=LAPS_PER_SYNC)
         mapped = _maps_pass(conn, limit=MAPS_PER_SYNC)
         _record_expectations(conn)
         log(f"✓ archive: +{added} activities, {topped} details topped up"
-            + (f", {distilled} runs distilled" if distilled else "")
             + (f", {streamed} runs streamed" if streamed else "")
             + (f", {lapped} runs lapped" if lapped else "")
             + (f", {mapped} runs mapped" if mapped else ""))
+    finally:
+        conn.close()
+
+
+def distill_step() -> None:
+    """Distill archived runs whose compact copy is missing or stale — its own
+    step (fix-distill-parity D3), AFTER workouts_step and archive_step's lap
+    fetch, BEFORE intervals_step and build_data. Only ever inside safe()."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        distilled = _distill_pass(conn)
+        if distilled:
+            log(f"✓ distilled {distilled} runs (distill v{GARMIN_DISTILL_VERSION})")
+        _record_expectations(conn)  # re-ratchet with the fresh distills counted
     finally:
         conn.close()
 
@@ -1423,18 +1483,27 @@ def _interval_floor_from_archive() -> float | None:
 
 
 def _distill_pass(conn) -> int:
-    """Distill every archived run holding raw detail but no distilled copy —
-    both this sync's topped-up runs and (as the recovery pass) runs archived
-    before schema v4. Stored payloads in, no network; idempotent — a second
-    pass finds nothing to do. Raw payloads are never modified."""
+    """Distill every archived run whose distilled copy is missing OR stale
+    (fix-distill-parity D2: absent, older distill version, or laps/workout
+    landed after it was computed). Stored payloads in, no network; idempotent —
+    a second pass finds nothing to do. Raw payloads are never modified.
+
+    The laps and the banked workout definition ride into the distiller (M8),
+    so the compact `intervals` summary is the same reading as the run's full
+    document."""
     floor = _stored_interval_floor(conn)
     done = 0
-    for aid in activity_archive.runs_missing_distilled(conn):
+    for aid in activity_archive.runs_missing_distilled(conn, GARMIN_DISTILL_VERSION):
+        summary = activity_archive.summary_payload(conn, aid) or {}
+        wid = summary.get("workoutId")
         distilled = distill_run_detail(
             activity_archive.detail_payload(conn, aid),
-            activity_archive.summary_payload(conn, aid) or {},
+            summary,
+            laps=activity_archive.laps_payload(conn, aid),
+            workout=activity_archive.workout_payload(conn, wid) if wid else None,
             work_floor=floor)
-        if distilled and activity_archive.write_distilled(conn, aid, distilled):
+        if distilled and activity_archive.write_distilled(
+                conn, aid, distilled, version=GARMIN_DISTILL_VERSION):
             done += 1
     return done
 
@@ -1902,6 +1971,10 @@ def main() -> None:
     # workouts BEFORE intervals: a run archived tonight should be scored with
     # its prescription in hand on the same sync (add-workout-prior D5).
     safe(lambda: workouts_step(client), None, "workouts step")
+    # distill AFTER workouts + laps, BEFORE intervals and build_data
+    # (fix-distill-parity D3): tonight's run is distilled with its laps and
+    # its prescription in hand, never stream-only.
+    safe(distill_step, None, "distill step")
     safe(intervals_step, None, "intervals step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")

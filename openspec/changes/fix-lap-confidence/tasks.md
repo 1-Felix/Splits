@@ -22,12 +22,12 @@
 
 ## 4. Confidence levels and the assert verdict (design D3, D4)
 
-- [ ] 4.1 Write the failing test: lap-sourced confidence is no longer constant — two lap-sourced documents with different evidence do not carry the same value.
-- [ ] 4.2 Write the failing test: a set whose shape depends on a STEP demotion still asserts (spec: device-corroborated demotion never lowers confidence).
-- [ ] 4.3 Write the failing test: every fixture set whose `found` matches its prescribed count asserts. This is the anti-regression guard — over-broad hedging is the main way this change could do damage.
-- [ ] 4.4 Implement the three levels — corroborated / structured / eliminated — in the laps branch, replacing the literal `"confidence": 1.0` at `interval_lens.py:878`.
-- [ ] 4.5 Add the assert verdict to the document in `base` so BOTH producers carry it, and make `CONFIDENCE_ASSERT_MIN` the single place the comparison happens.
-- [ ] 4.6 Mutation-prove: hardcoding the level back to `corroborated` turns the suite red; so does inverting the verdict.
+- [x] 4.1 Write the failing test: lap-sourced confidence is no longer constant — two lap-sourced documents with different evidence do not carry the same value.
+- [x] 4.2 Write the failing test: a set whose shape depends on a STEP demotion still asserts (spec: device-corroborated demotion never lowers confidence). *(`2026-04-10` and `2025-10-17`.)*
+- [x] 4.3 Write the failing test: every fixture set whose `found` matches its prescribed count asserts. This is the anti-regression guard — over-broad hedging is the main way this change could do damage. *(Strengthened: every fixture document except the two material cases asserts — the 12 prescribed-count matches are a subset.)*
+- [x] 4.4 Implement the three levels — corroborated / structured / eliminated — in the laps branch, replacing the literal `"confidence": 1.0` at `interval_lens.py:878`. *(`_lap_confidence(raw_segments, laps) -> (level, value)`; corroborated and structured share 1.0 deliberately — design open question 1 defers the numeric split to add-workout-prior — so production confidence moves ONLY on the two eliminated documents.)*
+- [x] 4.5 Add the assert verdict to the document in `base` so BOTH producers carry it, and make `CONFIDENCE_ASSERT_MIN` the single place the comparison happens. *(`asserts` is stamped by `_verdict()` — the one comparison — on both branch returns; it cannot literally live in `base` because confidence is branch-computed, but both producers and both paths carry it.)*
+- [x] 4.6 Mutation-prove: hardcoding the level back to `corroborated` turns the suite red; so does inverting the verdict. *(Eliminated made unreachable → 4 tests fail; verdict inverted → 6 fail across lap AND stream paths; reverted green.)*
 
 ## 5. Contract, page, and the second version marker
 

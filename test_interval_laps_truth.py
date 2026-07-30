@@ -160,6 +160,72 @@ def test_a_routine_trailing_fragment_is_immaterial(date):
     assert il._size_discard_is_material(segs, laps) is False
 
 
+def test_lap_confidence_is_no_longer_constant():
+    """Task 4.1 of fix-lap-confidence: two lap-sourced documents with
+    different evidence must not carry the same confidence. The strides run's
+    shape exists only because the size floor removed the prescribed reps; the
+    5×1 km set follows directly from its recorded structure."""
+    strides = build("2026-07-29")
+    clean = build("2026-07-10")
+    assert strides["confidence"] != clean["confidence"]
+    assert strides["confidence"] < il.CONFIDENCE_ASSERT_MIN
+    assert strides["asserts"] is False
+    assert clean["asserts"] is True
+    # NON-GOAL guard: this change hedges the document, it does not correct it
+    # - the shape still needs the prescription (add-workout-prior).
+    assert strides["shape"] == "block"
+    assert strides["label"] == "32 min block"
+
+
+def test_lagrasse_hedges_like_the_strides_run():
+    """The identical failure at 4×30 s: '24 min block' stops asserting."""
+    doc = build("2025-12-26")
+    assert doc["asserts"] is False
+    assert doc["confidence"] < il.CONFIDENCE_ASSERT_MIN
+    assert doc["shape"] == "block" and doc["label"] == "24 min block"
+
+
+@pytest.mark.parametrize("date", ["2026-04-10", "2025-10-17"])
+def test_a_step_demotion_never_lowers_confidence(date):
+    """Spec: device-corroborated demotion never hedges. Both sets exist only
+    because change 2's step rule demoted full-size ACTIVE bookends — that is
+    the device's own evidence, and hedging on it would punish the engine for
+    being right."""
+    doc = build(date)
+    assert doc["asserts"] is True
+    assert doc["confidence"] >= il.CONFIDENCE_ASSERT_MIN
+
+
+def test_every_immaterial_document_still_asserts():
+    """Task 4.3, the anti-regression guard: over-broad hedging is the main way
+    this change could do damage. Every fixture document except the two
+    material-discard cases keeps asserting — which subsumes 'every set whose
+    found matches its prescribed count asserts' (the 12 prescribed-count
+    matches are all in this population)."""
+    for date in WORKOUTS:
+        doc = build(date)
+        expected = date not in ("2025-12-26", "2026-07-29")
+        assert doc["asserts"] is expected, f"{date}: asserts must be {expected}"
+
+
+def test_the_three_levels_are_distinguished():
+    """Design D3: the level names are real, not documentation. Corroborated
+    needs a repeated workout step behind the surviving reps; the pyramid's
+    distinct steps and a device block are structured; a material discard is
+    eliminated."""
+    cases = {
+        "2026-07-10": "corroborated",   # 5×1 km on one repeated step
+        "2026-06-26": "structured",     # the 1-2-1 pyramid: no step repeats
+        "2025-12-19": "structured",     # a device-recorded tempo block
+        "2026-07-29": "eliminated",     # the strides run
+    }
+    for date, want in cases.items():
+        summary, laps = load_workout(date)
+        segs = il.segments_from_laps(laps)
+        level, _conf = il._lap_confidence(segs, laps)
+        assert level == want, f"{date}: {level} != {want}"
+
+
 def test_no_real_workout_loses_span_coverage():
     """Across every fixture: demotion never deletes."""
     for date in WORKOUTS:

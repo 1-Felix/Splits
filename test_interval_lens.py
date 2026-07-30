@@ -1218,6 +1218,28 @@ def test_lap_rep_segments_discards_are_empty_on_a_clean_set():
     assert [s.get("rep") for s in segs] == [1, 2, 3]
 
 
+def test_stream_documents_carry_the_assert_verdict_too():
+    """The verdict is part of the shared document contract, not a lap-path
+    extra: the engine decides, the page obeys (fix-lap-confidence D4). A
+    clean, well-separated stream detection asserts."""
+    spans = [(300, 2.5)]
+    for _ in range(5):
+        spans += [(240, 4.0), (120, 2.0)]
+    spans += [(300, 2.5)]
+    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "reps"
+    assert doc["asserts"] is True
+
+
+def test_a_steady_stream_document_carries_a_verdict():
+    """Every document carries the verdict — a steady run included, so the
+    page never has to distinguish 'absent because old' from 'absent because
+    steady'."""
+    doc = il.build_document(make_streams([(1200, 2.5)]), work_floor=3.0)
+    assert doc["shape"] == "steady"
+    assert "asserts" in doc
+
+
 def _laps_doc(dists, summary=None, pace_s_per_km=300, laps=None):
     """A structured-laps `build_document` call for a work-rep distance list —
     the shape the live archive's buggy documents are described in.

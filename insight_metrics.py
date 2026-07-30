@@ -438,9 +438,13 @@ def trend_verdict(weekly: list[dict]) -> str:
     return f"{'closing' if slope < 0 else 'opening'} ≈{abs(round(slope))}s/wk"
 
 
-def assemble_insights(conn, today: dt.date | None = None) -> dict:
+def assemble_insights(conn, today: dt.date | None = None,
+                      goal_sec: int | None = None) -> dict:
     """The complete `insights` block per design D9, or an exception — the
-    caller omits the block entirely rather than emitting a partial one."""
+    caller omits the block entirely rather than emitting a partial one.
+
+    `goal_sec` is this instance's goal, parsed from the plan's race.goalTime;
+    GOAL_HALF_S is only the fallback for a caller that has no plan."""
     today = today or dt.date.today()
     efficiency, cadence = monthly_series(conn, today)
     if not efficiency:
@@ -456,7 +460,7 @@ def assemble_insights(conn, today: dt.date | None = None) -> dict:
             "byYear": best_efforts_by_year(conn),
         },
         "recordsFeed": records_feed(conn),
-        "trajectory": {"goalSec": GOAL_HALF_S,
+        "trajectory": {"goalSec": goal_sec or GOAL_HALF_S,
                        "weekly": weekly_trajectory(conn, today)},
         "yoy": yoy_series(conn, today),
     }

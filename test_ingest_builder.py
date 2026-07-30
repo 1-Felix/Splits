@@ -325,6 +325,7 @@ def test_rhr_trend_absent_without_data():
 
 # ── the archive pass (add-ingest-archive) ────────────────────────────────────
 import json
+import os
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -1066,6 +1067,129 @@ def test_both_pipelines_agree_on_the_same_run():
     assert abs(a - b) <= tolerance, (
         f"quality.workDistM diverged beyond the stated tolerance: "
         f"garmin={a} hc={b} tolerance={tolerance}")
+
+
+# ── ingest-coach-loop: main() derives the coach loop ─────────────────────────
+# Note on the clock: main() reads dt.date.today() — unlike build_athlete_data,
+# it has no injectable `today`, so these three tests exercise the real date.
+# The fixture plan's week (2026-07-13…19) is closed and its race date is in
+# the past, which keeps compliance scoreable and the block-lens row derivable
+# whenever the suite runs. If the blockLens assertion ever turns flaky, the
+# fix is to give main() an injectable today — not to weaken the assertion.
+
+_COACH_PLAN = {
+    "race": {"name": "First Half", "date": "2026-09-06",
+             "goalTime": "2:29:59", "goalPaceSecPerKm": 427},
+    "block": [{"wk": "Wk 1", "label": "Jul 13", "mon": "2026-07-13",
+               "sun": "2026-07-19", "phase": "Base", "km": 11, "long": "6 km",
+               "focus": "Start", "days": [
+                   {"day": "Mon", "date": "2026-07-13", "kind": "run",
+                    "title": "Easy", "load": "Easy", "km": 6},
+                   {"day": "Tue", "date": "2026-07-14", "kind": "rest",
+                    "title": "Rest", "load": "Easy", "km": 0},
+                   {"day": "Wed", "date": "2026-07-15", "kind": "run",
+                    "title": "Easy", "load": "Easy", "km": 5},
+                   {"day": "Thu", "date": "2026-07-16", "kind": "rest",
+                    "title": "Rest", "load": "Easy", "km": 0},
+                   {"day": "Fri", "date": "2026-07-17", "kind": "rest",
+                    "title": "Rest", "load": "Easy", "km": 0},
+                   {"day": "Sat", "date": "2026-07-18", "kind": "rest",
+                    "title": "Rest", "load": "Easy", "km": 0},
+                   {"day": "Sun", "date": "2026-07-19", "kind": "rest",
+                    "title": "Rest", "load": "Easy", "km": 0}]}],
+}
+
+
+def _run_main_in(td: str) -> None:
+    old = os.environ.get("SPLITS_DATA_DIR")
+    os.environ["SPLITS_DATA_DIR"] = td
+    try:
+        ingest_builder.main()
+    finally:
+        if old is None:
+            os.environ.pop("SPLITS_DATA_DIR", None)
+        else:
+            os.environ["SPLITS_DATA_DIR"] = old
+
+
+def test_main_derives_the_coach_blocks_and_writes_the_briefing():
+    # D3 — the ingest build derives what the Garmin build derives.
+    with tempfile.TemporaryDirectory() as td:
+        store = {r["sessionUid"]: r for r in RUNS}
+        Path(td, "ingested-runs.json").write_text(json.dumps(store), encoding="utf-8")
+        Path(td, "plan-data.js").write_text(
+            "export const planData = " + json.dumps(_COACH_PLAN) + ";\n",
+            encoding="utf-8")
+        _run_main_in(td)
+        out = Path(td, "garmin-data.js").read_text(encoding="utf-8")
+        assert '"compliance"' in out, "compliance must land in the telemetry"
+        assert '"blockLens"' in out
+        assert Path(td, "coach-briefing.md").exists(), "/coach needs a briefing"
+        brief = Path(td, "coach-briefing.md").read_text(encoding="utf-8")
+        assert "## Plan vs actual" in brief
+        # D7 — the goal reaches predictions without the retired regex
+        assert '"halfGoal": "2:29:59"' in out
+
+
+def test_an_unreadable_plan_still_yields_telemetry():
+    # D4 — the telemetry guarantee, plan half.
+    with tempfile.TemporaryDirectory() as td:
+        store = {r["sessionUid"]: r for r in RUNS}
+        Path(td, "ingested-runs.json").write_text(json.dumps(store), encoding="utf-8")
+        Path(td, "plan-data.js").write_text("this is not javascript {{{",
+                                            encoding="utf-8")
+        _run_main_in(td)
+        out = Path(td, "garmin-data.js").read_text(encoding="utf-8")
+        assert '"recentRuns"' in out, "telemetry lands even with a broken plan"
+        assert '"compliance"' not in out
+
+
+def test_the_ingest_path_banks_its_own_prediction():
+    # D6 — race_predictions is empty on ingest instances, so the goal-gap trend
+    # would stay empty forever. Bank the Riegel estimate under its own source
+    # so the provenance is recorded, not laundered as Garmin's.
+    tmp = _tmpdir()
+    ib.build_archive(tmp, [RUNS[0]], PROFILE)
+    conn = _db(tmp)
+    ib.bank_riegel_prediction(conn, [RUNS[0]], TODAY)
+    row = conn.execute(
+        "SELECT date, half_s, source FROM race_predictions").fetchone()
+    conn.close()
+    assert row[0] == TODAY.isoformat()
+    assert row[1] > 0
+    assert row[2] == "riegel", "not 'sync' — this is not Garmin's predictor"
+
+
+def test_riegel_seconds_agree_with_the_formatted_predictions():
+    # one derivation, two consumers: the banked seconds and the cockpit's
+    # strings must come from the same projection
+    secs = ib._riegel_seconds(RUNS)
+    strings = ib.predictions(RUNS, plan_goal=None)
+    assert ib._fmt_hms(secs["time_5k_s"]) == strings["fiveK"]
+    assert ib._fmt_hms(secs["half_s"]) == strings["halfNow"]
+    assert ib._riegel_seconds([]) is None
+
+
+def test_a_failing_archive_still_yields_telemetry():
+    # D4 — the telemetry guarantee, archive half. This is the property the old
+    # ordering got for free by writing telemetry first. Patched by hand, not
+    # via pytest's monkeypatch fixture: the file's own __main__ runner calls
+    # every test with no arguments.
+    def boom(*_a, **_k):
+        raise RuntimeError("archive is wedged")
+
+    orig = ingest_builder.build_archive
+    ingest_builder.build_archive = boom
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            store = {r["sessionUid"]: r for r in RUNS}
+            Path(td, "ingested-runs.json").write_text(json.dumps(store),
+                                                      encoding="utf-8")
+            _run_main_in(td)
+            assert '"recentRuns"' in Path(td, "garmin-data.js").read_text(
+                encoding="utf-8")
+    finally:
+        ingest_builder.build_archive = orig
 
 
 if __name__ == "__main__":

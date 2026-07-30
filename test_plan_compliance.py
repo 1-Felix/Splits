@@ -410,16 +410,27 @@ def test_assemble_raises_without_rows():
 
 
 # ── fail domains + verify integration (tasks 2.3/4.4, 1.3) ──────────────────
-def test_fetch_compliance_fail_soft_and_independent():
+def test_attach_blocks_step_fail_soft_and_independent():
+    """The properties the retired fetch_* helpers guaranteed, now through the
+    coach_pass seam build_data actually uses: a missing or broken plan omits
+    the compliance key without raising, and compliance survives while the
+    metrics side (insights) has nothing to offer."""
     d = _tmp()
     orig = sg.DATA_DIR
     sg.DATA_DIR = d
     try:
-        # no plan file at all → block omitted, no raise
-        assert sg.fetch_compliance() is None
-        # a broken plan → still None
+        # no plan file at all → no compliance key, no raise; the archive is
+        # empty too, so no derived key lands at all
+        conn = _seed_archive(d)
+        conn.close()
+        data = {"predictions": {}}
+        sg.attach_blocks_step(data)
+        assert "compliance" not in data
+        # a broken plan → still omitted, still no raise
         _plan_file(d, "throw new Error('kaput');")
-        assert sg.fetch_compliance() is None
+        data = {"predictions": {}}
+        sg.attach_blocks_step(data)
+        assert "compliance" not in data
         # healthy plan + scored archive → block present even though the
         # METRICS side (insights) has nothing to offer (independence)
         conn = _seed_archive(d)
@@ -428,9 +439,11 @@ def test_fetch_compliance_fail_soft_and_independent():
         # rescore relative to the real today so weeks_to_score finds the week
         conn.close()
         _plan_file(d, "export const planData = " + json.dumps(_plan()) + ";")
-        assert sg.fetch_insights() is None, "no run_metrics → insights side down"
-        block = sg.fetch_compliance()
-        assert block and block["days"], "compliance side survives alone"
+        data = {"predictions": {}}
+        sg.attach_blocks_step(data)
+        assert "insights" not in data, "no run_metrics → insights side down"
+        assert data.get("compliance") and data["compliance"]["days"], \
+            "compliance side survives alone"
     finally:
         sg.DATA_DIR = orig
 

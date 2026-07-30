@@ -375,7 +375,9 @@ def test_metrics_step_extracts_banks_and_assembles():
             "empty table triggered the history backfill, then today was banked"
         conn.close()
 
-        insights = sg.fetch_insights()
+        data = {"predictions": {}}
+        sg.attach_blocks_step(data)
+        insights = data.get("insights")
         assert insights is not None and insights["metricsVersion"] >= 1
         assert insights["efficiency"]["monthly"][0]["month"] == "2026-06"
         sg.metrics_step(_FakeClient(), pred_doc)   # idempotent second sync
@@ -389,8 +391,10 @@ def test_metrics_step_extracts_banks_and_assembles():
 
 def test_metrics_failsoft_and_insights_omitted():
     """6.4 fail-soft proof: with the archive db unreachable, every new step
-    degrades to a warning through the exact safe() wrappers main() uses, and
-    fetch_insights yields None so the `insights` key is simply absent."""
+    degrades to a warning through the exact safe() wrappers main() and
+    build_data use, and the derived keys are simply absent — the regression
+    the coach_pass extraction almost introduced, since build_data itself is
+    NOT safe()-wrapped and an unguarded open_archive would sink the sync."""
     def boom(*_a, **_k):
         raise RuntimeError("db locked / volume gone")
 
@@ -400,7 +404,10 @@ def test_metrics_failsoft_and_insights_omitted():
         assert sg.safe(lambda: sg.metrics_step(_FakeClient(), {}), None, "metrics step") is None
         assert sg.safe(lambda: sg.wellness_step(_FakeClient(), {}, []), None,
                        "wellness banking") is None
-        assert sg.fetch_insights() is None, "failed assembly → no insights, never a partial"
+        data = {"predictions": {}}
+        assert sg.safe(lambda: sg.attach_blocks_step(data), None,
+                       "coach block assembly") is None
+        assert "insights" not in data, "failed assembly → no insights, never a partial"
     finally:
         sg.activity_archive.open_archive = orig
 
@@ -410,7 +417,9 @@ def test_fetch_insights_empty_archive_returns_none():
     orig = _patched_dirs(d)
     try:
         arch.open_archive(d).close()   # valid but empty archive
-        assert sg.fetch_insights() is None, \
+        data = {"predictions": {}}
+        sg.attach_blocks_step(data)
+        assert "insights" not in data, \
             "no run_metrics yet → block omitted, dashboard keeps working"
     finally:
         sg.DATA_DIR, sg.CACHE_DIR = orig

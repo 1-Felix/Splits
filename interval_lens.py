@@ -606,8 +606,38 @@ def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
     return set(counts)
 
 
-def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
-    """Which lap-derived work segments are genuine reps.
+def _lap_survivors(segments: list[dict], laps: list[dict],
+                   size_floor: bool = True) -> tuple[set, set, set]:
+    """The survivor selection both filters produce, as bare index sets:
+    `(survivors, size_discards, step_discards)` over lap positions.
+
+    Extracted from `_lap_rep_segments` so the materiality check (design D2 of
+    fix-lap-confidence) can re-run the SAME selection with the size floor
+    lifted and compare survivor sets — a literal statement of "the shape
+    depends on the discard" rather than a proxy for it. Pure: no state, and
+    the caller's segments and laps are never mutated.
+
+    `size_floor=False` lifts WORK_MIN_S/WORK_MIN_M only; the step rule always
+    applies — it is the device's own evidence, not an engine guess."""
+    work = {i for i, s in enumerate(segments) if s["role"] == "work"}
+    sized = {i for i in work
+             if not size_floor
+             or (segments[i]["durS"] >= WORK_MIN_S
+                 and segments[i]["distM"] >= WORK_MIN_M)}
+    steps = _rep_step_indices(laps, sized)
+    survivors = sized if steps is None else {
+        i for i in sized if laps[i].get("wktStepIndex") in steps}
+    return survivors, work - sized, sized - survivors
+
+
+def _lap_rep_segments(segments: list[dict],
+                      laps: list[dict]) -> tuple[list[dict], dict]:
+    """Which lap-derived work segments are genuine reps — returns the re-roled
+    segments plus the discard bookkeeping `{"size": set, "step": set}` of lap
+    indices each filter rejected (design D1 of fix-lap-confidence: the two
+    filters are NOT equivalent — a size discard may hedge the document's
+    confidence, a step demotion never does, so they must stay distinguishable
+    rather than collapse into one 'discarded' set).
 
     Two filters, one question. The SIZE floor (`WORK_MIN_S` / `WORK_MIN_M`,
     the same one `find_bouts` applies to the stream path) rejects fragments —
@@ -639,12 +669,7 @@ def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
     """
     assert len(segments) == len(laps), \
         "segments_from_laps must emit exactly one segment per lap, in order"
-    sized = {i for i, s in enumerate(segments)
-             if s["role"] == "work"
-             and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}
-    steps = _rep_step_indices(laps, sized)
-    survivors = sized if steps is None else {
-        i for i in sized if laps[i].get("wktStepIndex") in steps}
+    survivors, size_discards, step_discards = _lap_survivors(segments, laps)
 
     ordered = sorted(survivors)
     first = ordered[0] if ordered else None
@@ -669,7 +694,7 @@ def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
                 else:
                     seg["role"] = "recovery"
         out.append(seg)
-    return out
+    return out, {"size": size_discards, "step": step_discards}
 
 
 def _segments_from_bouts(bouts, series, dist_at, hr, total_s,
@@ -831,7 +856,8 @@ def build_document(streams: dict | None, summary: dict | None = None,
     base = {"version": INTERVAL_VERSION, "guidedBy": None}
 
     if laps and laps_are_structured(summary, laps):
-        segments = _lap_rep_segments(segments_from_laps(laps, gap_grid), laps)
+        segments, discards = _lap_rep_segments(
+            segments_from_laps(laps, gap_grid), laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)

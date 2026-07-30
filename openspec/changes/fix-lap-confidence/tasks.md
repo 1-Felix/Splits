@@ -7,11 +7,11 @@
 
 ## 2. Discard bookkeeping — the two filters are distinct (design D1)
 
-- [ ] 2.1 Write the failing test: `_lap_rep_segments` reports which work segments the SIZE floor rejected separately from those the STEP rule rejected.
-- [ ] 2.2 Implement it — surface the two discard sets alongside the segments. `sized`, `steps` and `survivors` already exist as locals at `interval_lens.py:642-647`; this exposes them rather than deriving anything new.
-- [ ] 2.3 Verify the existing contract is untouched: the `assert len(segments) == len(laps)` invariant, one segment per lap in order, every segment's `t0/t1/d0/d1` chaining with no gap, and `rep` renumbering 1..N over survivors.
-- [ ] 2.4 Update every call site of `_lap_rep_segments` and confirm no other module reaches into it.
-- [ ] 2.5 Mutation-prove: collapsing the two discard sets into one turns the suite red.
+- [x] 2.1 Write the failing test: `_lap_rep_segments` reports which work segments the SIZE floor rejected separately from those the STEP rule rejected.
+- [x] 2.2 Implement it — surface the two discard sets alongside the segments. `sized`, `steps` and `survivors` already exist as locals at `interval_lens.py:642-647`; this exposes them rather than deriving anything new. *(Survivor selection extracted into `_lap_survivors(segments, laps, size_floor=True)` so design D2's materiality check can re-run it with the floor lifted; `_lap_rep_segments` returns `(segments, {"size": …, "step": …})`.)*
+- [x] 2.3 Verify the existing contract is untouched: the `assert len(segments) == len(laps)` invariant, one segment per lap in order, every segment's `t0/t1/d0/d1` chaining with no gap, and `rep` renumbering 1..N over survivors. *(All pre-existing `_lap_rep_segments` and whole-fixture span-coverage tests pass unchanged.)*
+- [x] 2.4 Update every call site of `_lap_rep_segments` and confirm no other module reaches into it. *(One call in `build_document`, seven in `test_interval_lens.py`; no other module references it.)*
+- [x] 2.5 Mutation-prove: collapsing the two discard sets into one turns the suite red. *(`{"size": size|step, "step": set()}` → `test_lap_rep_segments_reports_size_and_step_discards_separately` fails; reverted green.)*
 
 ## 3. Materiality — a discard only counts if it decided something (design D2)
 

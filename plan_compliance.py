@@ -40,7 +40,8 @@ from pathlib import Path
 import activity_archive
 import plan_prescription
 
-COMPLIANCE_VERSION = 2   # 2: rep-level quality verdicts (add-plan-prescription)
+COMPLIANCE_VERSION = 3   # 2: rep-level quality verdicts (add-plan-prescription);
+                         # 3: non-run slots carry none (the bike-intervals seam)
 
 # Scoring constants (design D4) — coarse by design.
 DIST_DONE_RATIO = 0.85     # matched km ≥ 85% of planned → distance satisfied

@@ -217,7 +217,7 @@
     }
   },
   "compliance": {
-    "complianceVersion": 2,
+    "complianceVersion": 3,
     "days": [
       {
         "date": "2026-07-06",

@@ -1,6 +1,9 @@
-# workout-prior Specification (delta)
+# workout-prior Specification
 
-## ADDED Requirements
+## Purpose
+The Garmin workout definition as the interval lens's prior: acquisition and write-once banking of raw payloads (cache-on-first-sight plus a one-time backfill), the FIT step-tree reader that joins flattened steps to executed laps with all-or-nothing validation, the operations the prior is allowed (VETO / POINT / ADMIT, set membership by target value, time-named sets, prescription corroboration), and the per-run `guidedBy` provenance derived from the payload's own update stamp.
+
+## Requirements
 
 ### Requirement: A run's workout definition is acquired at sync time and cached on first sight
 The sync pipeline SHALL fetch the Garmin workout named by an archived running
@@ -53,16 +56,16 @@ SHALL fall back to inference. A partial or best-guess mapping SHALL NOT be used.
 - **THEN** the prior is applied
 
 ### Requirement: The document records whether its prescription is trustworthy for THIS run
-*(Corrected 2026-07-30: the premise "the workout service reports no update
-stamp" was wrong — the payload's `updatedDate` is populated, so staleness is
-per-run detectable and the provenance-only rule is superseded.)*
-
 The system SHALL record each banked workout's provenance (first sight vs
 backfill) for audit, and SHALL decide the prior's authority per activity: a
 prior whose payload was updated AFTER the activity's start time SHALL be
 marked stale in the document and SHALL NOT be treated as corroborating
 evidence. A workout unedited since before the run carries full authority
 regardless of how it was acquired.
+
+*(Corrected 2026-07-30: the premise "the workout service reports no update
+stamp" was wrong — the payload's `updatedDate` is populated, so staleness is
+per-run detectable and the provenance-only rule is superseded.)*
 
 #### Scenario: An edited workout is stale for runs that predate the edit
 - **WHEN** a workout's `updatedDate` is after one activity's start and before another's
@@ -76,7 +79,6 @@ regardless of how it was acquired.
 - **WHEN** no workout is available for the run
 - **THEN** the document records the absence rather than omitting the field
 
-## ADDED Requirements — what the prior changes about reading a run
 
 *(`interval-lens` is not an OpenSpec capability — it shipped through the
 superpowers/SDD workflow and its ledgers were deleted on completion, so git

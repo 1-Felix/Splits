@@ -321,6 +321,11 @@ def validate(d: dict) -> list[str]:
         if intervals is not None:
             check(intervals.get("shape") in ("reps", "block", "progression", "steady"),
                   f"recentRuns detail.intervals.shape invalid: {intervals.get('shape')!r}", e)
+            # fix-lap-confidence D4: the engine decides whether a document
+            # asserts its shape and the document carries the verdict — the
+            # page renders it without threshold arithmetic of its own.
+            check(isinstance(intervals.get("asserts"), bool),
+                  f"recentRuns detail.intervals.asserts must be a bool: {intervals.get('asserts')!r}", e)
 
     return e
 

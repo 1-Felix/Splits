@@ -639,7 +639,10 @@ def build_athlete_data(runs: list[dict], profile: dict, today: dt.date,
 # Bump when synth_streams or the distilled-detail derivation changes shape —
 # the marker in archive_meta makes the next build recompute every run's
 # derived artifacts (mirrors insight_metrics.METRICS_VERSION for metrics rows).
-INGEST_DISTILL_VERSION = 4  # 4: intervals reshaped by the final review — reps
+INGEST_DISTILL_VERSION = 5  # 5: intervals carry the `asserts` verdict
+                             #    (fix-lap-confidence D4) — stored distilled
+                             #    detail must recompute to gain the key
+                             # 4: intervals reshaped by the final review — reps
                              #    carry gapS, set.paceS is raw pace, ragged
                              #    pyramid labels collapse to "N reps", and the
                              #    streams come from synth_streams

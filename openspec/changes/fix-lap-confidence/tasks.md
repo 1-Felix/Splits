@@ -31,11 +31,11 @@
 
 ## 5. Contract, page, and the second version marker
 
-- [ ] 5.1 `validate_data.py` (~line 320, beside the existing `intervals.shape` check): assert the verdict field's presence and type on `detail.intervals`.
-- [ ] 5.2 `run.dc.html:550` — replace `iv.confidence != null && iv.confidence < 0.5` with a read of the verdict. Delete the literal; this closes handoff **M2**.
-- [ ] 5.3 `test_run_page.mjs`: a hedged document renders "possible structure" and an asserting one does not. Mutation-prove the assertion CAN fail — handoff records a page assertion that could not, because a `flex:1` spacer absorbed the delta it measured.
-- [ ] 5.4 Bump `INGEST_DISTILL_VERSION` (`ingest_builder.py:642`) — the verdict lands in `base`, so Health Connect documents change shape too and their stored distilled detail must be recomputed. Confirm `test_ingest_builder.py` still passes.
-- [ ] 5.5 Note in the change folder that the Garmin side has no equivalent marker (handoff **P2.4**), so `detail_distilled_json.intervals` will not gain the verdict retroactively there. Out of scope; recorded so it is not rediscovered.
+- [x] 5.1 `validate_data.py` (~line 320, beside the existing `intervals.shape` check): assert the verdict field's presence and type on `detail.intervals`. *(`isinstance(intervals.get("asserts"), bool)` — safe because garmin-data.js re-distills fresh every sync.)*
+- [x] 5.2 `run.dc.html:550` — replace `iv.confidence != null && iv.confidence < 0.5` with a read of the verdict. Delete the literal; this closes handoff **M2**. *(`iv.asserts === false` — `=== false` so pre-verdict documents are not hedged for their age, the P1.2 precedent.)*
+- [x] 5.3 `test_run_page.mjs`: a hedged document renders "possible structure" and an asserting one does not. Mutation-prove the assertion CAN fail — handoff records a page assertion that could not, because a `flex:1` spacer absorbed the delta it measured. *(Both assertions pre-existed (LOWCONF/REP fixtures); proven failable by running the new page code against the old fixtures — the hedge assertion failed until the fixtures carried `asserts`, i.e. the page really renders the verdict, not the confidence. ALL PASS after.)*
+- [x] 5.4 Bump `INGEST_DISTILL_VERSION` (`ingest_builder.py:642`) — the verdict lands in `base`, so Health Connect documents change shape too and their stored distilled detail must be recomputed. Confirm `test_ingest_builder.py` still passes. *(→ 5; 56 passed.)*
+- [x] 5.5 Note in the change folder that the Garmin side has no equivalent marker (handoff **P2.4**), so `detail_distilled_json.intervals` will not gain the verdict retroactively there. Out of scope; recorded so it is not rediscovered. *(`notes.md`.)*
 
 ## 6. Version bump and local verification
 

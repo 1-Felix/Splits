@@ -123,3 +123,73 @@ def test_laps_with_no_indices_still_get_no_step_mapping_but_not_a_veto():
             for l in laps_of("2026-07-10")]
     steps = il.workout_steps_for(bare, workout("2026-07-10"))
     assert steps is not None and 1 in steps
+
+
+# ── the prior upstream of the branch (design D4) ─────────────────────────────
+def build(date: str, workout_payload: dict | None = None,
+          laps: list[dict] | None = None) -> dict:
+    """A document from the paired fixtures — flat streams (the lap path takes
+    everything from the device), real laps, real workout definition."""
+    laps = laps_of(date) if laps is None else laps
+    summary = dict(LAPS[date]["summary"])
+    summary.setdefault("startTimeLocal", f"{date} 08:00:00")
+    total_s = int(sum(float(l.get("duration") or 0) for l in laps)) + 60
+    t = list(range(0, total_s, 5))
+    streams = {"t": t, "v": [3.0] * len(t)}
+    return il.build_document(streams, summary, laps, workout_payload)
+
+
+def test_a_prescribed_set_reports_prescribed_on_the_lap_path():
+    """D4: the prior is resolved BEFORE the laps/stream branch, so the lap
+    document stops hardcoding prescribed: None — `2026-07-10` prescribes 5×."""
+    doc = build("2026-07-10", workout("2026-07-10"))
+    assert doc["shape"] == "reps"
+    assert doc["set"]["found"] == 5
+    assert doc["set"]["prescribed"] == 5
+
+
+def test_without_a_workout_nothing_changes():
+    """The guard for both producers: build_document with no workout is
+    byte-identical to before the parameter existed — ingest_builder passes
+    none and must be unaffected."""
+    assert build("2026-07-10") == build("2026-07-10", None)
+    doc = build("2026-07-10")
+    assert doc["set"]["prescribed"] is None
+
+
+def test_two_unprescribed_work_laps_are_not_a_set():
+    """The other half of the unified floor (P2.7b retired): WITHOUT a
+    prescription, two work laps meet the same 3-rep inference minimum the
+    stream path has always had — two unexplained bouts are more often a hill
+    and a headwind than a session. With a big surviving lap the shape falls
+    to block, exactly as the stream path would read it."""
+    real = laps_of("2026-07-10")
+    two = real[:4] + [dict(real[11])]           # wu, rep, rec, rep, cooldown
+    doc = build("2026-07-10", None, laps=two)   # NO workout
+    assert doc["shape"] != "reps"
+    # and WITH the prescription the same laps are an honest 2-of-5
+    assert build("2026-07-10", workout("2026-07-10"), laps=two)["shape"] == "reps"
+
+
+def test_a_bailed_session_reports_its_shortfall_not_steady():
+    """Spec scenario (P3.1 retired): two executed reps of a prescribed four
+    classify as a 2-rep set with prescribed 4 — the session the athlete gave
+    up on is exactly the one the guardrail exists for. Synthetic: the first
+    two reps of 2026-07-10's five, then a cooldown."""
+    real = laps_of("2026-07-10")
+    bailed = real[:4] + [dict(real[11])]        # wu, rep, rec, rep, cooldown
+    doc = build("2026-07-10", workout("2026-07-10"), laps=bailed)
+    assert doc["shape"] == "reps", "a prescribed set cut short is still a set"
+    assert doc["set"]["found"] == 2
+    assert doc["set"]["prescribed"] == 5
+
+
+def test_an_abandoned_workout_reports_found_zero(monkeypatch):
+    """Design D10: warm-up only — a real training event, not a plain easy
+    run. The document reports found: 0 against the prescription."""
+    real = laps_of("2026-07-10")
+    abandoned = [dict(real[0])]                 # the 2 km warm-up alone
+    doc = build("2026-07-10", workout("2026-07-10"), laps=abandoned)
+    assert doc["set"] is not None
+    assert doc["set"]["found"] == 0
+    assert doc["set"]["prescribed"] == 5

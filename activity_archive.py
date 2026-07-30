@@ -757,7 +757,19 @@ def runs_missing_intervals(conn: sqlite3.Connection, version: int) -> list[tuple
               AND (i.activity_id IS NULL
                    OR (a.laps_fetched_at IS NOT NULL
                        AND i.source <> 'laps'
-                       AND datetime(i.computed_at) <= datetime(a.laps_fetched_at)))
+                       AND datetime(i.computed_at) <= datetime(a.laps_fetched_at))
+                   -- the workout clause mirrors the lap clause: a document
+                   -- computed before its run's workout definition was banked
+                   -- is stale even though the engine did not change
+                   -- (add-workout-prior D5). The timestamp alone retires a
+                   -- run after one rescore — computed_at then postdates
+                   -- fetched_at — so runs whose prior legitimately yields no
+                   -- prescription cannot loop nightly.
+                   OR EXISTS (
+                        SELECT 1 FROM workouts w
+                        WHERE w.workout_id =
+                              json_extract(a.summary_json, '$.workoutId')
+                          AND datetime(i.computed_at) <= datetime(w.fetched_at)))
             ORDER BY a.start_time_local""",
         (version,),
     ).fetchall()

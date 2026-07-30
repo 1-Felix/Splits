@@ -24,11 +24,11 @@
 
 ## 4. The prior sits upstream of the branch (design D4)
 
-- [ ] 4.1 Write the failing test: `build_document` resolves the prior BEFORE the laps/stream branch — a lap-sourced document from a run with a prescribed set carries `set.prescribed = numberOfIterations` (today the laps branch hardcodes `"prescribed": None` at ~line 900).
-- [ ] 4.2 Restructure `build_document`: derive the prior from the raw workout payload (new `workout` parameter, default None) ahead of the branch; both paths read one prior contract. `ingest_builder` continues to pass no workout and its behaviour is unchanged — add the guard test.
-- [ ] 4.3 Unify the rep-count floor (retires handoff P2.7b and P3.1): `max(2, min(REPS_MIN_COUNT, expect_reps))` where a prior expects a set, on BOTH paths. `2026-06-05` must stop reading `"2 reps"` via the lap path's bare `>= 2`.
-- [ ] 4.4 Write the failing test (design D10): a workout begun and abandoned — warm-up executed, no rep laps — reports `found: 0, prescribed: N`, not `steady` with no set.
-- [ ] 4.5 Mutation-prove: reverting the floor unification (lap path back to bare `>= 2`) turns the suite red.
+- [x] 4.1 Write the failing test: `build_document` resolves the prior BEFORE the laps/stream branch — a lap-sourced document from a run with a prescribed set carries `set.prescribed = numberOfIterations` (today the laps branch hardcodes `"prescribed": None` at ~line 900).
+- [x] 4.2 Restructure `build_document`: derive the prior from the raw workout payload (new `workout` parameter, default None) ahead of the branch; both paths read one prior contract. `ingest_builder` continues to pass no workout and its behaviour is unchanged — add the guard test. *(`prior` param replaced by `workout` — the raw payload; all callers passed None positionally. `derive_intervals` passes the banked payload; `runs_missing_intervals` gains a workout clause mirroring the lap clause so a late-banked workout triggers one rescore.)*
+- [x] 4.3 Unify the rep-count floor (retires handoff P2.7b and P3.1): `max(2, min(REPS_MIN_COUNT, expect_reps))` where a prior expects a set, on BOTH paths. `2026-06-05` must stop reading `"2 reps"` via the lap path's bare `>= 2`. *(The handoff's `max(2, min(REPS_MIN_COUNT, expect))` formula still reads 3 at expect 4 and cannot report the 2-of-4 case it was written for — implemented as `2 if expect >= 2 else REPS_MIN_COUNT`, recorded in `_reps_min`'s docstring. Three synthetic tests that pinned the lap path's bare `>= 2` moved to 3-rep fixtures.)*
+- [x] 4.4 Write the failing test (design D10): a workout begun and abandoned — warm-up executed, no rep laps — reports `found: 0, prescribed: N`, not `steady` with no set. *(Plus the 2-of-4 bailed case and an unprescribed-2-laps pin.)*
+- [x] 4.5 Mutation-prove: reverting the floor unification (lap path back to bare `>= 2`) turns the suite red. *(`>= 2` restored → `test_two_unprescribed_work_laps_are_not_a_set` fails; reverted green.)*
 
 ## 5. VETO — a prescribed easy step is never work (design D2)
 

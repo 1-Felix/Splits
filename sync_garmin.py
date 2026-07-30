@@ -1175,11 +1175,14 @@ def derive_intervals(conn) -> dict:
     scored = 0
     for aid, start_local in pending:
         try:
+            summary = activity_archive.summary_payload(conn, aid) or {}
+            wid = summary.get("workoutId")
             doc = interval_lens.build_document(
                 activity_archive.streams_payload(conn, aid),
-                activity_archive.summary_payload(conn, aid) or {},
+                summary,
                 activity_archive.laps_payload(conn, aid),
-                None, bounds, floor)
+                activity_archive.workout_payload(conn, wid) if wid else None,
+                bounds, floor)
         except Exception as e:  # noqa: BLE001 — one bad stream must not sink the rest
             warn(f"interval detection failed for {aid} ({type(e).__name__}: {e})")
             continue
@@ -1733,10 +1736,10 @@ def verify_archive() -> int:
 
         # Workouts (add-workout-prior D5): a small constant `unbanked` is the
         # normal state — deleted workouts can never be fetched.
-        wcov = activity_archive.workouts_coverage(conn)
-        log(f"  workouts   : {wcov['banked']}/{wcov['referenced']} referenced "
+        wkcov = activity_archive.workouts_coverage(conn)
+        log(f"  workouts   : {wkcov['banked']}/{wkcov['referenced']} referenced "
             f"definitions banked"
-            + (f", {wcov['unbanked']} unbanked" if wcov["unbanked"] else ""))
+            + (f", {wkcov['unbanked']} unbanked" if wkcov["unbanked"] else ""))
 
         # Courses are opt-in (the plan's race names one or it does not), so an
         # empty table is the normal state and never a failure.

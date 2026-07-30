@@ -49,10 +49,10 @@
       `node tools/style-audit.mjs layout` — /run still passes at 390.
 - [x] 4.2 Re-run every mutation above on the finished branch; ledger in
       notes.md.
-- [ ] 4.3 Merge → CI → NUC deploy → `POST /api/sync`. Post-deploy: current
+- [x] 4.3 Merge → CI → NUC deploy → `POST /api/sync`. Post-deploy: current
       block's quality days carry verdicts; statuses byte-identical to
       pre-deploy (capture before); briefing renders the sentences;
       `run_intervals` untouched; `verify_archive` exit 0.
-- [ ] 4.4 Spot-check /run/:id for one quality day (e.g. a 4×1 km session) in
+- [x] 4.4 Spot-check /run/:id for one quality day (e.g. a 4×1 km session) in
       the browser; update HANDOFF-interval-lens.md (P3.2 closed — the arc's
       roadmap is complete) and memory.

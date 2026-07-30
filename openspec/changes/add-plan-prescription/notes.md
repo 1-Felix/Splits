@@ -76,4 +76,11 @@ ALL PASS; style-audit `/run` clean at 390.
 missed, 07-30…08-02 pending. Every one of these must be IDENTICAL after the
 version-2 rescore — only `quality_json` may appear.
 
-## Post-deploy (filled after 4.3/4.4)
+## Post-deploy (2026-07-30 evening, NUC, three deploys)
+
+Final state at `116e5a1`: 35 rows all at COMPLIANCE_VERSION 3, statuses
+byte-identical to the pre-deploy capture, 7 run verdicts live, zero verdicts
+on cross days or unplanned rows, `verify_archive` exit 0. The briefing's
+2026-07-29 lines read `done · 4/4 reps` (planned) and plain `unplanned`
+(shuffle). The /run API serves `plan.quality` verbatim; the page rendering is
+pinned by the Playwright suite against a real Chromium.

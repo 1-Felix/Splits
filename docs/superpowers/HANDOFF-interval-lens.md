@@ -3,6 +3,33 @@
 This file is the list of what is **not** done. Everything here was found, understood
 and deliberately deferred; none of it is a surprise waiting to be discovered.
 
+> **2026-07-30 (fourth ship of the day) — P3.2 SHIPPED: the roadmap of this
+> arc is COMPLETE.** `add-plan-prescription`
+> (`openspec/changes/add-plan-prescription/`): `plan_prescription.py` parses
+> the plan's structured core (rep sets + `~pace` steady targets; everything
+> else honestly refused — all 29 live `val` strings pinned, with a
+> corpus-currency test), and `plan_compliance` joins it against the interval
+> document into a rep-level verdict (`quality_json`, schema v14,
+> COMPLIANCE_VERSION 3). **Annotate-only** — statuses byte-identical before
+> and after, verified in production. Surfaces: briefing status cells and the
+> /run plan card. Decided with Felix: compliance only — the ENGINE's prior
+> remains the watch's workout; the plan route is the coach's-intent layer
+> (and Max's only prescription source).
+>
+> Two seams found live on first deploy, both fixed and mutation-pinned the
+> same evening: a cross day's bike intervals parsed and got a "no interval
+> document" verdict (the annotator now shares `_is_run_slot`), and an
+> unplanned same-day shuffle was annotated against a prescription it was
+> never given (`planned_kind IS NULL` rows are skipped). First production
+> verdicts include a real coaching signal: `2026-07-03` reads `4/4 reps,
+> 0 inside 5:25–5:35` — all four measured 4:52–5:16, run too HOT.
+>
+> **What remains in this file is post-arc tail, not roadmap:** P2.2 boundary
+> extension, M3's second half, the `corroborated`/`structured` distinction,
+> POINT's variance guard, the `/progress` 390 px overflow, and the parked
+> workout-push idea. Next session likely starts at the race (2026-08-09) or
+> the /coach ritual reading its first verdict-bearing briefing.
+
 > **2026-07-30 (later the same day) — `sweep-lens-tail` SHIPPED.** A verification
 > pass measured every open item below against the code at `3f0b9ff`, then one
 > OpenSpec change (`openspec/changes/sweep-lens-tail/`) closed the whole

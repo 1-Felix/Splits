@@ -31,7 +31,24 @@
 | drop the plan-card quality node | run-page quality case | RED (killed) |
 | drop the briefing verdict append | `test_render_speaks_the_rep_verdict_beside_the_status` | RED (killed) |
 
-11 mutations, 11 killed.
+| drop the `_is_run_slot` guard in the annotator | `test_a_cross_days_bike_intervals_are_not_a_rep_verdict_question` | RED (killed) |
+
+12 mutations, 12 killed.
+
+## Found live on first deploy, fixed before final: the bike-intervals seam
+
+The first production rescore annotated `2026-07-17` — **"Bike Intervals"**,
+kind `cross`, km 0 — with `"no interval document"`. The plan prescribes bike
+work in the same `6×3 min hard (Z4 effort)` notation, so the parser read it;
+but the rep verdict is a RUNNING question, and the lens never reads a ride.
+The annotator now shares the scorer's own `_is_run_slot` predicate; a non-run
+slot gets no verdict regardless of how parseable its segments are.
+
+Two verdicts the first deploy proved out as genuinely informative:
+`2026-07-03` reads `4/4 reps, 0 inside 5:25–5:35` because the reps measured
+4:52/5:12/5:13/5:16 — all FASTER than prescribed (run too hot; exactly the
+conversation the coach loop exists for), and `2026-07-29`'s strides read
+`4/4 reps` count-only, as designed for 20 s efforts.
 
 ## Suite at merge
 

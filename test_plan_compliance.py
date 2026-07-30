@@ -612,6 +612,30 @@ def test_quality_verdict_steady_doc_against_a_rep_prescription():
     assert "no structured set detected" in q["verdict"]
 
 
+def test_a_cross_days_bike_intervals_are_not_a_rep_verdict_question():
+    """Found live on 2026-07-17 ('Bike Intervals', kind cross, km 0): the
+    plan prescribes bike work in the same notation, the parser reads it, and
+    the verdict said 'no interval document' about a bicycle. The annotator
+    now uses the scorer's own _is_run_slot — a non-run slot gets no verdict,
+    parseable segments or not. Mutation-proven: dropping the guard → red."""
+    week = _closed_week()
+    week["days"] = [d if d["date"] != "2026-06-29" else {
+        "day": "Mon", "date": "2026-06-29", "kind": "cross",
+        "title": "Bike Intervals", "load": "Hard", "km": 0,
+        "segments": [{"label": "Reps", "val": "6×3 min hard (Z4 effort)"}],
+    } for d in week["days"]]
+    conn = _doc_conn({"shape": "steady", "set": None, "segments": [],
+                      "quality": {"zone": None}})
+    rows = pc.score_week(week, [_a(1, "2026-06-29", "cross", 0.0)],
+                         TODAY, MAX_HR, SNAP)
+    pc._annotate_quality(conn, week, rows)
+    conn.close()
+    r = _by_date(rows, "2026-06-29")
+    assert r["activity_id"] == 1, "the ride matched its cross slot"
+    assert r.get("quality_json") is None, \
+        "a bike prescription is not a running rep-verdict question"
+
+
 def test_unparseable_day_gets_no_quality_json():
     r = _annotated(_quality_week("2 km easy — shin gate: pain-free before any rep"),
                    _REPS_DOC, _a(1, "2026-07-03", "run", 7.0))

@@ -336,6 +336,12 @@ def _annotate_quality(conn, week: dict, rows: list[dict]) -> None:
         day = days.get(row.get("date"))
         if not day or not row.get("activity_id"):
             continue
+        if not _is_run_slot(day):
+            # a cross day's segments can parse (the plan prescribes bike
+            # intervals in the same notation) but the rep verdict is a RUNNING
+            # question — the lens never reads a ride, and "no interval
+            # document" on a bike would dress a non-question as a data gap
+            continue
         rx = plan_prescription.prescription_for_day(day.get("segments"))
         if not rx:
             continue

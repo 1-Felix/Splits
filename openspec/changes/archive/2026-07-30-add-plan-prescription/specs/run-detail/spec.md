@@ -2,9 +2,9 @@
 
 ### Requirement: The plan card shows the prescription's verdict beside the executed structure
 
-When a run's matched plan day carries a rep-level verdict, `/run/:id`'s plan
-card SHALL render the planned prescription text and its verdict alongside the
-existing planned-vs-actual line. When no verdict exists the card SHALL render
+The `/run/:id` plan card SHALL render the planned prescription text and its
+verdict alongside the existing planned-vs-actual line whenever the run's
+matched plan day carries a rep-level verdict. When no verdict exists the card SHALL render
 exactly as before — absence, not emptiness.
 
 #### Scenario: A quality day's run shows the verdict

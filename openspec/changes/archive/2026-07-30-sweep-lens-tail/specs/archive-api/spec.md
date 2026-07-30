@@ -2,8 +2,8 @@
 
 ### Requirement: Served interval documents carry their lens version
 
-Any endpoint that serves an interval document, or a listing row derived from one,
-SHALL include the stored `lens_version` (as `lensVersion`) so a consumer can
+Every read serving an interval document or a derived listing row SHALL
+include the stored `lens_version` (as `lensVersion`) so a consumer can
 detect a document computed by an older engine between an `INTERVAL_VERSION` bump
 and the next sync. The API SHALL NOT filter stale documents out — availability
 across a version bump is preserved and staleness is the consumer's decision.

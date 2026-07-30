@@ -144,3 +144,51 @@ map tiles or any other third-party resource.
 - **THEN** the trace card renders the bare projected shape with no toggle and
   no tile requests
 
+### Requirement: The rep card pairs each recovery to its rep by time
+The rep card SHALL pair a recovery line to a rep by temporal adjacency: the
+recovery shown under rep *i* is the first `recovery`-role segment whose start
+falls at or after rep *i*'s end and (when a later rep exists) before the next
+rep's start. When no recovery matches, the rep SHALL show no recovery line.
+Pairing MUST NOT rely on array position, because a mid-set demotion inserts a
+`recovery`-role segment that shifts every later position.
+
+#### Scenario: Mid-set demotion does not shift later pairings
+- **WHEN** a set contains a demoted mid-set segment (role `recovery`) between two
+  reps
+- **THEN** every rep after the demotion still shows the recovery that actually
+  followed it in time
+
+#### Scenario: A rep with no following recovery shows none
+- **WHEN** the final rep of a set is followed by no `recovery`-role segment
+  before the cooldown
+- **THEN** that rep renders without a recovery line rather than borrowing an
+  earlier one
+
+### Requirement: Absent grade-adjusted pace renders as absent, by presence not truthiness
+A segment's grade-adjusted pace SHALL be rendered as an em dash exactly when the
+value is absent (`null`), and as a formatted pace for every numeric value. The
+engine SHALL emit `null` (never `0`) for a grade-adjusted pace it cannot compute,
+so no numeric sentinel can be confused with a real pace.
+
+#### Scenario: Missing GAP renders as an em dash
+- **WHEN** a segment carries `gapS: null`
+- **THEN** the rep card renders an em dash in the GAP position
+
+#### Scenario: Invalid speed produces null, not zero
+- **WHEN** the engine derives grade-adjusted pace from a non-positive speed value
+- **THEN** the document carries `gapS: null` for that segment
+
+### Requirement: The plan card shows the prescription's verdict beside the executed structure
+The `/run/:id` plan card SHALL render the planned prescription text and its
+verdict alongside the existing planned-vs-actual line whenever the run's
+matched plan day carries a rep-level verdict. When no verdict exists the card SHALL render
+exactly as before — absence, not emptiness.
+
+#### Scenario: A quality day's run shows the verdict
+- **WHEN** the run's plan day carries a verdict (`4/4 reps, 3 inside
+  5:25–5:35`)
+- **THEN** the plan card renders the planned text and that verdict
+
+#### Scenario: A day without a verdict renders unchanged
+- **WHEN** the run's plan day has no `quality` annotation
+- **THEN** the plan card renders exactly its pre-existing content

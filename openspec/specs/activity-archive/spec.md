@@ -274,6 +274,16 @@ callers). The sync SHALL distill a run when its raw detail is archived, and a
 recovery pass SHALL distill already-archived runs from their stored raw
 payloads without network access. Raw payloads SHALL remain unmodified.
 
+The distiller SHALL be given the run's device laps and its banked workout
+definition when they exist, so the compact `intervals` summary inside the
+distilled detail is the same reading as the run's full interval document —
+same source, shape, label, and confidence. Each distilled copy SHALL record
+the distiller version and computation time (additive columns
+`distilled_version`, `distilled_at`), and SHALL be recomputed when the
+distiller version bumps, or when the run's laps or its workout definition
+arrived after the distilled copy was computed. The nightly sync SHALL distill
+a run only after that sync's lap fetch and workout banking have run.
+
 #### Scenario: A topped-up run gains distilled detail
 - **WHEN** the sync archives a run's raw detail payload
 - **THEN** the same sync stores the run's distilled detail in the new column
@@ -287,12 +297,33 @@ payloads without network access. Raw payloads SHALL remain unmodified.
 #### Scenario: The migration is additive and reversible by ignoring
 - **WHEN** an older application version opens a database at the new schema
   version
-- **THEN** all pre-existing reads work unchanged (the new column is ignored)
+- **THEN** all pre-existing reads work unchanged (the new columns are ignored)
 
 #### Scenario: Distillation shares one implementation
 - **WHEN** the same run is distilled via the recent-runs path and via the
   archive path
 - **THEN** both produce the same distilled object
+
+#### Scenario: The compact summary agrees with the interval document
+- **WHEN** a run's laps are banked and read as structured by the lens
+- **THEN** the distilled detail's `intervals` summary carries the same source,
+  shape, and label as the run's full interval document
+
+#### Scenario: A version bump refreshes every stored copy
+- **WHEN** the distiller version is bumped and the next distillation pass runs
+- **THEN** every run whose stored `distilled_version` is older (or absent) is
+  re-distilled from stored payloads and stamped with the new version
+
+#### Scenario: Laps arriving after the distill make it stale
+- **WHEN** a run's laps are fetched after its distilled copy was computed
+- **THEN** the next distillation pass re-distills that run with the laps in
+  hand
+
+#### Scenario: A workout banked after the distill makes it stale
+- **WHEN** a run references a workout definition that was banked after the
+  run's distilled copy was computed
+- **THEN** the next distillation pass re-distills that run with the
+  prescription in hand
 
 ### Requirement: Distilled coverage is verifiable
 The archive verification mode SHALL report distilled-detail coverage (runs
@@ -364,3 +395,30 @@ coverage regresses behind raw-detail coverage.
 #### Scenario: Coverage regression fails the check
 - **WHEN** runs hold raw detail but no stream
 - **THEN** verification reports the shortfall and exits non-zero
+
+### Requirement: An empty lap-detail reply is never cached as fetched
+The lap acquisition SHALL write its raw-reply cache only after confirming the
+reply carries a non-empty lap list. A reply whose `lapDTOs` is empty or absent
+SHALL leave no cache entry, so the run is asked again on a later sync. A
+permanently lap-less run therefore costs a bounded refetch per sync rather than
+being silently marked complete — and can never starve the backfill queue behind
+a cached empty envelope.
+
+#### Scenario: Empty envelope is not cached
+- **WHEN** the lap fetch for a run returns `{"lapDTOs": []}`
+- **THEN** no cache entry is written and the run remains eligible for a future
+  lap fetch
+
+#### Scenario: Populated reply is cached write-once
+- **WHEN** the lap fetch for a run returns a non-empty `lapDTOs` list
+- **THEN** the reply is cached and the run is not fetched again
+
+### Requirement: Interval coverage counts only documents joined to a live activity
+The interval coverage counter SHALL count only `run_intervals` rows that join to
+a currently live activity row, so interval rows orphaned by activity dedupe or
+pruning cannot inflate the scored count past the population of streamed runs.
+
+#### Scenario: Orphaned interval rows are not counted
+- **WHEN** a `run_intervals` row exists whose activity row has been pruned
+- **THEN** interval coverage does not count it, and `scored` cannot exceed the
+  number of streamed runs

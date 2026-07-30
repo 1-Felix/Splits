@@ -30,8 +30,8 @@ SHALL fail when the live plan introduces a string the fixture does not pin.
 
 ### Requirement: Quality days carry a rep-level verdict that never changes their status
 
-For a matched run day whose prescription parsed and whose activity holds an
-interval document, the compliance row SHALL carry a verdict object recording
+The compliance row SHALL carry a verdict object, for a matched run day whose
+prescription parsed and whose activity holds an interval document, recording
 the planned text, prescribed vs found rep counts, the in-band count (pace
 sets), or the zone agreement (zone sets), or target-vs-actual pace (steady
 targets), worded as counts and bands — judgment stays with the coach. The

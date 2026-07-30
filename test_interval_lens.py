@@ -1648,5 +1648,5 @@ def test_interval_version_is_current():
     rules that produced it did. fix-lap-confidence changed how a lap-sourced
     document's confidence is derived and added the `asserts` verdict to every
     document — every stored document must be recomputed."""
-    assert il.INTERVAL_VERSION == 5
-    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 5
+    assert il.INTERVAL_VERSION == 6
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 6

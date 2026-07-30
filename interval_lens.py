@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
-INTERVAL_VERSION = 5   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 6   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
                        # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
                        #    rep floor the stream path always has, and shares its
@@ -32,6 +32,12 @@ INTERVAL_VERSION = 5   # 2: paceS is raw pace and gapS is real (final review I4)
                        #    (corroborated/structured/eliminated), a shape that
                        #    survives only by material size discard is hedged,
                        #    and every document carries the `asserts` verdict.
+                       # 6: add-workout-prior — the Garmin workout definition
+                       #    is the prior: VETO/POINT/ADMIT, set membership by
+                       #    target value, one rep-count floor on both paths,
+                       #    time-named sets, prescription corroboration and
+                       #    guidedBy provenance. (The change's design said 5;
+                       #    fix-lap-confidence took it on 2026-07-30.)
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge

@@ -77,10 +77,10 @@
 
 ## 11. Version bump and local verification
 
-- [ ] 11.1 `INTERVAL_VERSION` → 6 with a history comment (the design says 5, but fix-lap-confidence took 5 on 2026-07-30 — note this in the comment), and update `test_interval_version_is_current`.
-- [ ] 11.2 `rm -rf __pycache__` then `.venv/Scripts/python.exe -m pytest -q` — full suite green. The `rm` is not optional here.
-- [ ] 11.3 Browser suites green: `node test_run_page.mjs`, `node test_archive_page.mjs`, `node test_coach_read.mjs`.
-- [ ] 11.4 Confirm `test_ingest_builder.py` green — the Health Connect path passes no workout and must be byte-stable.
+- [x] 11.1 `INTERVAL_VERSION` → 6 with a history comment (the design says 5, but fix-lap-confidence took 5 on 2026-07-30 — note this in the comment), and update `test_interval_version_is_current`.
+- [x] 11.2 `rm -rf __pycache__` then `.venv/Scripts/python.exe -m pytest -q` — full suite green. The `rm` is not optional here. *(554 passed, 2 skipped.)*
+- [x] 11.3 Browser suites green: `node test_run_page.mjs`, `node test_archive_page.mjs`, `node test_coach_read.mjs`. *(ALL PASS × 3.)*
+- [x] 11.4 Confirm `test_ingest_builder.py` green — the Health Connect path passes no workout and must be byte-stable. *(61 passed.)*
 
 ## 12. Deploy and verify against production
 

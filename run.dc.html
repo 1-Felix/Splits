@@ -34,6 +34,21 @@
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   ::-webkit-scrollbar{height:9px;width:9px}
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
+  /* sweep-lens-tail N7: the rep card's fixed columns sum past a phone
+     viewport (~18px over at 390). Compress the columns, not the page —
+     !important because the widths are inline styles. The deviation bar
+     (flex:1) absorbs the reclaimed space. */
+  @media (max-width: 430px){
+    .rep-head, .rep-row{gap:var(--sp-2) !important}
+    .rep-row .rep-c-dist, .rep-row .rep-c-time,
+    .rep-row .rep-c-pace, .rep-row .rep-c-gap,
+    .rep-row .rep-c-hr{font-size:var(--fs-2xs) !important}
+    .rep-c-dist{width:48px !important}
+    .rep-c-time{width:40px !important}
+    .rep-c-pace{width:44px !important}
+    .rep-c-gap{width:44px !important}
+    .rep-c-hr{width:30px !important}
+  }
 </style>
 </helmet>
 
@@ -187,28 +202,28 @@
         <div class="card-title rep-title" style="margin-bottom:var(--sp-1)">{{ rp.label }}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ rp.sub }}</div>
         <div class="rep-head" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub);padding-bottom:var(--sp-1)">
-          <span style="width:34px"></span>
-          <span style="width:56px"></span>
-          <span style="width:48px"></span>
+          <span class="rep-c-n" style="width:34px"></span>
+          <span class="rep-c-dist" style="width:56px"></span>
+          <span class="rep-c-time" style="width:48px"></span>
           <div style="flex:1"></div>
-          <span class="rep-head-pace" style="width:52px;text-align:right">PACE</span>
-          <span class="rep-head-gap" style="width:52px;text-align:right">GAP</span>
-          <span style="width:44px;text-align:right">HR</span>
+          <span class="rep-head-pace rep-c-pace" style="width:52px;text-align:right">PACE</span>
+          <span class="rep-head-gap rep-c-gap" style="width:52px;text-align:right">GAP</span>
+          <span class="rep-c-hr" style="width:44px;text-align:right">HR</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ rp.rows }}" as="r" hint-placeholder-count="5">
             <div>
               <div class="rep-row" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
-                <span style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.n }}</span>
-                <span style="width:56px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.dist }}</span>
-                <span class="rep-time" style="width:48px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.time }}</span>
+                <span class="rep-c-n" style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.n }}</span>
+                <span class="rep-c-dist" style="width:56px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.dist }}</span>
+                <span class="rep-time rep-c-time" style="width:48px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.time }}</span>
                 <div style="flex:1;position:relative;height:16px">
                   <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)"></div>
                   <div style="position:absolute;top:2px;height:12px;border-radius:2px;left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
                 </div>
-                <span class="rep-pace" style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
-                <span class="rep-gap" style="width:52px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.gap }}</span>
-                <span style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+                <span class="rep-pace rep-c-pace" style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
+                <span class="rep-gap rep-c-gap" style="width:52px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.gap }}</span>
+                <span class="rep-c-hr" style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
               </div>
               <sc-for list="{{ r.rec }}" as="rc" hint-placeholder-count="0">
                 <div class="rep-rec" style="display:flex;gap:var(--sp-2);padding:2px 0 6px 34px;font-size:var(--fs-2xs);color:var(--sub)">
@@ -560,13 +575,19 @@ class Component extends DCLogic {
             rows: work.map((s, i) => {
               const dev = (s.paceS || median) - median;
               const half = Math.min(50, Math.abs(dev) / maxDev * 50);
-              const rc = recs[i];
+              // sweep-lens-tail N1: pair by TIME, not by array position — a
+              // mid-set demotion inserts a recovery segment that shifts every
+              // later recs[i]. The recovery for rep i is the first one that
+              // starts after this rep ends and before the next rep begins;
+              // none in that window → no recovery line (never a wrong one).
+              const next = work[i + 1];
+              const rc = recs.find((r) => r.t0 >= s.t1 && (!next || r.t0 < next.t0));
               return {
                 n: 'rep ' + (s.rep || i + 1),
                 dist: s.distM >= 1000 ? (s.distM / 1000).toFixed(2) + ' km' : s.distM + ' m',
                 time: this.fmtHMS ? this.fmtHMS(s.durS) : s.durS + 's',
                 pace: this.fmtPace(s.paceS),
-                gap: s.gapS ? this.fmtPace(s.gapS) : '—',
+                gap: s.gapS != null ? this.fmtPace(s.gapS) : '—',
                 hr: s.hr != null ? s.hr : '—',
                 left: dev < 0 ? +(50 - half).toFixed(1) : 50,
                 width: +half.toFixed(1) || 0.5,

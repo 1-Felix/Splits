@@ -278,6 +278,11 @@ function archiveSummaryRow(r) {
     // run with no run_intervals row — same rule as `map` below.
     ...(r.interval_shape ? { intervalShape: r.interval_shape } : {}),
     ...(r.interval_label ? { intervalLabel: r.interval_label } : {}),
+    // sweep-lens-tail M4: the stored document's engine version rides along
+    // (parity with block/course), so a consumer can tell a stale document
+    // from a current one between an INTERVAL_VERSION bump and the next sync.
+    // Exposed, never filtered — availability across a bump is preserved.
+    ...(r.interval_lens_version != null ? { intervalLensVersion: r.interval_lens_version } : {}),
   };
 }
 
@@ -285,7 +290,8 @@ function archiveSummaryRow(r) {
 // page of rows without N document fetches. LEFT JOIN — a run with no document
 // is a run with no structure detected yet, not a missing row.
 const ARCHIVE_LIST_SQL = `SELECT ${ARCHIVE_SUMMARY_COLS},
-  i.shape AS interval_shape, i.label AS interval_label
+  i.shape AS interval_shape, i.label AS interval_label,
+  i.lens_version AS interval_lens_version
   FROM activities a LEFT JOIN run_intervals i ON i.activity_id = a.activity_id`;
 
 function listArchiveActivities(db, params) {
@@ -493,10 +499,16 @@ function getArchiveActivity(db, id) {
   // and returned as the object it is. A pre-v11 archive has no table — that
   // means no structure, not an outage. OMITTED (not null) when absent.
   let intervals;
+  let lensVersion;
   try {
     const iv = db.prepare(
-      "SELECT doc_json FROM run_intervals WHERE activity_id = ?").get(id);
-    if (iv && iv.doc_json) intervals = JSON.parse(iv.doc_json);
+      "SELECT doc_json, lens_version FROM run_intervals WHERE activity_id = ?").get(id);
+    if (iv && iv.doc_json) {
+      intervals = JSON.parse(iv.doc_json);
+      // sweep-lens-tail M4: the stored row's version rides beside the
+      // document (parity with block/course) — exposed, never filtered.
+      lensVersion = iv.lens_version;
+    }
   } catch { /* no run_intervals table in this archive */ }
   return {
     ...archiveSummaryRow(r),
@@ -506,7 +518,7 @@ function getArchiveActivity(db, id) {
     plan,
     bests,
     ...(map ? { map } : {}),
-    ...(intervals ? { intervals } : {}),
+    ...(intervals ? { intervals, lensVersion } : {}),
   };
 }
 

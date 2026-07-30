@@ -1,0 +1,68 @@
+{
+ "2025-09-14": {
+  "laps": [
+   {
+    "averageHR": 161.0,
+    "averageSpeed": 2.1640000343322754,
+    "avgGradeAdjustedSpeed": 2.066999912261963,
+    "distance": 2500.0,
+    "duration": 1155.139,
+    "elapsedDuration": 1161.016,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 0
+   },
+   {
+    "averageHR": 164.0,
+    "averageSpeed": 2.052000045776367,
+    "avgGradeAdjustedSpeed": 2.0,
+    "distance": 2000.0,
+    "duration": 974.469,
+    "elapsedDuration": 974.469,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 1
+   },
+   {
+    "averageHR": 171.0,
+    "averageSpeed": 2.063999891281128,
+    "avgGradeAdjustedSpeed": 2.115999937057495,
+    "distance": 2000.0,
+    "duration": 969.124,
+    "elapsedDuration": 969.124,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 2
+   },
+   {
+    "averageHR": 174.0,
+    "averageSpeed": 2.109999895095825,
+    "avgGradeAdjustedSpeed": 2.2049999237060547,
+    "distance": 500.0,
+    "duration": 236.97,
+    "elapsedDuration": 236.97,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 3
+   },
+   {
+    "averageHR": 165.0,
+    "averageSpeed": 2.263000011444092,
+    "avgGradeAdjustedSpeed": 2.0920000076293945,
+    "distance": 113.11,
+    "duration": 49.972,
+    "elapsedDuration": 49.972,
+    "intensityType": "ACTIVE"
+   },
+   {
+    "averageHR": 156.0,
+    "averageSpeed": 1.1130000352859497,
+    "avgGradeAdjustedSpeed": 1.503000020980835,
+    "distance": 59.69,
+    "duration": 53.614,
+    "elapsedDuration": 53.614,
+    "intensityType": "ACTIVE"
+   }
+  ],
+  "name": "Leinfelden-Echterdingen - W1 Sun Long Run - 7 km Progressi",
+  "summary": {
+   "workoutId": 1324566748
+  }
+ }
+}

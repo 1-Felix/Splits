@@ -334,6 +334,52 @@ def test_laps_pass_skips_single_lap_runs():
     conn.close()
 
 
+def test_empty_lap_envelope_is_not_cached_as_fetched():
+    """M1: `{"lapDTOs": []}` is a truthy dict — caching it before checking the
+    list marked the run as fetched forever and could starve the bounded
+    backfill queue behind it. The cache is written only for a non-empty lap
+    list, so an empty reply stays eligible for a future fetch. Mutation-proven:
+    restoring the cache-before-check order sends `calls == [7, 7]` red."""
+    tmp = Path(tempfile.mkdtemp())
+    calls = []
+
+    class FakeClient:
+        def get_activity_splits(self, aid):
+            calls.append(aid)
+            return {"lapDTOs": []}
+
+    original = sg.CACHE_DIR
+    sg.CACHE_DIR = tmp / "cache"
+    try:
+        assert sg._fetch_raw_laps(FakeClient(), 7) == []
+        assert not (sg.CACHE_DIR / "laps-7.json").exists(), \
+            "an empty envelope must leave no cache entry"
+        assert sg._fetch_raw_laps(FakeClient(), 7) == []
+        assert calls == [7, 7], "empty reply must stay eligible for refetch"
+    finally:
+        sg.CACHE_DIR = original
+
+
+def test_populated_lap_reply_is_cached_write_once():
+    tmp = Path(tempfile.mkdtemp())
+    calls = []
+
+    class FakeClient:
+        def get_activity_splits(self, aid):
+            calls.append(aid)
+            return {"lapDTOs": [{"distance": 1000, "duration": 330}]}
+
+    original = sg.CACHE_DIR
+    sg.CACHE_DIR = tmp / "cache"
+    try:
+        first = sg._fetch_raw_laps(FakeClient(), 9)
+        second = sg._fetch_raw_laps(FakeClient(), 9)
+    finally:
+        sg.CACHE_DIR = original
+    assert first == second == [{"distance": 1000, "duration": 330}]
+    assert calls == [9], "second read must come from the cache"
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # sg.derive_intervals / intervals_step (add-interval-lens Task 10)
 # ──────────────────────────────────────────────────────────────────────────────

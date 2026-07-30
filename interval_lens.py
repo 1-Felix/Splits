@@ -79,7 +79,9 @@ CONFIDENCE_ASSERT_MIN = 0.5   # below this the document does not assert its
 _LAP_CONFIDENCE = {"corroborated": 1.0, "structured": 1.0, "eliminated": 0.4}
 # Zone boundary fractions — the values ingest_builder has always used, moved
 # here as THE definition (Task 11 rewrites ingest_builder._zone_bounds to
-# delegate here), so the two producers cannot drift on what "Z4" means. Six
+# delegate here), so the two producers share one set of FRACTIONS. The zone
+# MODEL still deliberately differs per spec: Garmin passes max HR only (plain
+# %max), Health Connect adds resting HR (Karvonen) — see zone_bounds(). Six
 # entries: _zone_of reads bounds[1:5] as the 60/70/80/90 % cut points and the
 # trailing 1.00 closes the top.
 ZONE_FRACTIONS = (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)
@@ -288,8 +290,10 @@ def find_bouts(series: list, dist_at, lo: float, hi: float) -> list[tuple[int, i
             if b - a >= WORK_MIN_S and dist_at(b) - dist_at(a) >= WORK_MIN_M]
 
 
-def _pace_s_per_km(mps: float) -> int:
-    return int(round(1000.0 / mps)) if mps and mps > 0 else 0
+def _pace_s_per_km(mps: float) -> int | None:
+    """None, not 0, for a speed no pace can be derived from: a numeric
+    sentinel is indistinguishable from a real pace downstream (N6)."""
+    return int(round(1000.0 / mps)) if mps and mps > 0 else None
 
 
 def _window_pace(series: list, a: int, b: int):
@@ -561,10 +565,9 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     straight into it.
 
     A device value of exactly 0 (a standing-rest lap) is treated as ABSENT,
-    not as "zero pace": `_pace_s_per_km(0)` cannot produce a sane number
-    either way, so `lap.get(...)` — falsy on 0, None and missing keys alike —
-    falls through to the windowed lookup rather than reporting a nonsense
-    pace."""
+    not as "zero pace": `_pace_s_per_km` yields None for it (N6), so
+    `lap.get(...)` — falsy on 0, None and missing keys alike — falls through
+    to the windowed lookup rather than reporting a nonsense pace."""
     segs = []
     t0 = 0.0
     d0 = 0.0
@@ -1152,8 +1155,11 @@ def _confidence(separation: float, bouts, series, cv) -> float:
 def zone_bounds(max_hr: int, rhr=None) -> list[int]:
     """The six zone boundaries — Karvonen HR-reserve when resting HR is known,
     plain %max otherwise. THE single definition: `ingest_builder._zone_bounds`
-    is rewritten in Task 11 to delegate here, so the two producers cannot drift
-    apart on what "Z4" means and the formula exists exactly once."""
+    is rewritten in Task 11 to delegate here, so the formula exists exactly
+    once and the FRACTIONS cannot drift. The MODEL still differs by producer,
+    deliberately (per spec): Garmin calls with max HR only (%max), Health
+    Connect passes rhr too (Karvonen) — so "Z4" is not numerically identical
+    across producers for the same athlete."""
     if rhr and 0 < rhr < max_hr:
         return [round(rhr + f * (max_hr - rhr)) for f in ZONE_FRACTIONS]
     return [round(max_hr * f) for f in ZONE_FRACTIONS]
@@ -1193,7 +1199,7 @@ def build_document(streams: dict | None, summary: dict | None = None,
                    laps: list[dict] | None = None,
                    workout: dict | None = None,
                    bounds: list[int] | None = None,
-                   work_floor: float | None = None) -> dict | None:
+                   floor: float | None = None) -> dict | None:
     """The ONE entry point both producers call. Returns the interval document,
     or None when the run carries no usable speed signal at all.
 
@@ -1203,8 +1209,9 @@ def build_document(streams: dict | None, summary: dict | None = None,
     read one prescription by identical rules. Then structured device laps win
     outright; otherwise the stream decides.
 
-    `work_floor` (Task 7b) is the caller-supplied calibration floor — this
-    engine never opens a database, so it cannot derive its own. Device laps
+    `floor` (Task 7b; renamed from `work_floor` so it no longer shadows the
+    module-level `work_floor()`, M6) is the caller-supplied calibration floor —
+    this engine never opens a database, so it cannot derive its own. Device laps
     need no such floor (the watch is not guessing) and are always calibrated."""
     summary = summary or {}
     streams = streams or {}
@@ -1354,10 +1361,10 @@ def build_document(streams: dict | None, summary: dict | None = None,
     # Cross-run calibration (Task 7b): a bout must be genuinely fast for THIS
     # athlete, not merely faster than the rest of its own run. Without a floor
     # we cannot tell those apart, so we make no rep claim at all.
-    calibrated = work_floor is not None
+    calibrated = floor is not None
     if calibrated:
         bouts = [(a, b) for a, b in bouts
-                 if (_mean(series[a:b]) or 0) >= work_floor]
+                 if (_mean(series[a:b]) or 0) >= floor]
     else:
         bouts = []
     if prior and not prior["hard"]:

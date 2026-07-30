@@ -239,6 +239,48 @@ def test_bouts_closer_than_the_minimum_recovery_merge():
     assert len(_bouts(spans)) == 1
 
 
+def _direct_bouts(series, lo, hi):
+    """find_bouts on a hand-built 1 Hz series with explicit thresholds — no
+    smoothing, no split_classes. The order/floor tests below need EXACT bout
+    edges; the smoothing pipeline would smear the very features they pin."""
+    dist = [0.0]
+    for v in series:
+        dist.append(dist[-1] + v)
+    return il.find_bouts(series, lambda i: dist[i], lo, hi)
+
+
+def test_merge_runs_before_the_floors_so_two_half_reps_make_one_rep():
+    """P2.6d (sweep-lens-tail): the ledger records merge-THEN-filter as
+    load-bearing, and the merge fixture above cannot prove it — its two 200 s
+    bouts each clear the floors alone, so it passes under either ordering.
+    Here each burst is 25 s (< WORK_MIN_S 30) and only their merge — across a
+    10 s let-up (< RECOVERY_MIN_S 20) — survives: one 60 s, 245 m bout.
+    Mutation-proven: filtering before merging returns []."""
+    series = [2.6] * 600 + [4.5] * 25 + [2.0] * 10 + [4.5] * 25 + [2.6] * 300
+    assert _direct_bouts(series, 2.6, 4.5) == [(600, 660)]
+
+
+def test_stream_duration_floor_alone_drops_a_short_fast_burst():
+    """M12, stream half (the lap path got this split in add-workout-prior):
+    25 s at 6.5 m/s covers 162 m — past WORK_MIN_M, under WORK_MIN_S. Only
+    the duration arm can drop it. Mutation-proven: deleting the `b - a >=
+    WORK_MIN_S` arm keeps the burst."""
+    series = [1.0] * 600 + [6.5] * 25 + [1.0] * 300
+    assert _direct_bouts(series, 1.0, 6.5) == []
+
+
+def test_stream_distance_floor_alone_drops_a_long_slow_surge():
+    """M12's other arm, the live false-positive vector for hill sessions: a
+    35 s uphill surge at 3.9 m/s clears WORK_MIN_S but covers only 136 m.
+    Only the distance arm can drop it. Mutation-proven: deleting the
+    `dist_at(b) - dist_at(a) >= WORK_MIN_M` arm keeps the surge. The
+    discriminating half: 10 s more clears both floors and IS a bout."""
+    surge = [1.0] * 600 + [3.9] * 35 + [1.0] * 300
+    assert _direct_bouts(surge, 1.0, 4.0) == []
+    longer = [1.0] * 600 + [3.9] * 45 + [1.0] * 300
+    assert _direct_bouts(longer, 1.0, 4.0) == [(600, 645)]
+
+
 def test_open_bout_auto_closes_at_the_last_sample():
     """An athlete who stops their watch mid-rep must not lose the rep: the
     recording ends while still inside a work bout, with no trailing recovery
@@ -306,6 +348,34 @@ def test_progression_is_detected_without_bouts():
     shape, bouts, _ = _classify(spans)
     assert bouts == []
     assert shape == "progression"
+
+
+def test_a_non_monotone_ramp_is_not_a_progression_despite_the_gain():
+    """P2.6a (sweep-lens-tail): _is_progression's monotonicity clause could be
+    deleted with the suite green — every existing fixture is either monotone
+    or fails the gain floor too. These quintiles gain 33 % end-to-end (6× the
+    floor) but dip at Q3, which is a fartlek-ish wobble, not a progression.
+    Matters disproportionately: progression is the only non-steady shape
+    reachable without a work floor — an uncalibrated athlete's (Max's) only
+    possible detection. Mutation-proven: deleting the monotonicity clause
+    turns the first assertion True; the monotone control pins the clause the
+    right way round."""
+    dipped = [v for q in (3.0, 3.4, 3.2, 3.6, 4.0)
+              for v in [q] * il.MIN_MOVING_SAMPLES]
+    assert il._is_progression(dipped) is False
+    monotone = [v for q in (3.0, 3.2, 3.4, 3.6, 4.0)
+                for v in [q] * il.MIN_MOVING_SAMPLES]
+    assert il._is_progression(monotone) is True
+
+
+def test_hr_grid_holds_the_last_value_across_sample_gaps():
+    """P2.6c (sweep-lens-tail): Garmin samples HR every ~2 s, so half the 1 Hz
+    grid has no sample of its own; without sample-and-hold those seconds are
+    None, and quality.zone shifts on every Garmin run. make_streams emits a
+    strict 1 Hz grid, so no existing fixture ever reached the hold branch.
+    Mutation-proven: deleting the hold loop leaves the odd seconds None."""
+    grid = il._hr_grid({"t": [0, 2, 4, 6], "hr": [100, 110, 120, 130]}, 8)
+    assert grid == [100.0, 100.0, 110.0, 110.0, 120.0, 120.0, 130.0, 130.0]
 
 
 def test_label_reads_as_the_session():
@@ -528,7 +598,7 @@ def test_document_label_survives_one_clipped_rep():
         spans += [(d, speed), (60, 2.2)]
     spans += [(300, 2.6)]
 
-    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    doc = il.build_document(make_streams(spans), floor=3.0)
     assert doc["shape"] == "reps"
     assert doc["set"]["found"] == 5
     assert doc["set"]["varied"] is False
@@ -657,7 +727,7 @@ def test_unrecognised_intensity_defaults_to_work():
 
 def test_document_shape_for_a_rep_session():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
-    doc = il.build_document(s, work_floor=3.0)
+    doc = il.build_document(s, floor=3.0)
     assert doc["version"] == il.INTERVAL_VERSION
     assert doc["shape"] == "reps"
     assert doc["source"] == "stream"
@@ -683,7 +753,7 @@ def test_every_segment_carries_a_real_gap_distinct_from_its_pace():
     Both values are pinned to the fixture's OWN streams (4.0 m/s raw = 250
     s/km, 4.4 m/s adjusted = 227 s/km), so reporting one under the other's
     name fails here rather than looking plausible."""
-    doc = il.build_document(make_dual_streams(_DUAL_REP_SPANS), work_floor=3.0)
+    doc = il.build_document(make_dual_streams(_DUAL_REP_SPANS), floor=3.0)
     assert doc["shape"] == "reps" and doc["set"]["found"] == 5
     work = [s for s in doc["segments"] if s["role"] == "work"]
     assert len(work) == 5
@@ -706,7 +776,7 @@ def test_a_run_without_a_gap_stream_reports_no_gap_rather_than_a_copy():
     renders null as an em dash, and a duplicated number would silently claim
     the run was flat."""
     spans = [(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)]
-    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    doc = il.build_document(make_streams(spans), floor=3.0)
     assert doc["shape"] == "reps"
     work = [s for s in doc["segments"] if s["role"] == "work"]
     assert all(s["paceS"] == 250 for s in work), "raw pace still reported"
@@ -741,7 +811,7 @@ def test_spread_and_fade_are_measured_on_the_same_signal_as_the_bars():
     for raw in (4.4, 4.2, 4.0, 3.8, 3.6):
         spans += [(250, raw, 4.2), (60, 2.2, 2.2)]
     spans += [(300, 2.6, 2.6)]
-    doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
+    doc = il.build_document(make_dual_streams(spans), floor=3.0)
     assert doc["shape"] == "reps" and doc["set"]["found"] == 5, \
         "detection still rides the grade-adjusted signal — one set, not five"
     st = doc["set"]
@@ -758,7 +828,7 @@ def test_progression_steps_carry_both_paces_too():
     already proven to classify as `progression` — with a grade adjustment
     added on top, so this test only introduces the one variable it is about."""
     spans = [(dur, mps, round(mps * 1.1, 3)) for dur, mps in _PROGRESSION_SPANS]
-    doc = il.build_document(make_dual_streams(spans), work_floor=3.0)
+    doc = il.build_document(make_dual_streams(spans), floor=3.0)
     assert doc["shape"] == "progression"
     for seg in doc["segments"]:
         assert seg["paceS"] and seg["gapS"]
@@ -813,14 +883,24 @@ def test_lap_gap_is_none_when_neither_source_has_one():
 
 def test_lap_gap_of_exactly_zero_falls_back_rather_than_reporting_zero():
     """A standing-rest lap can legitimately average 0 m/s grade-adjusted
-    speed, but `_pace_s_per_km(0)` cannot turn that into a sane pace — it is
-    the sentinel for "no data" everywhere else in this module. So a device
-    value of exactly 0 is treated as ABSENT, and the lookup falls back to the
-    windowed stream grid, same as a missing field would."""
+    speed, but `_pace_s_per_km` cannot turn that into a sane pace — it yields
+    None for any non-positive speed (N6). So a device value of exactly 0 is
+    treated as ABSENT, and the lookup falls back to the windowed stream grid,
+    same as a missing field would."""
     lap = _lap(1000, 300, "ACTIVE")
     lap["avgGradeAdjustedSpeed"] = 0.0
     segs = il.segments_from_laps([lap], gaps=[4.0] * 400)
     assert segs[0]["gapS"] == 250, "zero is not a usable device pace; the stream wins"
+
+
+def test_pace_from_a_non_positive_speed_is_none_not_zero():
+    """N6: 0 is a numeric sentinel a consumer cannot tell from a real pace —
+    the honest value for "no pace derivable" is None. Mutation-proven: with
+    the old `else 0` all three assertions go red."""
+    assert il._pace_s_per_km(0) is None
+    assert il._pace_s_per_km(0.0) is None
+    assert il._pace_s_per_km(-1.2) is None
+    assert il._pace_s_per_km(4.0) == 250
 
 
 def test_steady_run_still_gets_a_document():
@@ -855,14 +935,14 @@ def test_structured_laps_win_over_the_stream():
 def test_autolap_falls_through_to_the_stream():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
     laps = [_lap(1000, 330) for _ in range(8)]
-    doc = il.build_document(s, {"workoutId": 9}, laps, work_floor=3.0)
+    doc = il.build_document(s, {"workoutId": 9}, laps, floor=3.0)
     assert doc["source"] == "stream"
     assert doc["set"]["found"] == 5
 
 
 def test_segments_cover_warmup_reps_and_cooldown():
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 3 + [(300, 2.6)])
-    roles = [seg["role"] for seg in il.build_document(s, work_floor=3.0)["segments"]]
+    roles = [seg["role"] for seg in il.build_document(s, floor=3.0)["segments"]]
     assert roles[0] == "warmup"
     assert roles[-1] == "cooldown"
     assert roles.count("work") == 3
@@ -902,7 +982,7 @@ def test_quality_zone_is_time_weighted():
         s["hr"][i] = 145                       # Z3 — short
     for i in range(w3a, w3b):
         s["hr"][i] = 145                       # Z3 — short
-    doc = il.build_document(s, bounds=bounds, work_floor=3.0)
+    doc = il.build_document(s, bounds=bounds, floor=3.0)
     assert doc["set"]["found"] == 3
     assert doc["quality"]["zone"] == "Z5"
 
@@ -913,11 +993,11 @@ def test_quality_zone_is_null_without_bounds():
     FIXTURE NOTE (Task 7b): without an explicit `work_floor` this document is
     uncalibrated, so `bouts` is forced empty, the shape is "steady", and there
     are no "work" segments at all — the assertion would then hold vacuously
-    for a reason unrelated to `bounds`. Passing `work_floor=3.0` restores real
+    for a reason unrelated to `bounds`. Passing `floor=3.0` restores real
     "reps" shape and real work segments, so the missing-bounds guard in
     `_quality` is what the assertion actually exercises."""
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
-    assert il.build_document(s, work_floor=3.0)["quality"]["zone"] is None
+    assert il.build_document(s, floor=3.0)["quality"]["zone"] is None
 
 
 def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
@@ -930,12 +1010,36 @@ def test_zone_bounds_use_hr_reserve_when_resting_hr_is_known():
 def test_confidence_is_higher_for_a_crisp_set():
     crisp = il.build_document(
         make_streams([(600, 2.6)] + [(250, 4.2), (60, 2.2)] * 5 + [(300, 2.6)]),
-        work_floor=3.0)
+        floor=3.0)
     ragged = il.build_document(
         make_streams([(600, 2.8)] + [(250, 3.3), (60, 2.6)] * 5 + [(300, 2.8)]),
-        work_floor=3.0)
+        floor=3.0)
     assert crisp["confidence"] > ragged["confidence"]
     assert 0.0 <= ragged["confidence"] <= 1.0
+
+
+def test_confidence_crisp_factor_penalises_a_narrow_bout():
+    """P2.5 (sweep-lens-tail): the test above proved crisp≠ragged, but its two
+    fixtures have identical bout widths — the separation factor alone
+    satisfies it, and `crisp` could be replaced by 1.0 with the suite green
+    (mutation-proven dead coverage). This pins the factor by itself: same
+    separation (well past saturation), same regularity (cv None), only the
+    narrowest bout differs. 30 s / (2·WORK_MIN_S) = 0.5 exactly.
+    Mutation-proven: `crisp = 1.0` makes both sides 1.0."""
+    wide = il._confidence(0.5, [(0, 120)], [], None)
+    narrow = il._confidence(0.5, [(0, 30)], [], None)
+    assert wide == 1.0
+    assert narrow == 0.5
+
+
+def test_confidence_regular_factor_penalises_a_ragged_set():
+    """P2.5's other dead factor: `regular` could be replaced by 1.0 with the
+    suite green. cv 0 → 1.0; cv 12 → max(0.3, 1 − 12/15) = 0.3, the floor.
+    Mutation-proven: `regular = 1.0` makes both sides 1.0."""
+    even = il._confidence(0.5, [(0, 120)], [], 0.0)
+    ragged = il._confidence(0.5, [(0, 120)], [], 12.0)
+    assert even == 1.0
+    assert ragged == 0.3
 
 
 # ── cross-run calibration (Task 7b) ──────────────────────────────────────────
@@ -987,7 +1091,7 @@ def test_calibration_rejects_a_bout_that_is_merely_faster_than_its_own_run():
 
     FIXTURE FIX: the brief's `uncalibrated = il.build_document(s)` (no
     `work_floor`) cannot assert `shape == "reps"` — under this task's own
-    "honest silence" rule, `build_document` with `work_floor=None` makes NO
+    "honest silence" rule, `build_document` with `floor=None` makes NO
     rep claim at all regardless of what find_bouts found (bouts forced to
     `[]`, `calibrated: False` — see test_uncalibrated_documents_make_no_rep_claim
     for that behaviour, same fixture). Verified directly:
@@ -1009,7 +1113,7 @@ def test_calibration_rejects_a_bout_that_is_merely_faster_than_its_own_run():
     raw_bouts = il.find_bouts(series, dist_at, classes[0], classes[1])
     assert il.classify(raw_bouts, series, dist_at, None) == "reps"  # the old, wrong behaviour
 
-    calibrated = il.build_document(s, work_floor=floor)
+    calibrated = il.build_document(s, floor=floor)
     assert calibrated["shape"] == "steady"          # nothing here is genuinely fast
     assert calibrated["calibrated"] is True
 
@@ -1017,7 +1121,7 @@ def test_calibration_rejects_a_bout_that_is_merely_faster_than_its_own_run():
 def test_calibration_keeps_a_genuine_set():
     """The same floor must not eat real reps — 4.0 m/s is well above it."""
     spans = [(600, 2.30)] + [(250, 4.0), (60, 2.20)] * 5 + [(300, 2.30)]
-    doc = il.build_document(make_streams(spans), work_floor=2.70)
+    doc = il.build_document(make_streams(spans), floor=2.70)
     assert doc["shape"] == "reps"
     assert doc["set"]["found"] == 5
 
@@ -1231,7 +1335,7 @@ def test_stream_documents_carry_the_assert_verdict_too():
     for _ in range(5):
         spans += [(240, 4.0), (120, 2.0)]
     spans += [(300, 2.5)]
-    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    doc = il.build_document(make_streams(spans), floor=3.0)
     assert doc["shape"] == "reps"
     assert doc["asserts"] is True
 
@@ -1240,7 +1344,7 @@ def test_a_steady_stream_document_carries_a_verdict():
     """Every document carries the verdict — a steady run included, so the
     page never has to distinguish 'absent because old' from 'absent because
     steady'."""
-    doc = il.build_document(make_streams([(1200, 2.5)]), work_floor=3.0)
+    doc = il.build_document(make_streams([(1200, 2.5)]), floor=3.0)
     assert doc["shape"] == "steady"
     assert "asserts" in doc
 
@@ -1649,4 +1753,4 @@ def test_interval_version_is_current():
     document's confidence is derived and added the `asserts` verdict to every
     document — every stored document must be recomputed."""
     assert il.INTERVAL_VERSION == 6
-    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 6
+    assert il.build_document(make_streams([(600, 3.0)]), floor=3.0)["version"] == 6

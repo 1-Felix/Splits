@@ -84,6 +84,21 @@ async function resolveCompareIds() {
   return null;
 }
 
+// /run/:id (sweep-lens-tail N7): the run page had no responsive coverage at
+// all — resolve the newest run, preferring one that carries an interval
+// document (the rep table is the page's widest component; `intervalShape`
+// rides on the list since M4). Null when the archive is away → the view is
+// reported skipped, not failed, same posture as /compare's prompt state.
+async function resolveRunId() {
+  try {
+    const r = await fetch(`http://localhost:${PORT}/api/archive/activities?type=running&limit=25`);
+    if (!r.ok) return null;
+    const acts = (await r.json()).activities;
+    return (acts.find((a) => a.intervalShape) || acts[0])?.activityId ?? null;
+  } catch { /* archive away */ }
+  return null;
+}
+
 function trackCount(v) {
   if (!v || v === "none") return 0;
   return v.trim().split(/\s+/).length;
@@ -190,10 +205,16 @@ if (mode === "baseline") {
     // /archive and /compare (archive-browser 2.3): whatever state the archive
     // is in — rows, offline, or the compare prompt — the page never overflows
     const compareIds = await resolveCompareIds();
+    const runId = await resolveRunId();
+    if (!runId) console.log(`     ${width} /run skipped (no archived run reachable — allowed)`);
     const deepViews = [
       ["/archive", ARCHIVE, () => document.querySelector(".arch-row") || /Archive offline|No archived activity/.test(document.body.innerText)],
       ["/compare", compareIds ? `${COMPARE}?ids=${compareIds.join(",")}` : COMPARE,
         () => document.querySelector("svg[data-chart='trend']") || /Archive offline|Nothing to compare/.test(document.body.innerText)],
+      // sweep-lens-tail N7: the run page joins the deep views — settled when
+      // any card rendered or the honest offline state did
+      ...(runId ? [[`/run`, `http://localhost:${PORT}/run/${runId}`,
+        () => document.querySelector(".rep-table, .card") || /Archive offline|not available/i.test(document.body.innerText)]] : []),
     ];
     for (const [pgName, url, settled] of deepViews) {
       await page.goto(url, { waitUntil: "domcontentloaded" });

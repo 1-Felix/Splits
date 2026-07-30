@@ -353,10 +353,14 @@ try {
   assert.strictEqual(withDoc.activityId, REP_RUN_ID);
   assert.deepStrictEqual(Object.keys(withDoc).sort(),
     ["activityId", "avgCadence", "avgHr", "distanceM", "durationS", "elevationGainM",
-     "intervalLabel", "intervalShape", "name", "startTimeLocal", "type"],
-    "a run with a document rides intervalShape/intervalLabel on top of the promoted columns");
+     "intervalLabel", "intervalLensVersion", "intervalShape", "name", "startTimeLocal", "type"],
+    "a run with a document rides intervalShape/intervalLabel/intervalLensVersion on top of the promoted columns");
   assert.strictEqual(withDoc.intervalShape, "reps");
   assert.strictEqual(withDoc.intervalLabel, "5×1 km");
+  // sweep-lens-tail M4: the stored engine version rides on the list row —
+  // exposed (parity with block/course), never filtered, so a stale document
+  // stays served and detectable between a version bump and the next sync.
+  assert.strictEqual(withDoc.intervalLensVersion, 1);
   // the very next row (PLAIN_RUN_ID = 20) has NO run_intervals row — the
   // fields are omitted, not just absent because the whole run is missing
   const first = all.activities[1];
@@ -430,6 +434,10 @@ try {
   assert.strictEqual(repRun.intervals.label, "5×1 km");
   assert.ok(Array.isArray(repRun.intervals.segments), "segments survive the API");
   assert.strictEqual(repRun.intervals.set.found, 5, "nested fields ride through untouched");
+  // sweep-lens-tail M4: the stored row's lens_version rides beside the
+  // document (parity with block/course) — and only when a document exists.
+  assert.strictEqual(repRun.lensVersion, 1,
+    "the by-id read exposes the stored lens_version beside the document");
 
   // a run with no document: the field is OMITTED, not null — same rule as
   // map. PLAIN_RUN_ID genuinely exists (200, real promoted fields) — this
@@ -437,6 +445,7 @@ try {
   const plainRun = await (await byId(B, PLAIN_RUN_ID)).json();
   assert.strictEqual(plainRun.activityId, PLAIN_RUN_ID, "the plain run genuinely exists");
   assert.ok(!("intervals" in plainRun), "a run with no run_intervals row omits the field");
+  assert.ok(!("lensVersion" in plainRun), "no document → no lensVersion either");
 
   // unknown ids → 404
   assert.strictEqual((await byId(B, 999999)).status, 404, "unknown id → 404");

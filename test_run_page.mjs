@@ -195,6 +195,43 @@ const UNCAL_DOC = {
   quality: { workDistM: 0, workDurS: 0, zone: null },
 };
 
+// sweep-lens-tail N1: a set with a MID-SET DEMOTION — an extra recovery-role
+// segment (a demoted transition, 120 s) between rep 1's genuine 60 s recovery
+// and rep 2 — and NO recovery after the final rep. Positional pairing
+// (recs[i]) pairs rep 2 with the 120 s demotion and rep 3 with rep 2's
+// recovery; the time join must pair rep 1→60 s, rep 2→60 s, rep 3→nothing.
+// This is exactly the shape VETO/set-membership demotions create since
+// add-workout-prior, so it is reachable in production, not hypothetical.
+const DEMOTED_RUN_ID = 9005;
+const DEMOTED_SEGMENTS = [
+  { idx: 1, role: "warmup", t0: 0, t1: 300, d0: 0, d1: 800,
+    durS: 300, distM: 800, paceS: 400, gapS: null, hr: 130, cad: null },
+  { idx: 2, role: "work", rep: 1, t0: 300, t1: 500, d0: 800, d1: 1800,
+    durS: 200, distM: 1000, paceS: 330, gapS: 328, hr: 168, cad: null },
+  { idx: 3, role: "recovery", t0: 500, t1: 560, d0: 1800, d1: 1920,
+    durS: 60, distM: 120, paceS: 430, gapS: null, hr: 145, cad: null },
+  // the demoted mid-set transition — recovery ROLE, but not a between-rep jog
+  { idx: 4, role: "recovery", t0: 560, t1: 680, d0: 1920, d1: 2220,
+    durS: 120, distM: 300, paceS: 420, gapS: null, hr: 150, cad: null },
+  { idx: 5, role: "work", rep: 2, t0: 680, t1: 880, d0: 2220, d1: 3220,
+    durS: 200, distM: 1000, paceS: 333, gapS: 331, hr: 170, cad: null },
+  { idx: 6, role: "recovery", t0: 880, t1: 940, d0: 3220, d1: 3340,
+    durS: 60, distM: 120, paceS: 430, gapS: null, hr: 146, cad: null },
+  { idx: 7, role: "work", rep: 3, t0: 940, t1: 1140, d0: 3340, d1: 4340,
+    durS: 200, distM: 1000, paceS: 336, gapS: 334, hr: 172, cad: null },
+  { idx: 8, role: "cooldown", t0: 1140, t1: 1440, d0: 4340, d1: 5040,
+    durS: 300, distM: 700, paceS: 415, gapS: null, hr: 138, cad: null },
+];
+const DEMOTED_DOC = {
+  version: 6, shape: "reps", source: "laps", calibrated: true, confidence: 0.9,
+  asserts: true, label: "3×1 km", guidedBy: null,
+  segments: DEMOTED_SEGMENTS,
+  set: { found: 3, prescribed: null, nominalDistM: 1000, varied: false,
+         paceS: 333, paceCvPct: 1.0, fadePct: 1.8, recoveryS: 60,
+         recoveryHrDrop: 22, reps: [] },
+  quality: { workDistM: 3000, workDurS: 600, zone: "Z4" },
+};
+
 function makeArchive(dir) {
   const db = new DatabaseSync(join(dir, "activity-archive.db"));
   db.exec(`CREATE TABLE activities (
@@ -291,6 +328,19 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     LOWCONF_RUN_ID, 1, "2026-07-11 06:51:15", "reps", "3×800 m", 0.35, "stream",
     2400, 630, JSON.stringify(LOWCONF_DOC), "2026-07-27T09:00:00");
+
+  // ── sweep-lens-tail N1: DEMOTED_RUN_ID — a mid-set demotion between rep 1
+  // and rep 2, and no recovery after the final rep (see the fixture comment).
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-14 06:51:15', 'running', 'Demoted Transition 3×1 km',
+      5040.0, 1440, 155, 175, 170.0, 8.0, '{}', '{}', 'x', 'x', NULL, NULL)`)
+    .run(DEMOTED_RUN_ID);
+  db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    DEMOTED_RUN_ID, 6, "2026-07-14 06:51:15", "reps", "3×1 km", 0.9, "laps",
+    3000, 600, JSON.stringify(DEMOTED_DOC), "2026-07-30T09:00:00");
 
   // ── fix-round finding 3: STEADY_RUN_ID — every streamed run gets a
   // run_intervals ROW; the realistic "no reps" case is shape:"steady" with a
@@ -597,6 +647,18 @@ try {
   assert.ok(repPageText.includes("Splits") && repPageText.includes("km 6"),
     "the km splits card still renders its real rows alongside the rep table");
 
+  // sweep-lens-tail N7: the rep card was the page's one horizontal overflow
+  // at phone width (~18 px at 390, pre-existing, measured on .card.rep-table
+  // itself). The page body must never scroll horizontally.
+  await page.setViewportSize({ width: 390, height: 1600 });
+  const repScrollW = await page.evaluate(() => document.documentElement.scrollWidth);
+  assert.ok(repScrollW <= 391,
+    `no horizontal overflow at 390 px (scrollWidth=${repScrollW})`);
+  const repCardBox = await page.locator(".card.rep-table").boundingBox();
+  assert.ok(repCardBox.x >= 0 && repCardBox.x + repCardBox.width <= 391,
+    `the rep card fits the phone viewport: x=${repCardBox.x} w=${repCardBox.width}`);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
   // ── add-interval-lens: the stream tracks shade the detected reps behind
   // their lines, so the crosshair tells you which rep you're looking at.
   // The brief's own snippet just checks `.rep-band` count >= 5 on the whole
@@ -674,6 +736,25 @@ try {
   const lowConfSub = await page.locator(".rep-table .card-sub").innerText();
   assert.ok(lowConfSub.includes("possible structure"),
     "confidence 0.35 hedges honestly instead of asserting structure: " + lowConfSub);
+
+  // sweep-lens-tail N1: a mid-set demotion must not shift later pairings.
+  // The fixture's recovery list is [60 s, 120 s demotion, 60 s]; positional
+  // recs[i] would render THREE recovery lines with the 120 s demotion under
+  // rep 2 and rep 2's real recovery under rep 3. The time join renders TWO,
+  // both 60 s, and nothing under the final rep. Mutation-proven: restoring
+  // `const rc = recs[i]` sends the count and the 120 s assertions red.
+  await page.goto(B + `/run/${DEMOTED_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rep-table", { timeout: 15000 });
+  assert.equal(await page.locator(".rep-row").count(), 3, "all three reps render");
+  assert.equal(await page.locator(".rep-rec").count(), 2,
+    "rep 1 and rep 2 get their real recoveries; the final rep gets none");
+  const recTexts = await page.locator(".rep-rec").allInnerTexts();
+  for (const t of recTexts) {
+    assert.match(t, /60 s recovery/,
+      "every rendered recovery is a genuine 60 s between-rep jog: " + t);
+    assert.ok(!t.includes("120 s"),
+      "the 120 s demoted transition is never shown as a rep's recovery: " + t);
+  }
 
   // fix-round finding 3: the REALISTIC "no reps" case — every streamed run
   // gets a run_intervals document (derive_intervals never skips one); a

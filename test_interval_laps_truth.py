@@ -55,6 +55,27 @@ def test_every_fixture_workout_is_read_as_structured():
             f"{date} must take the lap path"
 
 
+UNSTRUCTURED = json.loads(
+    (Path(__file__).parent / "tests" / "fixtures" / "lap_unstructured.json")
+    .read_text(encoding="utf-8"))
+
+
+def test_a_real_unstructured_workout_run_is_refused():
+    """N2: the population test above was selected BY `laps_are_structured`, so
+    it can only catch the predicate becoming too STRICT — every entry is a
+    positive. This is the other direction, on real data: `2025-09-14` (a
+    7 km progression long run, workoutId 1324566748) carries six distance-
+    stepped workout laps whose intensity is uniformly ACTIVE. A workout id
+    plus varied lap lengths is exactly the near-miss that must NOT count as
+    device structure — one intensity class tells the engine nothing about
+    where the work was. Mutation-proven: `laps_are_structured` returning True
+    unconditionally sends this red (and only this — every other fixture entry
+    is a positive)."""
+    for date, w in UNSTRUCTURED.items():
+        assert il.laps_are_structured(w["summary"], w["laps"]) is False, \
+            f"{date} must stay on the stream path"
+
+
 @pytest.mark.parametrize("date,found,label", [
     ("2026-04-10", 3, "3×2 km"),      # was 5×2 km — warmup and cooldown counted
     ("2026-03-20", 5, "5×1 km"),      # was "7 reps" — both 2 km bookends counted

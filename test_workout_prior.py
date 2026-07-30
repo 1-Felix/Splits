@@ -209,8 +209,8 @@ def test_a_z2_only_prescription_reads_steady_on_the_stream_path():
     spans += [(300, 2.5)]
     streams = make_streams(spans)
     with_veto = il.build_document(streams, {"startTimeLocal": "2026-04-29 08:00:00"},
-                                  None, workout("2026-04-29"), work_floor=3.0)
-    without = il.build_document(streams, {}, None, None, work_floor=3.0)
+                                  None, workout("2026-04-29"), floor=3.0)
+    without = il.build_document(streams, {}, None, None, floor=3.0)
     assert without["shape"] == "reps", "inference alone would call this a set"
     assert with_veto["shape"] in ("steady", "progression")
     assert with_veto["shape"] == "steady"
@@ -223,8 +223,8 @@ def test_z3_is_deliberately_not_vetoed():
     spans = [(2400, 2.6), (2400, 2.9), (1200, 3.2)]
     streams = make_streams(spans)
     doc = il.build_document(streams, {"startTimeLocal": "2025-12-14 08:00:00"},
-                            None, workout("2025-12-14"), work_floor=3.4)
-    plain = il.build_document(streams, {}, None, None, work_floor=3.4)
+                            None, workout("2025-12-14"), floor=3.4)
+    plain = il.build_document(streams, {}, None, None, floor=3.4)
     assert plain["shape"] == "progression", "the fixture must be a progression"
     assert doc["shape"] == "progression", "a Z3 prescription changes nothing"
     # the mechanism, pinned directly: Z3 counts as HARD in the prior contract
@@ -381,8 +381,8 @@ def test_point_confirms_a_prescribed_block_the_floor_missed():
     streams = make_streams([(800, 2.5), (1379, 2.9), (700, 2.5)])
     w = _tempo_workout(4000, 2.86, 2.95)
     doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
-                            None, w, work_floor=3.4)
-    plain = il.build_document(streams, {}, None, None, work_floor=3.4)
+                            None, w, floor=3.4)
+    plain = il.build_document(streams, {}, None, None, floor=3.4)
     assert plain["shape"] == "steady", "the floor alone misses this block"
     assert doc["shape"] == "block"
     work = [s for s in doc["segments"] if s["role"] == "work"]
@@ -397,7 +397,7 @@ def test_point_refuses_a_run_that_plodded_the_window():
     streams = make_streams([(800, 2.4), (1680, 2.38), (700, 2.4)])
     w = _tempo_workout(4000, 2.86, 2.95)
     doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
-                            None, w, work_floor=3.4)
+                            None, w, floor=3.4)
     assert doc["shape"] == "steady", "out of band → the athlete did not run it"
 
 
@@ -416,7 +416,7 @@ def test_point_refuses_a_substituted_rep_session_via_the_variance_guard():
     # a false 'prescribed block completed'
     w = _tempo_workout(4000, 2.7, 3.1)
     doc = il.build_document(streams, {"startTimeLocal": "2026-02-13 08:00:00"},
-                            None, w, work_floor=3.0)
+                            None, w, floor=3.0)
     assert doc["shape"] == "reps", \
         "the real structure survives; the substituted session is not erased"
 
@@ -430,7 +430,7 @@ def test_point_merged_across_a_gap_is_hedged_not_asserted():
                             (700, 2.5)])
     w = _tempo_workout(4000, 2.6, 2.95)
     doc = il.build_document(streams, {"startTimeLocal": "2026-01-23 08:00:00"},
-                            None, w, work_floor=3.4)
+                            None, w, floor=3.4)
     assert doc["shape"] == "block"
     assert doc["asserts"] is False, "merged across a gap → possible, not certain"
 
@@ -569,7 +569,7 @@ def test_point_recovers_the_six_prescribed_tempos(date, dist):
     production does — POINT must win regardless (8.6)."""
     summary, streams = _archive_streams(date)
     doc = il.build_document(streams, summary, None, workout(date),
-                            work_floor=2.7)
+                            floor=2.7)
     assert doc["shape"] == "block", f"{date}: {doc['shape']} ({doc['label']})"
     work = [s for s in doc["segments"] if s["role"] == "work"]
     assert len(work) == 1
@@ -599,7 +599,7 @@ _POINT_VERDICTS = {
 def test_point_hedges_interrupted_executions_and_asserts_clean_ones(date):
     summary, streams = _archive_streams(date)
     doc = il.build_document(streams, summary, None, workout(date),
-                            work_floor=2.7)
+                            floor=2.7)
     assert doc["shape"] == "block"
     assert doc["asserts"] is _POINT_VERDICTS[date], \
         f"{date}: asserts must be {_POINT_VERDICTS[date]}"

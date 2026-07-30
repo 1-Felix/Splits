@@ -1052,7 +1052,7 @@ def test_both_pipelines_agree_on_the_same_run():
     bounds = il.zone_bounds(190)
 
     garmin_streams = sync_garmin.distill_run_streams(_garmin_raw_detail(_PARITY_SPANS))
-    from_garmin = il.compact(il.build_document(garmin_streams, bounds=bounds, work_floor=floor))
+    from_garmin = il.compact(il.build_document(garmin_streams, bounds=bounds, floor=floor))
 
     hc = _interval_run()
     from_hc = ingest_builder.run_detail(hc, max_hr=190, work_floor=floor)["intervals"]

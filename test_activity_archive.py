@@ -1357,6 +1357,22 @@ def test_empty_laps_are_refused():
     conn.close()
 
 
+def test_orphaned_interval_rows_do_not_inflate_coverage():
+    """M7: dedupe/pruning deletes `activities` rows but leaves any
+    `run_intervals` row behind. An unjoined COUNT would report those orphans
+    as scored — inflating `scored` past `streamed_runs` and masking a real
+    coverage gap. Mutation-proven: dropping the JOIN sends both assertions
+    red (scored 2, an extra 'steady' in shapes)."""
+    conn = _seeded()
+    arch.upsert_run_intervals(conn, _interval_row())
+    arch.upsert_run_intervals(conn, _interval_row(
+        activity_id=999, shape="steady", label=None, doc_json='{"shape":"steady"}'))
+    cov = arch.intervals_coverage(conn, 1)
+    assert cov["scored"] == 1, "the orphan (activity 999 has no activities row) must not count"
+    assert cov["shapes"] == {"reps": 1}
+    conn.close()
+
+
 def test_stale_interval_rows_count_as_missing():
     """A version bump must self-heal without a migration."""
     conn = _seeded()

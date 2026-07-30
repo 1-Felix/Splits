@@ -820,12 +820,16 @@ def intervals_coverage(conn: sqlite3.Connection, version: int) -> dict:
         f"""SELECT COUNT(*) FROM activities a
             WHERE a.detail_streams_json IS NOT NULL AND {_RUN_TYPE_SQL}"""
     ).fetchone()[0]
+    # JOIN back to activities (M7): dedupe/pruning can orphan run_intervals
+    # rows, and an unjoined count would inflate `scored` past streamed_runs.
     scored = conn.execute(
-        "SELECT COUNT(*) FROM run_intervals WHERE lens_version = ?",
+        "SELECT COUNT(*) FROM run_intervals i "
+        "JOIN activities a USING(activity_id) WHERE i.lens_version = ?",
         (version,)).fetchone()[0]
     shapes = {r[0]: r[1] for r in conn.execute(
-        "SELECT shape, COUNT(*) FROM run_intervals WHERE lens_version = ? "
-        "GROUP BY shape", (version,))}
+        "SELECT i.shape, COUNT(*) FROM run_intervals i "
+        "JOIN activities a USING(activity_id) WHERE i.lens_version = ? "
+        "GROUP BY i.shape", (version,))}
     lapped = conn.execute(
         "SELECT COUNT(*) FROM activities WHERE laps_json IS NOT NULL").fetchone()[0]
     return {"streamed_runs": streamed, "scored": scored,

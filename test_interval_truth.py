@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 
+import activity_archive as arch
 import interval_lens as il
 
 DB = Path(__file__).parent / "activity-archive.db"
@@ -67,11 +68,15 @@ def _load_archive():
         return None, None, [], 0
     conn = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
     try:
+        # M10 (sweep-lens-tail): the run-type predicate is IMPORTED, not
+        # re-hardcoded — this test and production can no longer drift on what
+        # counts as a run.
         raw = conn.execute(
-            "SELECT activity_id, name, summary_json, detail_streams_json, laps_json "
-            "FROM activities WHERE detail_streams_json IS NOT NULL "
-            "AND type_key LIKE '%run%' AND type_key NOT LIKE '%cycling%' "
-            "ORDER BY activity_id").fetchall()
+            "SELECT a.activity_id, a.name, a.summary_json, "
+            "a.detail_streams_json, a.laps_json "
+            "FROM activities a WHERE a.detail_streams_json IS NOT NULL "
+            f"AND {arch._RUN_TYPE_SQL} "
+            "ORDER BY a.activity_id").fetchall()
     finally:
         conn.close()
 

@@ -377,7 +377,13 @@ def _fetch_raw_detail(client, aid) -> dict | None:
 def _fetch_raw_laps(client, aid) -> list | None:
     """RAW lap DTOs for one activity, cache-first (`.garmin_cache/laps-<id>.json`).
     Garmin returns {'lapDTOs': [...]}; we bank the list itself — the envelope
-    carries nothing the lens needs."""
+    carries nothing the lens needs.
+
+    The cache is written only after confirming a NON-EMPTY lap list (M1): a
+    cached `{"lapDTOs": []}` envelope is truthy, so it used to count as
+    fetched forever and could starve `runs_missing_laps`' bounded queue
+    behind it. An empty reply now leaves no cache entry and the run is simply
+    asked again on a later sync."""
     if not aid:
         return None
     CACHE_DIR.mkdir(exist_ok=True)
@@ -388,7 +394,8 @@ def _fetch_raw_laps(client, aid) -> list | None:
                    None, f"laps-cache {aid}")
     if not doc:
         doc = safe(lambda: client.get_activity_splits(aid), None, f"laps {aid}")
-        if doc:
+        laps = (doc.get("lapDTOs") if isinstance(doc, dict) else doc) if doc else None
+        if laps:
             cache.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     if not doc:
         return None
@@ -439,7 +446,7 @@ def distill_run_detail(det: dict | None, activity: dict,
     bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
     intervals = interval_lens.compact(
         interval_lens.build_document(streams, activity, None, bounds=bounds,
-                                     work_floor=work_floor))
+                                     floor=work_floor))
 
     return {
         "splits": splits,

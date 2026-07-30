@@ -252,7 +252,7 @@ def interval_document(run: dict, max_hr: int, rhr=None,
     if not cols:
         return None
     return interval_lens.build_document(
-        cols, bounds=_zone_bounds(max_hr, rhr), work_floor=work_floor)
+        cols, bounds=_zone_bounds(max_hr, rhr), floor=work_floor)
 
 
 def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None):

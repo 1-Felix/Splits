@@ -1,6 +1,6 @@
 # Coach loop on the ingest path — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make an ingest-fed SPLITS instance derive the coach loop the way the Garmin path does — plan snapshots, compliance, block lens, the `insights`/`compliance`/`blockLens` telemetry keys, and `coach-briefing.md` — without changing a byte of what the Garmin path produces.
 
@@ -36,7 +36,7 @@ The extraction's whole risk is silently changing what the working instance emits
 - Produces: `fixtures/coach-pass/golden-blocks.json` — a dict with keys `insights`, `compliance`, `blockLens`, `courseLens` (the last is `null` for this fixture), plus `trend` (the string `insight_metrics.trend_verdict` returns, or `null`). Task 2 asserts `coach_pass.attach_blocks` reproduces it exactly.
 - Produces: `test_coach_pass._fixture_archive(tmp) -> (conn, plan)` — used by Tasks 2, 3, 4 and 6.
 
-- [ ] **Step 1: Write the fixture builder and the parity test**
+- [x] **Step 1: Write the fixture builder and the parity test**
 
 Create `test_coach_pass.py`. The fixture is deliberately self-contained rather than imported from `test_block_lens.py`: a committed golden must never drift because an unrelated test file changed its seed data.
 
@@ -165,7 +165,7 @@ def test_attach_blocks_matches_the_recorded_golden():
                                      "courseLens") if golden[k] is not None}
 ```
 
-- [ ] **Step 2: Write the throwaway recorder**
+- [x] **Step 2: Write the throwaway recorder**
 
 This runs against the CURRENT code, before `coach_pass` exists. Create `record_golden.py` at repo root — it is deleted in Step 5, never committed.
 
@@ -203,7 +203,7 @@ dest.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="
 print("recorded", dest, {k: (v is not None) for k, v in out.items()})
 ```
 
-- [ ] **Step 3: Run the recorder**
+- [x] **Step 3: Run the recorder**
 
 Run: `./.venv/Scripts/python.exe record_golden.py`
 
@@ -211,13 +211,13 @@ Expected: `recorded fixtures\coach-pass\golden-blocks.json {'insights': True, 'c
 
 If `insights` is `False`, the fixture has too few months of `run_metrics` — `insight_metrics.monthly_series` returned empty and `assemble_insights` raised. Add another month of `_metrics` rows and re-run. Do not proceed with a golden whose `insights` is null; it would make the parity test vacuous.
 
-- [ ] **Step 4: Run the parity test to verify it fails for the right reason**
+- [x] **Step 4: Run the parity test to verify it fails for the right reason**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -v`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'coach_pass'` — not an assertion error. An assertion error here means the golden was recorded from a different fixture than the test builds.
 
-- [ ] **Step 5: Delete the recorder and commit**
+- [x] **Step 5: Delete the recorder and commit**
 
 ```bash
 rm record_golden.py
@@ -242,7 +242,7 @@ exactly or the extraction changed what the Garmin instance emits."
 - Produces: `coach_pass.attach_blocks(conn, plan, today, data, log=_noop) -> list[str]`. Mutates `data` in place, adding any of `insights`, `compliance`, `blockLens`, `courseLens` that assemble, and setting `data["predictions"]["trend"]` when `trend_verdict` returns a non-empty verdict. Returns the key names added. `plan=None` is legal and omits only the plan-dependent blocks.
 - Produces: `coach_pass._noop(msg)` — the default logger, used by Tasks 3 and 4.
 
-- [ ] **Step 1: Write the module**
+- [x] **Step 1: Write the module**
 
 ```python
 """coach_pass.py — the coach loop's derived state, for every pipeline.
@@ -339,7 +339,7 @@ def _course(conn, plan):
     return doc
 ```
 
-- [ ] **Step 2: Run the parity test**
+- [x] **Step 2: Run the parity test**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -v`
 
@@ -347,7 +347,7 @@ Expected: PASS.
 
 If `compliance` differs, check that `assemble_compliance` is being given the same `today`. If `insights` differs, the golden was recorded against a different fixture — re-record rather than editing the golden by hand.
 
-- [ ] **Step 3: Add the fail-domain and no-plan tests**
+- [x] **Step 3: Add the fail-domain and no-plan tests**
 
 Append to `test_coach_pass.py`:
 
@@ -386,13 +386,13 @@ def test_no_plan_still_assembles_the_plan_free_blocks():
     assert "insights" in keys and "blockLens" in keys
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -v`
 
 Expected: 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add coach_pass.py test_coach_pass.py
@@ -416,7 +416,7 @@ exactly."
 - Consumes: `coach_pass._noop`.
 - Produces: `coach_pass.derive(conn, plan_raw, plan, today, max_hr, log=_noop) -> dict` with keys `weeks_scored`, `weeks_healed`, `blocks`, `recomputed`. Banks the plan snapshot, rescores compliance, ratchets `expected_compliance_weeks`, and refreshes the block-lens rows. Task 5 and Task 7 both call it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_derive_banks_a_snapshot_and_scores_the_weeks():
@@ -441,13 +441,13 @@ def test_derive_banks_a_snapshot_and_scores_the_weeks():
     assert "blocks" in stats and "recomputed" in stats
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py::test_derive_banks_a_snapshot_and_scores_the_weeks -v`
 
 Expected: FAIL with `AttributeError: module 'coach_pass' has no attribute 'derive'`.
 
-- [ ] **Step 3: Implement `derive`**
+- [x] **Step 3: Implement `derive`**
 
 Add to `coach_pass.py`, above `attach_blocks`. The bodies move verbatim from `sync_garmin.compliance_step` and `sync_garmin.block_lens_step`; only the connection handling and the `max_hr` source change.
 
@@ -484,13 +484,13 @@ def derive(conn, plan_raw, plan, today, max_hr, log=_noop) -> dict:
     return {**stats, **lens}
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -v`
 
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add coach_pass.py test_coach_pass.py
@@ -512,7 +512,7 @@ against the calibrated value from its own build."
 **Interfaces:**
 - Produces: `coach_pass.briefing(conn, plan, data, today, path, log=_noop) -> bool` — renders and atomically publishes the briefing, returning False when `plan` is falsy.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_briefing_publishes_atomically():
@@ -552,13 +552,13 @@ def test_briefing_without_a_plan_is_a_no_op():
     assert not dest.exists()
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -k briefing -v`
 
 Expected: FAIL with `AttributeError: module 'coach_pass' has no attribute 'briefing'`.
 
-- [ ] **Step 3: Implement `briefing`**
+- [x] **Step 3: Implement `briefing`**
 
 ```python
 def briefing(conn, plan, data, today, path, log=_noop) -> bool:
@@ -575,13 +575,13 @@ def briefing(conn, plan, data, today, path, log=_noop) -> bool:
     return True
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -v`
 
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add coach_pass.py test_coach_pass.py
@@ -602,7 +602,7 @@ The riskiest task. Nothing about Felix's output may change.
 - Consumes: `coach_pass.derive`, `coach_pass.attach_blocks`, `coach_pass.briefing`.
 - Produces: no new public names. `sync_garmin.main()`'s step sequence is unchanged.
 
-- [ ] **Step 1: Record the real-archive "before" snapshot**
+- [x] **Step 1: Record the real-archive "before" snapshot**
 
 The committed golden proves parity on a synthetic fixture. This proves it on Felix's actual 165-run archive, which is the one that matters. Create `parity_real.py` at repo root:
 
@@ -671,11 +671,11 @@ mv coach_pass.py.hidden coach_pass.py
 
 Expected: `before → parity-before.json {'insights': True, 'compliance': True, 'blockLens': True, ...}`
 
-- [ ] **Step 2: Delete the four `fetch_*` helpers**
+- [x] **Step 2: Delete the four `fetch_*` helpers**
 
 In `sync_garmin.py`, delete `fetch_insights`, `fetch_compliance`, `fetch_block_lens` and `fetch_course_lens` entirely (spec §4 — deleted, not wrapped).
 
-- [ ] **Step 3: Rewrite `build_data`'s block section**
+- [x] **Step 3: Rewrite `build_data`'s block section**
 
 Replace the assembly block at the top of `build_data` (the `insights = fetch_insights()` … `lens = fetch_block_lens()` … `course = fetch_course_lens()` sequence) — delete it — and replace the tail of the function (`if insights: data["insights"] = insights` through `data["courseLens"] = course`) with one call:
 
@@ -694,7 +694,7 @@ Replace the assembly block at the top of `build_data` (the `insights = fetch_ins
 
 Add `import coach_pass` to the import block (alphabetical: after `block_lens`, before `coach_briefing`).
 
-- [ ] **Step 4: Rewrite the three steps as thin wrappers**
+- [x] **Step 4: Rewrite the three steps as thin wrappers**
 
 ```python
 def compliance_step() -> None:
@@ -736,13 +736,13 @@ Delete `block_lens_step` entirely — `derive` now does both halves — and remo
 
 Update the ordering comment above that sequence: the block lens is no longer its own step, it is the second half of the compliance step.
 
-- [ ] **Step 5: Run the full Python suite**
+- [x] **Step 5: Run the full Python suite**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py test_plan_compliance.py test_block_lens.py test_coach_briefing.py test_activity_archive.py -q`
 
 Expected: all pass. These four existing suites are the regression net for the extraction — a failure here means behaviour moved, not just code.
 
-- [ ] **Step 6: Record the real-archive "after" snapshot and diff**
+- [x] **Step 6: Record the real-archive "after" snapshot and diff**
 
 ```bash
 ./.venv/Scripts/python.exe parity_real.py felix-plan.js
@@ -751,7 +751,7 @@ Expected: all pass. These four existing suites are the regression net for the ex
 
 Expected: `IDENTICAL`. If it differs, dump both to files and diff them — do not proceed. The most likely cause is `attach_blocks` being handed a `plan` where the old code loaded its own.
 
-- [ ] **Step 7: Clean up scratch files and commit**
+- [x] **Step 7: Clean up scratch files and commit**
 
 ```bash
 rm parity_real.py parity-before.json parity-after.json felix-plan.js
@@ -777,7 +777,7 @@ Verified identical on the real 165-run archive, not just the fixture."
 **Interfaces:**
 - Produces: `insight_metrics.assemble_insights(conn, today=None, goal_sec=None) -> dict` — `goal_sec=None` keeps `GOAL_HALF_S` as the fallback.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_goal_seconds_come_from_the_plan_not_the_constant():
@@ -811,13 +811,13 @@ def test_unparseable_goal_falls_back_to_the_constant():
     assert data["insights"]["trajectory"]["goalSec"] == im3.GOAL_HALF_S
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py -k goal -v`
 
 Expected: FAIL — `assert 7199 == 8999`.
 
-- [ ] **Step 3: Thread `goal_sec` through**
+- [x] **Step 3: Thread `goal_sec` through**
 
 In `insight_metrics.py`:
 
@@ -848,13 +848,13 @@ In `coach_pass.py`, replace the insights call inside `attach_blocks`:
         "insights assembly", log)
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_coach_pass.py test_block_lens.py -q`
 
 Expected: all pass. The parity golden still passes because the fixture plan's goal is `1:59:59` → 7199, which is what `GOAL_HALF_S` was.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add insight_metrics.py coach_pass.py test_coach_pass.py
@@ -877,7 +877,7 @@ stays as the fallback for a caller with no plan."
 - Consumes: `coach_pass.derive`, `coach_pass.attach_blocks`, `coach_pass.briefing`.
 - Produces: no new public names. `build_athlete_data`'s signature is unchanged — `plan_goal` is still a parameter, it just comes from the parsed plan now (D7).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Note on the clock: `main()` reads `dt.date.today()` — unlike `build_athlete_data`, it has no injectable `today`, so these three tests exercise the real date. The fixture plan's week (2026-07-13…19) is closed and its race date is in the past, which keeps compliance scoreable and the block-lens row derivable whenever the suite runs. If the `blockLens` assertion ever turns flaky, the fix is to give `main()` an injectable `today` — not to weaken the assertion.
 
@@ -993,13 +993,13 @@ def test_a_failing_archive_still_yields_telemetry(monkeypatch):
         assert '"recentRuns"' in Path(td, "garmin-data.js").read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_ingest_builder.py -k "coach_blocks or unreadable_plan or failing_archive" -v`
 
 Expected: the first two FAIL on the missing `"compliance"` / `halfGoal` assertions; the third FAILS because `build_archive` raising currently happens after the write, so it may already pass — confirm it passes for the *right* reason after Step 3, not before.
 
-- [ ] **Step 3: Rewrite `main()`**
+- [x] **Step 3: Rewrite `main()`**
 
 Replace the body of `main()` from the `calibration = ...` line to the end with:
 
@@ -1077,19 +1077,19 @@ Add to the imports at the top of `ingest_builder.py`: `import coach_pass` and `i
 
 The archive-existence guard matters: a zero-run instance must stay unprovisioned (`test_zero_runs_leaves_the_instance_unprovisioned` asserts the db is never created), so the derive pass must not be what creates it.
 
-- [ ] **Step 4: Run the ingest suite**
+- [x] **Step 4: Run the ingest suite**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_ingest_builder.py -q`
 
 Expected: all pass, including the three new tests and the existing 56.
 
-- [ ] **Step 5: Run the Node-side ingest tests**
+- [x] **Step 5: Run the Node-side ingest tests**
 
 Run: `node test_ingest_e2e.mjs && node test_build_watchdog.mjs && node test_ingest_api.mjs`
 
 Expected: all pass. These cover the server's build trigger and the watchdog, which now supervise a longer build.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ingest_builder.py test_ingest_builder.py
@@ -1116,7 +1116,7 @@ trajectory goal come from the same object."
 - Produces: `ingest_builder._riegel_seconds(runs) -> dict | None` with keys `time_5k_s`, `time_10k_s`, `half_s`, `marathon_s` — the promoted shape `activity_archive.upsert_race_prediction` expects.
 - Produces: `ingest_builder.MARATHON_KM = 42.195`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_the_ingest_path_banks_its_own_prediction():
@@ -1145,13 +1145,13 @@ def test_riegel_seconds_agree_with_the_formatted_predictions():
     assert ib._riegel_seconds([]) is None
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_ingest_builder.py -k "riegel" -v`
 
 Expected: FAIL with `AttributeError: module 'ingest_builder' has no attribute 'bank_riegel_prediction'`.
 
-- [ ] **Step 3: Extract and bank**
+- [x] **Step 3: Extract and bank**
 
 Add `MARATHON_KM = 42.195` next to `HALF_KM` (~line 46). Replace `predictions` with:
 
@@ -1211,13 +1211,13 @@ In `main()`, bank it inside the existing archive connection block, before `deriv
             if plan:
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./.venv/Scripts/python.exe -m pytest test_ingest_builder.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ingest_builder.py test_ingest_builder.py
@@ -1234,7 +1234,7 @@ column precisely so our own estimate is not mistaken for Garmin's."
 
 **Files:** none — this is the rollout (spec §7).
 
-- [ ] **Step 1: Run the whole suite one last time**
+- [x] **Step 1: Run the whole suite one last time**
 
 ```bash
 ./.venv/Scripts/python.exe -m pytest -q
@@ -1243,7 +1243,7 @@ node test_ingest_e2e.mjs && node test_build_watchdog.mjs && node test_slim_rende
 
 Expected: all pass. Do not deploy on a red suite.
 
-- [ ] **Step 2: Push and pull the image**
+- [x] **Step 2: Push and pull the image**
 
 ```bash
 git push
@@ -1252,7 +1252,7 @@ ssh nuc "cd /home/felix/dev/docker-compose-files/splits && docker compose pull &
 
 Wait for the GitHub Action to publish `ghcr.io/1-felix/splits:latest` before pulling — check with `gh run list --limit 3`.
 
-- [ ] **Step 3: Rebuild Max's instance and verify the tables fill**
+- [x] **Step 3: Rebuild Max's instance and verify the tables fill**
 
 ```bash
 ssh nuc "docker exec splits-max sh -c 'cd /app && python3 ingest_builder.py'"
@@ -1266,7 +1266,7 @@ for t in (\\\"plan_snapshots\\\",\\\"plan_compliance\\\",\\\"block_lens\\\",\\\"
 
 Expected: all four counts non-zero. Before this change they were `0 0 0 0`.
 
-- [ ] **Step 4: Verify the briefing renders with real content**
+- [x] **Step 4: Verify the briefing renders with real content**
 
 ```bash
 ssh nuc "docker exec splits-max head -60 /data/coach-briefing.md"
@@ -1274,13 +1274,13 @@ ssh nuc "docker exec splits-max head -60 /data/coach-briefing.md"
 
 Expected: a `## Plan vs actual` section with day rows, a Block report, and **no** `insights unavailable this sync` lines. Records & best efforts, Trajectory and Progress trends must all carry content — that is the gap this change existed to close.
 
-- [ ] **Step 5: Verify the dashboard**
+- [x] **Step 5: Verify the dashboard**
 
 Load `http://192.168.0.37:5733/` and check for compliance glyphs on the week cards and a "The Block" section on `/progress`. Read the DOM with `browser_evaluate` on `document.body.innerText`, not the saved Playwright snapshot — the snapshot is captured before the dashboard's dynamic `import('./running-data.js')` resolves and shows the built-in demo dataset.
 
 Expect Wk 2 to show Monday missed and Tuesday as an unplanned run: the plan was rewritten mid-week on 2026-07-29 and there is no historical snapshot to score against (spec §3.1). That is the expected artefact, not a bug.
 
-- [ ] **Step 6: Verify Felix's instance is unchanged**
+- [x] **Step 6: Verify Felix's instance is unchanged**
 
 ```bash
 ssh nuc "docker exec splits sh -c 'cp /data/garmin-data.js /tmp/before.js'"
@@ -1290,7 +1290,7 @@ ssh nuc "docker exec splits sh -c 'diff <(grep -v \"^ \\* Built:\" /tmp/before.j
 
 Expected: `IDENTICAL` (the build-timestamp line is the only permitted difference). A diff in `readiness` or `recentRuns` is fresh Garmin data, not a regression — re-run the comparison against two consecutive post-change syncs to separate the two. A diff in `insights`, `compliance`, `blockLens` or `courseLens` is a parity failure and must be fixed before this is left running.
 
-- [ ] **Step 7: Update the memory note**
+- [x] **Step 7: Update the memory note**
 
 Edit `C:\Users\felix\.claude\projects\C--Users-felix-Documents-Github-Splits\memory\max-training-state.md`: strike the "no briefing / no compliance on the ingest path" gotcha and the manual `docker exec` briefing recipe, replacing them with the shipped state and the commit range. Update the one-line pointer in `MEMORY.md` to match.
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
-INTERVAL_VERSION = 4   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 5   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
                        # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
                        #    rep floor the stream path always has, and shares its
@@ -28,6 +28,10 @@ INTERVAL_VERSION = 4   # 2: paceS is raw pace and gapS is real (final review I4)
                        # 4: the workout STEP decides what is a rep — one-off
                        #    ACTIVE laps demoted, lap blocks meet BLOCK_MIN_*,
                        #    GAP from the device, spread/fade on the raw grid.
+                       # 5: fix-lap-confidence — lap confidence is derived
+                       #    (corroborated/structured/eliminated), a shape that
+                       #    survives only by material size discard is hedged,
+                       #    and every document carries the `asserts` verdict.
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
@@ -49,7 +53,24 @@ PROGRESSION_MIN_GAIN = 0.05   # last quintile >=5 % faster than the first
 ROUND_DIST_TOLERANCE = 0.12   # relative error within which a rep snaps to a named distance
 AUTOLAP_TOLERANCE = 0.05      # laps all within ±5 % of 1 km / 1 mile = auto-lap
 AUTOLAP_UNITS = (1000.0, 1609.34)
-CONFIDENCE_ASSERT_MIN = 0.5   # below this the UI says "possible", never asserts
+CONFIDENCE_ASSERT_MIN = 0.5   # below this the document does not assert its
+                              # shape. THE single place the comparison happens
+                              # (_verdict): the document carries the boolean
+                              # and run.dc.html renders it — the page performs
+                              # no threshold arithmetic of its own (handoff M2)
+
+# The lap path's confidence levels (fix-lap-confidence D3). No continuous
+# evidence exists to interpolate over — the device did not classify by pace —
+# so a fabricated score would be false precision. Three named levels instead:
+# corroborated (reps share a repeated workout step, no material discard),
+# structured (step evidence via the no-repeat fallback, or a device block, no
+# material discard) and eliminated (the shape depends on a material size
+# discard). Corroborated and structured deliberately share a value: nothing
+# observable turns on the distinction until add-workout-prior can corroborate
+# against a prescription, and that change decides it (design open question 1).
+# Eliminated sits below CONFIDENCE_ASSERT_MIN by construction; its exact
+# value is cosmetic — the page renders the verdict, never the number.
+_LAP_CONFIDENCE = {"corroborated": 1.0, "structured": 1.0, "eliminated": 0.4}
 # Zone boundary fractions — the values ingest_builder has always used, moved
 # here as THE definition (Task 11 rewrites ingest_builder._zone_bounds to
 # delegate here), so the two producers cannot drift on what "Z4" means. Six
@@ -606,8 +627,89 @@ def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
     return set(counts)
 
 
-def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
-    """Which lap-derived work segments are genuine reps.
+def _lap_survivors(segments: list[dict], laps: list[dict],
+                   size_floor: bool = True) -> tuple[set, set, set]:
+    """The survivor selection both filters produce, as bare index sets:
+    `(survivors, size_discards, step_discards)` over lap positions.
+
+    Extracted from `_lap_rep_segments` so the materiality check (design D2 of
+    fix-lap-confidence) can re-run the SAME selection with the size floor
+    lifted and compare survivor sets — a literal statement of "the shape
+    depends on the discard" rather than a proxy for it. Pure: no state, and
+    the caller's segments and laps are never mutated.
+
+    `size_floor=False` lifts WORK_MIN_S/WORK_MIN_M only; the step rule always
+    applies — it is the device's own evidence, not an engine guess."""
+    work = {i for i, s in enumerate(segments) if s["role"] == "work"}
+    sized = {i for i in work
+             if not size_floor
+             or (segments[i]["durS"] >= WORK_MIN_S
+                 and segments[i]["distM"] >= WORK_MIN_M)}
+    steps = _rep_step_indices(laps, sized)
+    survivors = sized if steps is None else {
+        i for i in sized if laps[i].get("wktStepIndex") in steps}
+    return survivors, work - sized, sized - survivors
+
+
+def _size_discard_is_material(segments: list[dict], laps: list[dict]) -> bool:
+    """Did the SIZE floor decide this run's shape? (design D2 of
+    fix-lap-confidence)
+
+    'A size discard occurred' is far too weak a trigger — nearly every
+    lap-sourced run ends with a sub-floor fragment the athlete's stop press
+    produced, and hedging all of them would hedge everything and mean nothing.
+    So the question is asked directly: re-run the SAME survivor selection with
+    the size floor lifted, and call the discard material only when the
+    survivor set changes. Wherever a genuine repeated step exists, a trailing
+    fragment carries no step index and the step rule kills it either way, so
+    this self-selects the cases that matter.
+
+    Pure: two calls to `_lap_survivors`, microseconds on ≤ 30 laps."""
+    with_floor, _, _ = _lap_survivors(segments, laps)
+    lifted, _, _ = _lap_survivors(segments, laps, size_floor=False)
+    return with_floor != lifted
+
+
+def _verdict(confidence: float) -> bool:
+    """Does a document with this confidence assert its shape? THE one
+    comparison against CONFIDENCE_ASSERT_MIN (fix-lap-confidence D4, closing
+    handoff M2): the engine decides, the document carries the boolean, and
+    the page renders it without threshold arithmetic of its own."""
+    return confidence >= CONFIDENCE_ASSERT_MIN
+
+
+def _lap_confidence(segments: list[dict], laps: list[dict]) -> tuple[str, float]:
+    """A lap-sourced document's confidence level and value (design D3).
+
+    `segments` must be the raw `segments_from_laps` output, BEFORE
+    `_lap_rep_segments` re-roles anything — the selection here has to see the
+    same work-role population both filters saw.
+
+    eliminated    the shape depends on a material size discard (D2) — the
+                  engine's own floor removed the alternative, so the verdict
+                  must not assert.
+    corroborated  the surviving reps share a repeated workout step: the
+                  device's own evidence, the case the lap path exists for.
+    structured    everything else the device recorded — a block, a varied
+                  set on distinct steps, or laps with no step evidence."""
+    if _size_discard_is_material(segments, laps):
+        return "eliminated", _LAP_CONFIDENCE["eliminated"]
+    survivors, _, _ = _lap_survivors(segments, laps)
+    counts = Counter(laps[i].get("wktStepIndex") for i in survivors
+                     if laps[i].get("wktStepIndex") is not None)
+    if any(n > 1 for n in counts.values()):
+        return "corroborated", _LAP_CONFIDENCE["corroborated"]
+    return "structured", _LAP_CONFIDENCE["structured"]
+
+
+def _lap_rep_segments(segments: list[dict],
+                      laps: list[dict]) -> tuple[list[dict], dict]:
+    """Which lap-derived work segments are genuine reps — returns the re-roled
+    segments plus the discard bookkeeping `{"size": set, "step": set}` of lap
+    indices each filter rejected (design D1 of fix-lap-confidence: the two
+    filters are NOT equivalent — a size discard may hedge the document's
+    confidence, a step demotion never does, so they must stay distinguishable
+    rather than collapse into one 'discarded' set).
 
     Two filters, one question. The SIZE floor (`WORK_MIN_S` / `WORK_MIN_M`,
     the same one `find_bouts` applies to the stream path) rejects fragments —
@@ -639,12 +741,7 @@ def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
     """
     assert len(segments) == len(laps), \
         "segments_from_laps must emit exactly one segment per lap, in order"
-    sized = {i for i, s in enumerate(segments)
-             if s["role"] == "work"
-             and s["durS"] >= WORK_MIN_S and s["distM"] >= WORK_MIN_M}
-    steps = _rep_step_indices(laps, sized)
-    survivors = sized if steps is None else {
-        i for i in sized if laps[i].get("wktStepIndex") in steps}
+    survivors, size_discards, step_discards = _lap_survivors(segments, laps)
 
     ordered = sorted(survivors)
     first = ordered[0] if ordered else None
@@ -669,7 +766,7 @@ def _lap_rep_segments(segments: list[dict], laps: list[dict]) -> list[dict]:
                 else:
                     seg["role"] = "recovery"
         out.append(seg)
-    return out
+    return out, {"size": size_discards, "step": step_discards}
 
 
 def _segments_from_bouts(bouts, series, dist_at, hr, total_s,
@@ -747,7 +844,8 @@ def _progression_segments(series: list, dist_at, hr: list, total_s: int,
 def _confidence(separation: float, bouts, series, cv) -> float:
     """Three factors, multiplied and clamped (spec): how far apart the two pace
     classes sit, how crisp the boundaries are, and — for a set — how regular
-    the reps were. Lap-sourced documents skip this entirely at 1.0."""
+    the reps were. STREAM path only: lap-sourced documents derive theirs from
+    `_lap_confidence`'s named levels instead (fix-lap-confidence D3)."""
     sep_factor = min(1.0, max(0.0, (separation - SEPARATION_MIN) / 0.25 + 0.4))
     crisp = 1.0
     if bouts:
@@ -831,7 +929,12 @@ def build_document(streams: dict | None, summary: dict | None = None,
     base = {"version": INTERVAL_VERSION, "guidedBy": None}
 
     if laps and laps_are_structured(summary, laps):
-        segments = _lap_rep_segments(segments_from_laps(laps, gap_grid), laps)
+        raw_segments = segments_from_laps(laps, gap_grid)
+        # confidence reads the RAW segments — _lap_rep_segments re-roles the
+        # demoted laps, and the materiality re-run has to see the same
+        # work-role population the original selection saw
+        _level, confidence = _lap_confidence(raw_segments, laps)
+        segments, discards = _lap_rep_segments(raw_segments, laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -875,7 +978,8 @@ def build_document(streams: dict | None, summary: dict | None = None,
             segments = []
         return {
             **base,
-            "shape": shape, "source": "laps", "confidence": 1.0,
+            "shape": shape, "source": "laps", "confidence": confidence,
+            "asserts": _verdict(confidence),
             "calibrated": True,
             "label": label,
             "segments": segments,
@@ -928,11 +1032,13 @@ def build_document(streams: dict | None, summary: dict | None = None,
     else:
         segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series),
                                         raw_grid, gap_grid)
+    confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
+                             stats["paceCvPct"] if stats else None)
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,
-        "confidence": _confidence(classes[2] if classes else 0.0, bouts, series,
-                                  stats["paceCvPct"] if stats else None),
+        "confidence": confidence,
+        "asserts": _verdict(confidence),
         "label": label_for(shape, bouts, dist_at),
         "segments": segments,
         "set": stats,

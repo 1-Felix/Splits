@@ -2338,5 +2338,113 @@
    "hasIntensityIntervals": true,
    "workoutId": 1626627551
   }
+ },
+ "2026-07-29": {
+  "laps": [
+   {
+    "averageHR": 151.0,
+    "averageSpeed": 2.6059999465942383,
+    "avgGradeAdjustedSpeed": 2.614000082015991,
+    "distance": 5000.0,
+    "duration": 1918.371,
+    "elapsedDuration": 1918.371,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 0
+   },
+   {
+    "averageHR": 161.0,
+    "averageSpeed": 2.7170000076293945,
+    "avgGradeAdjustedSpeed": 2.8259999752044678,
+    "distance": 163.0,
+    "duration": 60.0,
+    "elapsedDuration": 60.0,
+    "intensityType": "REST",
+    "wktStepIndex": 1
+   },
+   {
+    "averageHR": 156.0,
+    "averageSpeed": 1.7649999856948853,
+    "avgGradeAdjustedSpeed": 2.440999984741211,
+    "distance": 35.3,
+    "duration": 20.0,
+    "elapsedDuration": 20.0,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 2
+   },
+   {
+    "averageHR": 140.0,
+    "averageSpeed": 1.8739999532699585,
+    "avgGradeAdjustedSpeed": 1.8769999742507937,
+    "distance": 403.38,
+    "duration": 215.206,
+    "elapsedDuration": 215.206,
+    "intensityType": "RECOVERY",
+    "wktStepIndex": 3
+   },
+   {
+    "averageHR": 109.0,
+    "averageSpeed": 3.9270000457763676,
+    "avgGradeAdjustedSpeed": 2.8450000286102295,
+    "distance": 78.54,
+    "duration": 20.0,
+    "elapsedDuration": 20.0,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 2
+   },
+   {
+    "averageHR": 135.0,
+    "averageSpeed": 1.7319999933242798,
+    "avgGradeAdjustedSpeed": 1.9709999561309814,
+    "distance": 130.3,
+    "duration": 75.23,
+    "elapsedDuration": 75.23,
+    "intensityType": "RECOVERY",
+    "wktStepIndex": 3
+   },
+   {
+    "averageHR": 123.0,
+    "averageSpeed": 4.208000183105469,
+    "avgGradeAdjustedSpeed": 2.8889999389648438,
+    "distance": 84.17,
+    "duration": 20.0,
+    "elapsedDuration": 20.0,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 2
+   },
+   {
+    "averageHR": 145.0,
+    "averageSpeed": 1.559999942779541,
+    "avgGradeAdjustedSpeed": 1.8890000581741333,
+    "distance": 125.8,
+    "duration": 80.643,
+    "elapsedDuration": 80.643,
+    "intensityType": "RECOVERY",
+    "wktStepIndex": 3
+   },
+   {
+    "averageHR": 123.0,
+    "averageSpeed": 4.517000198364258,
+    "avgGradeAdjustedSpeed": 3.3729999065399174,
+    "distance": 90.34,
+    "duration": 20.0,
+    "elapsedDuration": 20.0,
+    "intensityType": "ACTIVE",
+    "wktStepIndex": 2
+   },
+   {
+    "averageHR": 149.0,
+    "averageSpeed": 1.6990000009536743,
+    "avgGradeAdjustedSpeed": 1.878999948501587,
+    "distance": 173.28,
+    "duration": 101.988,
+    "elapsedDuration": 101.988,
+    "intensityType": "COOLDOWN",
+    "wktStepIndex": 5
+   }
+  ],
+  "name": "Leinfelden-Echterdingen - 5km easy + 4x20s strides",
+  "summary": {
+   "workoutId": 1646850327
+  }
  }
 }

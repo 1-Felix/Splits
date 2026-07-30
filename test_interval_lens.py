@@ -1108,7 +1108,7 @@ def test_lap_work_floor_reroles_a_trailing_fragment_as_cooldown():
     not `recovery` (there is no more work to recover FOR)."""
     laps = [_lap(600, 180, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
             _pace_lap(9)]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["warmup", "work", "work", "cooldown"]
     assert segs[1]["rep"] == 1 and segs[2]["rep"] == 2
     assert "rep" not in segs[3]
@@ -1120,7 +1120,7 @@ def test_lap_work_floor_reroles_leading_fragments_as_warmup():
     there is nothing yet to have recovered from."""
     laps = [_pace_lap(93, 150), _pace_lap(118, 150), _pace_lap(112, 150),
             _pace_lap(105, 150), _pace_lap(3040, 260)]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["warmup"] * 4 + ["work"]
     assert segs[4]["rep"] == 1
     assert all("rep" not in s for s in segs[:4])
@@ -1132,7 +1132,7 @@ def test_lap_work_floor_reroles_a_mid_set_fragment_as_recovery_and_renumbers():
     count must not leave a hole in `rep` numbering: the third real rep is
     still numbered 3, not 4."""
     laps = [_pace_lap(1000), _pace_lap(1000), _pace_lap(9), _pace_lap(1000)]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["work", "work", "recovery", "work"]
     assert [s.get("rep") for s in segs] == [1, 2, None, 3]
     # idx is untouched — segments are re-roled in place, never deleted
@@ -1145,7 +1145,7 @@ def test_lap_work_floor_leaves_short_warmup_recovery_cooldown_alone():
     recovery there is still a recovery, never dropped or re-roled)."""
     laps = [_lap(50, 15, "WARMUP"), _pace_lap(1000), _pace_lap(1000),
             _lap(20, 8, "REST"), _pace_lap(1000), _lap(30, 10, "COOLDOWN")]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == \
         ["warmup", "work", "work", "recovery", "work", "cooldown"]
     assert [s.get("rep") for s in segs] == [None, 1, 2, None, 3, None]
@@ -1158,7 +1158,7 @@ def test_lap_work_floor_never_touches_a_non_work_role_even_by_position():
     demoted `work` laps go through, which would fire on it too if the code
     ever stopped checking the role first."""
     laps = [_lap(10, 5, "REST"), _pace_lap(1000), _pace_lap(1000)]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert segs[0]["role"] == "recovery"
 
 
@@ -1171,7 +1171,7 @@ def test_lap_work_floor_needs_both_distance_and_duration_not_either_alone():
     fast_sprint = _lap(200, 20)          # clears 150 m, fails 30 s
     slow_stroll = _lap(100, 60)          # clears 30 s, fails 150 m
     laps = [fast_sprint, slow_stroll]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["recovery", "recovery"]
 
 
@@ -1182,9 +1182,62 @@ def test_lap_work_floor_falls_back_to_recovery_when_nothing_survives():
     `steady` or `block` in this case (see test_all_sub_floor_laps_read_
     steady_with_no_segments) and neither counts a `recovery` segment."""
     laps = [_pace_lap(9), _pace_lap(8)]
-    segs = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    segs, _ = il._lap_rep_segments(il.segments_from_laps(laps), laps)
     assert [s["role"] for s in segs] == ["recovery", "recovery"]
     assert all("rep" not in s for s in segs)
+
+
+def test_lap_rep_segments_reports_size_and_step_discards_separately():
+    """Design D1 of fix-lap-confidence: the SIZE floor is the engine's own
+    guess and may hedge; the STEP rule is the device's evidence and must not.
+    The bookkeeping therefore has to keep the two discard sets apart — a
+    single merged 'discarded' set could not tell a hedgeable elimination from
+    a corroborated demotion.
+
+    Lap 0 is a full-size ACTIVE warmup on its own one-off step (STEP discard);
+    lap 2 is a sub-floor fragment (SIZE discard); laps 1 and 3 are the set.
+    (`_step_lap` is defined further down, beside the change-2 step-rule tests;
+    Python resolves it at call time, so its position does not matter here.)"""
+    laps = [_step_lap(2000, 600, "ACTIVE", 0),
+            _step_lap(1000, 300, "ACTIVE", 1),
+            _step_lap(9, 3, "ACTIVE", None),
+            _step_lap(1000, 300, "ACTIVE", 1)]
+    segs, discards = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    assert discards == {"size": {2}, "step": {0}}
+    assert [s.get("rep") for s in segs] == [None, 1, None, 2]
+    assert [s["role"] for s in segs] == ["warmup", "work", "recovery", "work"]
+
+
+def test_lap_rep_segments_discards_are_empty_on_a_clean_set():
+    """A set with nothing rejected reports two empty sets, not a missing or
+    None bookkeeping value — the confidence rule reads them unconditionally."""
+    laps = [_step_lap(1000, 300, "ACTIVE", 1), _step_lap(1000, 300, "ACTIVE", 1),
+            _step_lap(1000, 300, "ACTIVE", 1)]
+    segs, discards = il._lap_rep_segments(il.segments_from_laps(laps), laps)
+    assert discards == {"size": set(), "step": set()}
+    assert [s.get("rep") for s in segs] == [1, 2, 3]
+
+
+def test_stream_documents_carry_the_assert_verdict_too():
+    """The verdict is part of the shared document contract, not a lap-path
+    extra: the engine decides, the page obeys (fix-lap-confidence D4). A
+    clean, well-separated stream detection asserts."""
+    spans = [(300, 2.5)]
+    for _ in range(5):
+        spans += [(240, 4.0), (120, 2.0)]
+    spans += [(300, 2.5)]
+    doc = il.build_document(make_streams(spans), work_floor=3.0)
+    assert doc["shape"] == "reps"
+    assert doc["asserts"] is True
+
+
+def test_a_steady_stream_document_carries_a_verdict():
+    """Every document carries the verdict — a steady run included, so the
+    page never has to distinguish 'absent because old' from 'absent because
+    steady'."""
+    doc = il.build_document(make_streams([(1200, 2.5)]), work_floor=3.0)
+    assert doc["shape"] == "steady"
+    assert "asserts" in doc
 
 
 def _laps_doc(dists, summary=None, pace_s_per_km=300, laps=None):
@@ -1585,8 +1638,8 @@ def test_step_index_zero_is_evidence_not_no_evidence():
 
 def test_interval_version_is_current():
     """A stored document is only trustworthy if its version moved whenever the
-    rules that produced it did. Tasks 2-5 changed which laps are reps, what a
-    lap-sourced block must clear, where GAP comes from, and the basis of
-    spread and fade — every stored document must be recomputed."""
-    assert il.INTERVAL_VERSION == 4
-    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 4
+    rules that produced it did. fix-lap-confidence changed how a lap-sourced
+    document's confidence is derived and added the `asserts` verdict to every
+    document — every stored document must be recomputed."""
+    assert il.INTERVAL_VERSION == 5
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 5

@@ -547,7 +547,10 @@ class Component extends DCLogic {
           if (set.paceCvPct != null) bits.push(set.paceCvPct.toFixed(1) + '% spread');
           if (set.fadePct != null) bits.push((set.fadePct > 0 ? '+' : '') + set.fadePct.toFixed(1) + '% fade');
           if (set.recoveryHrDrop != null) bits.push('−' + set.recoveryHrDrop + ' bpm recovery');
-          if (iv.confidence != null && iv.confidence < 0.5) bits.push('possible structure');
+          // fix-lap-confidence D4: the engine decides, the document carries
+          // the verdict. `=== false`, not `!iv.asserts`: a document predating
+          // the verdict has no key and must not be hedged for its age.
+          if (iv.asserts === false) bits.push('possible structure');
           if (set.prescribed != null && set.found !== set.prescribed) {
             bits.unshift(set.found + ' of ' + set.prescribed + ' reps');
           }

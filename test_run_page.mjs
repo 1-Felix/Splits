@@ -115,7 +115,7 @@ for (let i = 0; i < 5; i++) {
   }
 }
 const REP_DOC = {
-  version: 2, shape: "reps", source: "stream", confidence: 0.86,
+  version: 2, shape: "reps", source: "stream", confidence: 0.86, asserts: true,
   label: "5×1 km", guidedBy: null,
   segments: REP_SEGMENTS,
   set: { found: 5, prescribed: null, nominalDistM: 1000, varied: false,
@@ -124,11 +124,13 @@ const REP_DOC = {
   quality: { workDistM: 5000, workDurS: 1250, zone: "Z4" },
 };
 
-// LOWCONF_RUN_ID: a genuine "reps" detection, but weak (confidence 0.35 < the
-// 0.5 hedge threshold) — the honesty contract this card exists for: a session
-// the athlete may have bailed on says "possible structure", not a flat claim.
-// This is a fixture no task in this plan has ever exercised (grepped: the
-// "possible structure" string appears nowhere in any test across the plan).
+// LOWCONF_RUN_ID: a genuine "reps" detection, but weak — the honesty contract
+// this card exists for: a session the athlete may have bailed on says
+// "possible structure", not a flat claim. Since fix-lap-confidence the page
+// renders the document's own `asserts` verdict (`=== false`) rather than
+// comparing `confidence` to a threshold of its own — the engine is the only
+// place that comparison happens. The fixture carries both fields the way the
+// engine emits them (confidence 0.35 → asserts false).
 const LOWCONF_RUN_ID = 9002;
 const LOWCONF_SEGMENTS = [];
 let lt = 300, ld = 700, lrep = 0;
@@ -148,7 +150,7 @@ for (let i = 0; i < 3; i++) {
   }
 }
 const LOWCONF_DOC = {
-  version: 1, shape: "reps", source: "stream", confidence: 0.35,
+  version: 1, shape: "reps", source: "stream", confidence: 0.35, asserts: false,
   label: "3×800 m", guidedBy: null,
   segments: LOWCONF_SEGMENTS,
   set: { found: 3, prescribed: null, nominalDistM: 800, varied: false,
@@ -176,6 +178,7 @@ const STEADY_SEGMENTS = [
 ];
 const STEADY_DOC = {
   version: 1, shape: "steady", source: "stream", calibrated: true, confidence: 0.95,
+  asserts: true,
   label: null, guidedBy: null,
   segments: STEADY_SEGMENTS,
   set: null,
@@ -188,7 +191,7 @@ const STEADY_DOC = {
 const UNCAL_RUN_ID = 9004;
 const UNCAL_DOC = {
   version: 4, shape: "steady", source: "stream", calibrated: false,
-  confidence: 0.0, label: null, segments: [], set: null, guidedBy: null,
+  confidence: 0.0, asserts: false, label: null, segments: [], set: null, guidedBy: null,
   quality: { workDistM: 0, workDurS: 0, zone: null },
 };
 

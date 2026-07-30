@@ -1,0 +1,2017 @@
+{
+ "2025-09-19": {
+  "createdDate": "2025-09-18T14:38:52.0",
+  "updatedDate": "2025-09-18T16:05:01.0",
+  "workoutId": 1332425595,
+  "workoutName": "W1 HM-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 6.0,
+      "numberOfIterations": 6,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 60.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 60.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1800.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     }
+    ]
+   }
+  ]
+ },
+ "2025-10-17": {
+  "createdDate": "2025-10-16T15:28:31.0",
+  "updatedDate": "2025-11-14T09:57:49.0",
+  "workoutId": 1357916773,
+  "workoutName": "W5 HM-Training: Hügel",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 6.0,
+      "numberOfIterations": 6,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 90.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-11-14": {
+  "createdDate": "2025-10-16T15:28:31.0",
+  "updatedDate": "2025-11-14T09:57:49.0",
+  "workoutId": 1357916773,
+  "workoutName": "W5 HM-Training: Hügel",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 6.0,
+      "numberOfIterations": 6,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 90.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-11-21": {
+  "createdDate": "2025-10-16T15:37:06.0",
+  "updatedDate": "2025-11-21T16:30:20.0",
+  "workoutId": 1357922074,
+  "workoutName": "W7 HM-Training: Hügel",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 8.0,
+      "numberOfIterations": 8,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 90.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-05": {
+  "createdDate": "2025-12-02T18:03:46.0",
+  "updatedDate": "2025-12-02T18:07:19.0",
+  "workoutId": 1400466807,
+  "workoutName": "W9 HM-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 4
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 180.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 4,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 4
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-12": {
+  "createdDate": "2025-12-02T18:10:29.0",
+  "updatedDate": "2025-12-02T18:14:55.0",
+  "workoutId": 1400471692,
+  "workoutName": "W10 HM-Training: Hügel",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "other"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 6.0,
+      "numberOfIterations": 6,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 120.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 5,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 6,
+      "stepType": {
+       "stepTypeKey": "other"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 7,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-14": {
+  "createdDate": "2025-12-02T18:15:10.0",
+  "updatedDate": "2025-12-02T18:15:35.0",
+  "workoutId": 1400475370,
+  "workoutName": "W10 HM-Training: Dauerlauf",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 14000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 3
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-19": {
+  "createdDate": "2025-12-02T18:16:56.0",
+  "updatedDate": "2025-12-02T18:18:23.0",
+  "workoutId": 1400476957,
+  "workoutName": "W11 HM-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 4
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-24": {
+  "createdDate": "2025-12-02T18:19:33.0",
+  "updatedDate": "2025-12-02T18:20:58.0",
+  "workoutId": 1400478920,
+  "workoutName": "W12 HM-Training: Einfacher Dauerlauf",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 3000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2025-12-26": {
+  "createdDate": "2025-12-02T18:23:00.0",
+  "updatedDate": "2025-12-02T18:30:15.0",
+  "workoutId": 1400481293,
+  "workoutName": "W12 HM-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 4.0,
+      "numberOfIterations": 4,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 30.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 3
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 60.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-01-09": {
+  "createdDate": "2026-01-09T17:09:41.0",
+  "updatedDate": "2026-01-09T17:11:25.0",
+  "workoutId": 1436008759,
+  "workoutName": "W1 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.7777778,
+      "targetValueTwo": 2.6666667,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-01-16": {
+  "createdDate": "2026-01-11T10:34:16.0",
+  "updatedDate": "2026-01-11T10:36:33.0",
+  "workoutId": 1437580975,
+  "workoutName": "W2 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.8985507,
+      "targetValueTwo": 2.7777778,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 60.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "recovery"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 4,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-01-23": {
+  "createdDate": "2026-01-11T10:38:07.0",
+  "updatedDate": "2026-01-11T10:38:58.0",
+  "workoutId": 1437584206,
+  "workoutName": "W3 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 3000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.8985507,
+      "targetValueTwo": 2.7777778,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-02-06": {
+  "createdDate": "2026-01-11T10:46:07.0",
+  "updatedDate": "2026-01-11T10:51:58.0",
+  "workoutId": 1437591268,
+  "workoutName": "W5 - HM2-Training: Hügel",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 6.0,
+      "numberOfIterations": 6,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 90.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 5,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 6,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-02-13": {
+  "createdDate": "2026-02-13T15:01:22.0",
+  "updatedDate": "2026-02-13T15:45:55.0",
+  "workoutId": 1473206120,
+  "workoutName": "W6 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 4000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.9411765,
+      "targetValueTwo": 2.8571429,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-02-27": {
+  "createdDate": "2026-02-13T15:07:02.0",
+  "updatedDate": "2026-02-13T15:07:59.0",
+  "workoutId": 1473209499,
+  "workoutName": "W8 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 3.0303031,
+      "targetValueTwo": 2.7777778,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-03-13": {
+  "createdDate": "2026-02-13T15:21:29.0",
+  "updatedDate": "2026-02-13T15:22:50.0",
+  "workoutId": 1473218732,
+  "workoutName": "W10 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 5000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.9850747,
+      "targetValueTwo": 2.8985507,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-03-20": {
+  "createdDate": "2026-02-13T15:25:10.0",
+  "updatedDate": "2026-02-13T15:26:42.0",
+  "workoutId": 1473221166,
+  "workoutName": "W11 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 5.0,
+      "numberOfIterations": 5,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "distance"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "pace.zone"
+        },
+        "targetValueOne": 2.9850747,
+        "targetValueTwo": 2.8985507,
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 150.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 2
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-04-01": {
+  "createdDate": "2026-02-13T15:32:00.0",
+  "updatedDate": "2026-02-13T15:32:17.0",
+  "workoutId": 1473225707,
+  "workoutName": "W13 - HM2-Training: Einfacher Lauf",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 8000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-04-03": {
+  "createdDate": "2026-02-13T15:32:37.0",
+  "updatedDate": "2026-02-13T15:33:38.0",
+  "workoutId": 1473226042,
+  "workoutName": "W13 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 7000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.9850747,
+      "targetValueTwo": 2.8985507,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-04-10": {
+  "createdDate": "2026-04-08T15:12:28.0",
+  "updatedDate": "2026-04-08T15:15:12.0",
+  "workoutId": 1530138485,
+  "workoutName": "W14 - HM2-Training: Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 3.0,
+      "numberOfIterations": 3,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "distance"
+        },
+        "endConditionValue": 2000.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "pace.zone"
+        },
+        "targetValueOne": 3.0303031,
+        "targetValueTwo": 2.9411765,
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 180.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "rest"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-04-29": {
+  "createdDate": "2026-04-08T15:22:24.0",
+  "updatedDate": "2026-04-08T15:22:51.0",
+  "workoutId": 1530145977,
+  "workoutName": "W17 - HM2-Training: Einfacher Lauf",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 5000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-05-29": {
+  "createdDate": "2026-05-29T16:37:05.0",
+  "updatedDate": "2026-05-29T16:37:57.0",
+  "workoutId": 1583193160,
+  "workoutName": "Tempo: 5x 1km (Pace 6:00-6:10)",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 4.0,
+      "numberOfIterations": 4,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "distance"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "pace.zone"
+        },
+        "targetValueOne": 2.7777778,
+        "targetValueTwo": 2.7027027,
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 180.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-06-05": {
+  "createdDate": "2026-06-05T16:23:20.0",
+  "updatedDate": "2026-06-05T16:24:57.0",
+  "workoutId": 1590767773,
+  "workoutName": "Tempo: 4km Dauerlauf @ 6:10",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 4000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.7777778,
+      "targetValueTwo": 2.6666667,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-06-26": {
+  "createdDate": "2026-06-26T04:44:04.0",
+  "updatedDate": "2026-06-26T04:45:11.0",
+  "workoutId": 1612063026,
+  "workoutName": "pYRAMIDE: 1-2-1K Tempo",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 600.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.739726,
+      "targetValueTwo": 2.6666667,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 90.0,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "recovery"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 4,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.7777778,
+      "targetValueTwo": 2.7027027,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 150.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "recovery"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 6,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.739726,
+      "targetValueTwo": 2.6666667,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 600.0,
+      "stepOrder": 7,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-07-03": {
+  "createdDate": "2026-07-03T17:31:01.0",
+  "updatedDate": "2026-07-03T17:31:14.0",
+  "workoutId": 1619957757,
+  "workoutName": "Lauftraining",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 4.0,
+      "numberOfIterations": 4,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "distance"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "pace.zone"
+        },
+        "targetValueOne": 3.0769231,
+        "targetValueTwo": 2.9850747,
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 60.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 2
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1500.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "heart.rate.zone"
+      },
+      "type": "ExecutableStepDTO",
+      "zoneNumber": 2
+     }
+    ]
+   }
+  ]
+ },
+ "2026-07-10": {
+  "createdDate": "2026-07-09T21:15:30.0",
+  "updatedDate": "2026-07-09T21:16:33.0",
+  "workoutId": 1626627551,
+  "workoutName": "2km wu, 5x1km @ 5:40, 1km cd",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 2000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "warmup"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "targetValueTwo": 0.0,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 5.0,
+      "numberOfIterations": 5,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "distance"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 3,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "pace.zone"
+        },
+        "targetValueOne": 3.030303,
+        "targetValueTwo": 2.8571429,
+        "type": "ExecutableStepDTO"
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 60.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "targetValueTwo": 0.0,
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 5,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "targetValueTwo": 0.0,
+      "type": "ExecutableStepDTO"
+     }
+    ]
+   }
+  ]
+ },
+ "2026-07-29": {
+  "createdDate": "2026-07-28T21:10:33.0",
+  "updatedDate": "2026-07-28T21:10:33.0",
+  "workoutId": 1646850327,
+  "workoutName": "5km easy + 4x20s strides",
+  "workoutSegments": [
+   {
+    "workoutSteps": [
+     {
+      "endCondition": {
+       "conditionTypeKey": "distance"
+      },
+      "endConditionValue": 5000.0,
+      "stepOrder": 1,
+      "stepType": {
+       "stepTypeKey": "interval"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "pace.zone"
+      },
+      "targetValueOne": 2.7027027,
+      "targetValueTwo": 2.631579,
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "time"
+      },
+      "endConditionValue": 60.0,
+      "stepOrder": 2,
+      "stepType": {
+       "stepTypeKey": "rest"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "iterations"
+      },
+      "endConditionValue": 4.0,
+      "numberOfIterations": 4,
+      "stepOrder": 3,
+      "stepType": {
+       "stepTypeKey": "repeat"
+      },
+      "type": "RepeatGroupDTO",
+      "workoutSteps": [
+       {
+        "endCondition": {
+         "conditionTypeKey": "time"
+        },
+        "endConditionValue": 20.0,
+        "stepOrder": 4,
+        "stepType": {
+         "stepTypeKey": "interval"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "heart.rate.zone"
+        },
+        "type": "ExecutableStepDTO",
+        "zoneNumber": 4
+       },
+       {
+        "endCondition": {
+         "conditionTypeKey": "lap.button"
+        },
+        "endConditionValue": 1000.0,
+        "stepOrder": 5,
+        "stepType": {
+         "stepTypeKey": "recovery"
+        },
+        "targetType": {
+         "workoutTargetTypeKey": "no.target"
+        },
+        "type": "ExecutableStepDTO"
+       }
+      ]
+     },
+     {
+      "endCondition": {
+       "conditionTypeKey": "lap.button"
+      },
+      "endConditionValue": 1000.0,
+      "stepOrder": 6,
+      "stepType": {
+       "stepTypeKey": "cooldown"
+      },
+      "targetType": {
+       "workoutTargetTypeKey": "no.target"
+      },
+      "type": "ExecutableStepDTO"
+     }
+    ]
+   }
+  ]
+ }
+}

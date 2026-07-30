@@ -775,11 +775,12 @@ def test_lap_sourced_segments_gain_gap_from_the_stream():
     s = make_dual_streams(_DUAL_REP_SPANS)
     laps = [_lap(1560, 600, "WARMUP"), _lap(1000, 250, "ACTIVE"),
             _lap(132, 60, "REST"), _lap(1000, 250, "ACTIVE"),
+            _lap(132, 60, "REST"), _lap(1000, 250, "ACTIVE"),
             _lap(1000, 360, "COOLDOWN")]
     doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
     assert doc["source"] == "laps"
     work = [seg for seg in doc["segments"] if seg["role"] == "work"]
-    assert [seg["paceS"] for seg in work] == [250, 250], \
+    assert [seg["paceS"] for seg in work] == [250, 250, 250], \
         "pace still comes from the DTO's own averageSpeed, not re-derived"
     assert all(seg["gapS"] == 227 for seg in work), \
         f"GAP read from the stream over each lap's window: {[s['gapS'] for s in work]}"
@@ -837,14 +838,18 @@ def test_no_streams_means_no_document():
 
 
 def test_structured_laps_win_over_the_stream():
+    # 3 work laps: since add-workout-prior the rep-count floor is _reps_min on
+    # BOTH paths (P2.7b retired), so an unprescribed 2-lap set is no longer a
+    # set — three unexplained bouts are the inference minimum everywhere.
     s = make_streams([(600, 2.6)] + [(250, 4.0), (60, 2.2)] * 5 + [(300, 2.6)])
     laps = [_lap(2000, 700, "WARMUP"), _lap(1000, 250, "ACTIVE"),
+            _lap(150, 60, "REST"), _lap(1000, 250, "ACTIVE"),
             _lap(150, 60, "REST"), _lap(1000, 250, "ACTIVE"),
             _lap(1000, 360, "COOLDOWN")]
     doc = il.build_document(s, {"hasIntensityIntervals": True}, laps)
     assert doc["source"] == "laps"
     assert doc["confidence"] == 1.0
-    assert doc["set"]["found"] == 2        # the laps say 2, and the laps win
+    assert doc["set"]["found"] == 3        # the laps say 3, and the laps win
 
 
 def test_autolap_falls_through_to_the_stream():
@@ -1515,11 +1520,13 @@ def test_a_lap_with_no_step_among_stepped_laps_is_demoted():
         _step_lap(1000, 310, "ACTIVE", 1),
         _step_lap(300, 150, "RECOVERY", 2),
         _step_lap(1000, 313, "ACTIVE", 1),
+        _step_lap(300, 150, "RECOVERY", 2),
+        _step_lap(1000, 316, "ACTIVE", 1),
         _step_lap(1300, 700, "COOLDOWN", 4),
         _lap(926, 420, "ACTIVE"),               # no wktStepIndex
     ]
     doc = _laps_doc(None, laps=laps)
-    assert doc["set"]["found"] == 2
+    assert doc["set"]["found"] == 3
     assert doc["segments"][-1]["role"] == "cooldown"
 
 
@@ -1641,5 +1648,5 @@ def test_interval_version_is_current():
     rules that produced it did. fix-lap-confidence changed how a lap-sourced
     document's confidence is derived and added the `asserts` verdict to every
     document — every stored document must be recomputed."""
-    assert il.INTERVAL_VERSION == 5
-    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 5
+    assert il.INTERVAL_VERSION == 6
+    assert il.build_document(make_streams([(600, 3.0)]), work_floor=3.0)["version"] == 6

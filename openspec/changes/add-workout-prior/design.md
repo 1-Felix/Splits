@@ -127,6 +127,21 @@ Merging it into one block is right — "4 reps" is plainly worse — but the res
 must be **hedged rather than asserted**, which is what the confidence work in
 `fix-lap-confidence` + D8 exists to carry.
 
+> **CORRECTED 2026-07-30, measured during implementation.** Within-window
+> pace cannot single out `2026-01-23`: its 304 s "gap" is a *shallow* jog
+> (never below 0.8× the band's slow end), while the "clean" `2026-01-09`
+> dips below the band for *longer* (194 s vs 172 s) — at every threshold the
+> six runs interleave. The hedge is therefore decided by **evidence of
+> interruption** instead: a contiguous deep interruption (≥ 60 s below 0.8×
+> band-lo — a stop or a walk), or a window the calibrated bout structure
+> fragments (≥ 2 detected bouts inside it). Measured on the six: only
+> `2026-01-09` executed its block uninterrupted and asserts; `2026-02-13`
+> (~98 s break), `2026-02-27` (92 s standstill — which this design's own
+> trace called clean without ever examining continuity), `2026-01-23`,
+> `2026-03-13` and `2026-04-03` all hedge. All six read `block`, which is
+> the fix this change exists for; the verdict marks the interruption
+> honestly.
+
 ### D2 — The veto threshold is HR zone ≤ 2, and Z3 is deliberately untouched
 
 Measured across every case whose fix depends on a veto:
@@ -170,19 +185,39 @@ retires handoff **P2.7b** (two independent rep-count floors) and **P3.1**
 (`classify`'s floor breaking the honesty contract at 2-of-4) as structural
 consequences rather than as prerequisites to be fixed first.
 
-### D5 — Cache on first sight; never re-fetch
+### D5 — Cache on first sight; never re-fetch — and staleness is PER-RUN, from `updatedDate`
 
-`updateDate` is `None` on every workout in this account, so an edit after the
-fact is undetectable. Re-fetching would trade a knowable provenance for an
-unknowable one. A workout banked when the run was new reflects what was
-executed; one recovered by backfill is best-effort. The document records which,
-and the backfill marker is not merely cosmetic — it is the only honest signal
-that a historical prescription may have drifted.
+> **CORRECTED 2026-07-30, measured during implementation.** The exploration's
+> claim that *"`updateDate` is None on every workout"* read the wrong key: the
+> payload's field is **`updatedDate`**, and it is populated on all 28 workouts
+> fetched for the fixtures. The original best-effort-by-provenance rule below
+> is superseded by something strictly better.
 
-Evidence: `2026-05-29`'s activity is named `Tempo: 5x 1km (Pace 6:00-6:10)` while
-its workout says `numberOfIterations: 4`. Either it was edited or the name was
-always stale. Unknowable — and it settles that the **activity name is not the
-prescription**.
+An edit after the fact IS detectable: a workout whose `updatedDate` postdates
+the activity's start was provably not the prescription that run executed.
+Measured, the hazard is real and per-run: workout `1357916773` (`W5
+HM-Training: Hügel`) was created 2025-10-16 and **updated 2025-11-14**, and
+backs both the `2025-10-17` and `2025-11-14` activities — the same banked
+payload is authoritative for the second run and stale for the first.
+
+So:
+
+- **Cache-on-first-sight and never re-fetch stand unchanged** — the raw
+  payload is banked once, with `fetched_at` and provenance
+  (`first-sight`/`backfill`) recorded for audit.
+- **The document's trust marker is the per-run comparison**, not the
+  provenance: a prior is marked stale when the payload's `updatedDate` is
+  after the run's start time. A backfilled workout that was never edited
+  since before the run (the common case — most `updatedDate`s equal
+  `createdDate`) carries full authority; first-sight banking passes by
+  construction.
+- A **stale** prior is still used — it is the best prescription available —
+  but the document says so, and corroboration (D8) does not assert on it.
+
+`2026-05-29` (`Tempo: 5x 1km`, `numberOfIterations: 4`): created and updated
+2026-05-29 16:37, before that evening's run — four of four, the name was
+simply stale at authoring. It still settles that the **activity name is not
+the prescription**.
 
 Measured attrition: 85 of 89 workouts still fetchable (4 deleted).
 

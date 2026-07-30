@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
-INTERVAL_VERSION = 5   # 2: paceS is raw pace and gapS is real (final review I4);
+INTERVAL_VERSION = 6   # 2: paceS is raw pace and gapS is real (final review I4);
                        #    ragged pyramid labels collapse to "N reps" (I6)
                        # 3: the laps path applies the same WORK_MIN_S/WORK_MIN_M
                        #    rep floor the stream path always has, and shares its
@@ -32,6 +32,12 @@ INTERVAL_VERSION = 5   # 2: paceS is raw pace and gapS is real (final review I4)
                        #    (corroborated/structured/eliminated), a shape that
                        #    survives only by material size discard is hedged,
                        #    and every document carries the `asserts` verdict.
+                       # 6: add-workout-prior — the Garmin workout definition
+                       #    is the prior: VETO/POINT/ADMIT, set membership by
+                       #    target value, one rep-count floor on both paths,
+                       #    time-named sets, prescription corroboration and
+                       #    guidedBy provenance. (The change's design said 5;
+                       #    fix-lap-confidence took it on 2026-07-30.)
 
 # ── algorithm parameters — all covered by INTERVAL_VERSION ───────────────────
 SMOOTH_WINDOW_S = 15       # rolling median: kills GPS chatter, keeps a 30 s edge
@@ -322,9 +328,10 @@ def classify(bouts, series, dist_at, expect_reps: int | None = None) -> str:
 
     The rep floor is 3 rather than 2: two unexplained bouts are more often a
     hill and a headwind than a session. A prior that expects a set lowers it to
-    2 — a prescribed 2×2 km is real — which is the ONLY thing the prior relaxes
-    about existence (design D4)."""
-    floor = 2 if expect_reps and expect_reps <= 2 else REPS_MIN_COUNT
+    2 — a prescribed set that was cut short is still a set, and bailing at
+    2-of-4 must report `found: 2` rather than collapse to steady (D10, the
+    honesty contract). `_reps_min` is the ONE floor both paths share."""
+    floor = _reps_min(expect_reps)
     if len(bouts) >= floor:
         return "reps"
     if len(bouts) == 1:
@@ -590,6 +597,283 @@ def segments_from_laps(laps: list[dict], gaps: list | None = None) -> list[dict]
     return segs
 
 
+def flatten_workout(payload: dict) -> list[dict]:
+    """A Connect workout definition's EXECUTABLE steps, flattened depth-first,
+    each carrying the `wktStepIndex` the FIT encoding gives it and the
+    enclosing repeat group's `numberOfIterations` (add-workout-prior D7).
+
+    The index rule is the whole subtlety: one index position is consumed
+    AFTER each repeat group's children, because in FIT the `repeat_steps`
+    instruction follows the steps it repeats. Verified to reproduce
+    2026-06-05, 2026-07-10 and 2026-07-29 exactly.
+
+    `zoneNumber` is load-bearing and easy to miss — a `heart.rate.zone`
+    target carries its intensity there, not in `targetValueOne/Two`; a first
+    measurement pass that read only the target values mistook four correct
+    HR-Z4 tempo blocks for "no target"."""
+    out: list[dict] = []
+    idx = 0
+
+    def walk(steps, iterations):
+        nonlocal idx
+        for s in steps or []:
+            if s.get("type") == "RepeatGroupDTO":
+                walk(s.get("workoutSteps"), s.get("numberOfIterations"))
+                idx += 1        # the repeat instruction follows its children
+            else:
+                out.append({
+                    "index": idx,
+                    "stepType": (s.get("stepType") or {}).get("stepTypeKey"),
+                    "endCondition": (s.get("endCondition") or {}).get("conditionTypeKey"),
+                    "endConditionValue": s.get("endConditionValue"),
+                    "targetType": (s.get("targetType") or {}).get("workoutTargetTypeKey"),
+                    "targetValueOne": s.get("targetValueOne"),
+                    "targetValueTwo": s.get("targetValueTwo"),
+                    "zoneNumber": s.get("zoneNumber"),
+                    "iterations": iterations,
+                })
+                idx += 1
+
+    for seg in payload.get("workoutSegments") or []:
+        walk(seg.get("workoutSteps"), None)
+    return out
+
+
+def workout_steps_for(laps: list[dict] | None, payload: dict) -> dict | None:
+    """`{wktStepIndex: flattened step}` for one activity, or None — the
+    all-or-nothing validation (add-workout-prior D7): every index observed on
+    the executed laps must land on a flattened step, and when any does not,
+    the prior for that activity is discarded ENTIRELY and the run falls back
+    to inference. A partial mapping is never used: a half-applied prior is
+    worse than none, because it looks authoritative.
+
+    Laps with no indices at all (manual laps) trivially validate — there is
+    nothing to contradict, and the prior can still contribute counts and
+    targets."""
+    flat = flatten_workout(payload)
+    if not flat:
+        return None
+    by_index = {s["index"]: s for s in flat}
+    observed = {l.get("wktStepIndex") for l in laps or []
+                if l.get("wktStepIndex") is not None}
+    if not observed <= set(by_index):
+        return None
+    return by_index
+
+
+# Step types that are never work prescriptions, whatever their target says.
+_EASY_STEP_TYPES = {"warmup", "cooldown", "rest", "recovery"}
+# Pace-band midpoints within this relative distance are "materially the same"
+# intensity (design D3): the genuine pyramid's three bands sit within 1.6 %,
+# and no real workout in the 85 measured has distinct-but-close work bands.
+_BAND_GROUP_TOLERANCE = 0.05
+
+
+def _pace_band(step: dict) -> tuple | None:
+    """(lo, hi) m/s for a pace.zone step, or None."""
+    one, two = step.get("targetValueOne"), step.get("targetValueTwo")
+    if step.get("targetType") == "pace.zone" and one and two:
+        return (min(one, two), max(one, two))
+    return None
+
+
+def _is_vetoed(step: dict) -> bool:
+    """Design D2: a step whose target VALUE is HR zone ≤ 2 can never be work,
+    whatever its stepTypeKey says — 2026-06-05 types its warm-up `interval`
+    and the veto must fire anyway. Z3 is deliberately untouched: 2025-12-14's
+    14 km Z3 run reads `progression`, a defensible reading of its execution,
+    and vetoing Z3 would suppress a true positive to fix nothing."""
+    return (step.get("targetType") == "heart.rate.zone"
+            and (step.get("zoneNumber") or 0) <= 2)
+
+
+def derive_prior(payload: dict | None, laps: list[dict] | None,
+                 start_local: str | None = None) -> dict | None:
+    """The prescription as the engine consumes it (add-workout-prior D1/D4)
+    — derived at build time from the RAW banked payload (D6), versioned by
+    INTERVAL_VERSION like every other rule here. None when there is no
+    workout or the step mapping fails validation (D7): a partial prior is
+    never used.
+
+    The prior CONSTRAINS the existing engine, it does not re-derive: VETO
+    (an easy-target step is never work), POINT (a prescribed block says
+    where to look), ADMIT (a prescribed rep beats the inference size
+    floors). Segment boundaries, paces and HR always come from execution.
+
+    Set membership needs the target's VALUE, not merely its type (D3):
+    2025-12-05's three work-typed steps all share `heart.rate.zone`, being
+    Z4 / Z2 / Z4 — the Z2 float is vetoed by value, leaving the real 2×2 km.
+    Pace-band steps group when their band midpoints are materially the same,
+    which keeps the genuine pyramid (2026-06-26) one varied set."""
+    if not payload:
+        return None
+    steps = workout_steps_for(laps, payload)
+    if steps is None:
+        return None
+
+    flat = sorted(steps.values(), key=lambda s: s["index"])
+    vetoed = {s["index"] for s in flat if _is_vetoed(s)}
+    work = [s for s in flat
+            if s["index"] not in vetoed
+            and s["stepType"] not in _EASY_STEP_TYPES]
+
+    # group work steps by target value (D3); repeated steps carry iterations
+    groups: list[list[dict]] = []
+    for s in work:
+        band = _pace_band(s)
+        placed = False
+        for g in groups:
+            gband = _pace_band(g[0])
+            if band and gband:
+                mid, gmid = sum(band) / 2, sum(gband) / 2
+                if abs(mid - gmid) / gmid <= _BAND_GROUP_TOLERANCE:
+                    g.append(s)
+                    placed = True
+                    break
+            elif (s.get("targetType"), s.get("zoneNumber")) == \
+                    (g[0].get("targetType"), g[0].get("zoneNumber")):
+                g.append(s)
+                placed = True
+                break
+        if not placed:
+            groups.append([s])
+
+    # the prescribed set is the group expecting the most executions
+    set_group = max(groups, key=lambda g: sum(s["iterations"] or 1 for s in g),
+                    default=None) if groups else None
+    set_steps = {s["index"] for s in set_group} if set_group else set()
+    count = sum(s["iterations"] or 1 for s in set_group) if set_group else None
+    by_time = bool(set_group) and all(
+        s["endCondition"] == "time" for s in set_group)
+
+    block = None
+    if count == 1:
+        s = set_group[0]
+        block = {"endCondition": s["endCondition"],
+                 "value": s["endConditionValue"],
+                 "band": _pace_band(s),
+                 "zone": s.get("zoneNumber")
+                 if s.get("targetType") == "heart.rate.zone" else None}
+
+    stale = False
+    updated = (payload.get("updatedDate") or "")[:19]
+    if updated and start_local:
+        stale = updated > start_local.replace(" ", "T")[:19]
+
+    return {
+        "steps": steps, "vetoed": vetoed,
+        "setSteps": set_steps, "count": count, "byTime": by_time,
+        "repValue": set_group[0]["endConditionValue"] if set_group else None,
+        "bands": {s["index"]: _pace_band(s) for s in flat if _pace_band(s)},
+        "block": block,
+        "hard": bool(work),
+        "stale": stale,
+    }
+
+
+# POINT (add-workout-prior D1a) — the prescription LOCATES, execution DECIDES.
+POINT_BAND_TOLERANCE = 0.05   # ± on the prescribed band's edges: 2026-02-27's
+                              # best window is 1 s/km FASTER than its band's
+                              # fast end, and refusing an athlete for beating
+                              # the prescription by seconds would be absurd
+POINT_VARIANCE_MAX = 0.25     # within-window cv above this is a hard/easy rep
+                              # pattern, not a block — the variance guard for
+                              # a substituted session (design open question 1;
+                              # deliberately conservative: a smoothed real
+                              # block sits under 10, alternating reps near 30)
+POINT_GAP_HEDGE_S = 60        # this much standstill inside the window means
+                              # the block was merged across a gap → hedged
+_PRIOR_CONFIRMED = 0.9        # prescription-corroborated verdicts (D8)
+_PRIOR_HEDGED = 0.4           # prescription and execution disagree — below
+                              # CONFIDENCE_ASSERT_MIN by construction
+
+
+def _point_window(series: list, raw: list, dist_at, total_s: int,
+                  block: dict, bouts: list | None = None) -> tuple | None:
+    """The best window of exactly the prescribed distance, confirmed against
+    the prescribed band — or None, and the caller falls back to inference.
+
+    1. slide a window of the prescribed size over the run,
+    2. keep the fastest (the prescription says where to LOOK, and the block,
+       if run, is the hardest stretch of its own length),
+    3. CONFIRM: its mean pace must fall within the prescribed band — a run
+       that plodded the window did not run the workout, and reporting it
+       completed would invert the honesty contract,
+    4. refuse a window whose within-window variance says rep pattern, not
+       block (the substituted-session guard),
+    5. flag an INTERRUPTED execution for hedging: a contiguous deep
+       interruption (a stop, a walk — well below the band), or a window the
+       calibrated bout structure fragments (two or more detected bouts
+       inside it: the hysteresis saw the athlete break and resurge).
+
+       Measured against the six real POINT runs, within-window pace CANNOT
+       single out the design's named hedge case (2026-01-23's 304 s gap is a
+       shallow jog; the 'clean' 2026-01-09 dips below the band for longer),
+       so the hedge is decided by evidence of interruption instead — which
+       also catches 2026-02-27's genuine 92 s standstill the design's trace
+       never examined.
+
+    Never consults the calibration floor for CONFIRMATION (closes handoff
+    P2.3): the floor-filtered bouts are only read as fragmentation
+    evidence."""
+    dist = block.get("value") or 0
+    lo, hi = block["band"]
+    if dist <= 0 or total_s < 2 or dist_at(total_s) < dist:
+        return None
+    best = None
+    b = 0
+    for a in range(total_s):
+        if b <= a:
+            b = a + 1
+        while b < total_s and dist_at(b) - dist_at(a) < dist:
+            b += 1
+        if dist_at(b) - dist_at(a) < dist:
+            break
+        mps = dist / (b - a)
+        if best is None or mps > best[2]:
+            best = (a, b, mps)
+    if not best:
+        return None
+    a, b, mps = best
+    if not (lo * (1 - POINT_BAND_TOLERANCE) <= mps
+            <= hi * (1 + POINT_BAND_TOLERANCE)):
+        return None
+    moving = [v for v in raw[a:b] if v]
+    m = _mean(moving)
+    if m and len(moving) > 1:
+        var = sum((v - m) ** 2 for v in moving) / len(moving)
+        if (var ** 0.5) / m > POINT_VARIANCE_MAX:
+            return None
+    deep = longest = 0
+    for v in series[a:b]:
+        longest = longest + 1 if (v is None or v < lo * 0.8) else 0
+        deep = max(deep, longest)
+    fragmented = sum(1 for x, y in (bouts or []) if x < b and y > a) >= 2
+    return a, b, deep >= POINT_GAP_HEDGE_S or fragmented
+
+
+def _zero_set(expect: int) -> dict:
+    """The bailed-session set (design D10): a workout begun and abandoned is
+    a real training event, and the page should be able to say '0 of N
+    prescribed reps' rather than presenting the warm-up as a plain easy run."""
+    return {"found": 0, "prescribed": expect, "nominalDistM": None,
+            "varied": False, "paceS": None, "paceCvPct": None, "fadePct": None,
+            "recoveryS": None, "recoveryHrDrop": None, "reps": []}
+
+
+def _reps_min(expect: int | None) -> int:
+    """ONE rep-count floor for both paths (retires handoff P2.7b/P3.1). A
+    prescribed set that was cut short is still a set — bailing at 2-of-4 must
+    report `found: 2`, not collapse to steady — so any prescription of two or
+    more lowers the floor to 2. (The handoff recorded the fix as
+    `max(2, min(REPS_MIN_COUNT, expect))`, which still reads 3 at expect 4
+    and cannot report the 2-of-4 case it was written for; this is the formula
+    that can.) Without a prescription the inference floor stands."""
+    if expect and expect >= 2:
+        return 2
+    return REPS_MIN_COUNT
+
+
 def _rep_step_indices(laps: list[dict], work_idx: set[int]) -> set | None:
     """Which workout STEP indices identify reps — or None when this activity
     carries no usable step evidence and the caller must keep every work lap.
@@ -702,8 +986,8 @@ def _lap_confidence(segments: list[dict], laps: list[dict]) -> tuple[str, float]
     return "structured", _LAP_CONFIDENCE["structured"]
 
 
-def _lap_rep_segments(segments: list[dict],
-                      laps: list[dict]) -> tuple[list[dict], dict]:
+def _lap_rep_segments(segments: list[dict], laps: list[dict],
+                      survivors: set | None = None) -> tuple[list[dict], dict]:
     """Which lap-derived work segments are genuine reps — returns the re-roled
     segments plus the discard bookkeeping `{"size": set, "step": set}` of lap
     indices each filter rejected (design D1 of fix-lap-confidence: the two
@@ -741,7 +1025,16 @@ def _lap_rep_segments(segments: list[dict],
     """
     assert len(segments) == len(laps), \
         "segments_from_laps must emit exactly one segment per lap, in order"
-    survivors, size_discards, step_discards = _lap_survivors(segments, laps)
+    if survivors is None:
+        survivors, size_discards, step_discards = _lap_survivors(segments, laps)
+    else:
+        # prescription-selected (add-workout-prior D1): the prior decided
+        # which laps are the set — demotions here are corroborated by the
+        # workout itself, so they live in the never-hedge bucket, and the
+        # size floors were never consulted (ADMIT).
+        size_discards = set()
+        step_discards = {i for i, s in enumerate(segments)
+                         if s["role"] == "work" and i not in survivors}
 
     ordered = sorted(survivors)
     first = ordered[0] if ordered else None
@@ -898,16 +1191,17 @@ def _quality(segments: list[dict], bounds: list[int] | None) -> dict:
 
 def build_document(streams: dict | None, summary: dict | None = None,
                    laps: list[dict] | None = None,
-                   prior: dict | None = None,
+                   workout: dict | None = None,
                    bounds: list[int] | None = None,
                    work_floor: float | None = None) -> dict | None:
     """The ONE entry point both producers call. Returns the interval document,
     or None when the run carries no usable speed signal at all.
 
-    Order of authority (design D1/D8): structured device laps win outright;
-    otherwise the stream decides, optionally sharpened by a plan prior. In this
-    change `prior` is always None — the parameter exists so Change 2 can fill
-    it without reshaping the contract.
+    Order of authority (design D1/D8, add-workout-prior D4): the PRIOR — the
+    raw Garmin workout definition this run was started from, when the caller
+    has one banked — is resolved BEFORE the laps/stream branch, so both paths
+    read one prescription by identical rules. Then structured device laps win
+    outright; otherwise the stream decides.
 
     `work_floor` (Task 7b) is the caller-supplied calibration floor — this
     engine never opens a database, so it cannot derive its own. Device laps
@@ -926,15 +1220,38 @@ def build_document(streams: dict | None, summary: dict | None = None,
     raw_grid = smooth(raw_speed_series(streams))
     gap_grid = smooth(gap_speed_series(streams))
 
-    base = {"version": INTERVAL_VERSION, "guidedBy": None}
+    # The prior sits UPSTREAM of the branch (add-workout-prior D4) — deriving
+    # it after the laps branch returned was how the runs that carry a
+    # prescription (overwhelmingly lap-sourced) could never see one.
+    prior = derive_prior(workout, laps, summary.get("startTimeLocal"))
+    expect = prior["count"] if prior else None
+
+    # `guidedBy` has been null on every document since the lens shipped,
+    # reserved for exactly this: which prescription read this run, and
+    # whether it can be trusted FOR THIS RUN (corrected D5 — a payload
+    # updated after the run's start provably postdates what was executed).
+    # A run with no usable workout keeps the explicit null.
+    base = {"version": INTERVAL_VERSION,
+            "guidedBy": {"workoutId": (workout or {}).get("workoutId"),
+                         "stale": prior["stale"]} if prior else None}
 
     if laps and laps_are_structured(summary, laps):
         raw_segments = segments_from_laps(laps, gap_grid)
-        # confidence reads the RAW segments — _lap_rep_segments re-roles the
-        # demoted laps, and the materiality re-run has to see the same
-        # work-role population the original selection saw
-        _level, confidence = _lap_confidence(raw_segments, laps)
-        segments, discards = _lap_rep_segments(raw_segments, laps)
+        # The prescription decides which laps are the set when it can join
+        # (add-workout-prior D1): VETO — a lap executing an easy-target step
+        # is never work, whatever its stepTypeKey said; set membership by
+        # target VALUE (D3); ADMIT — a lap executing a prescribed rep step is
+        # a rep however small (the size floors exist to reject fragments the
+        # detector invented, not reps the athlete was told to run). Roles and
+        # inference floors stay the fallback for runs with no usable prior.
+        prior_joins = bool(prior) and any(
+            l.get("wktStepIndex") is not None for l in laps)
+        if prior_joins:
+            selected = {i for i, l in enumerate(laps)
+                        if l.get("wktStepIndex") in prior["setSteps"]}
+            segments, discards = _lap_rep_segments(raw_segments, laps, selected)
+        else:
+            segments, discards = _lap_rep_segments(raw_segments, laps)
         work = [s for s in segments if s["role"] == "work"]
         paces = [s["paceS"] for s in work if s["paceS"]]
         mean_pace = _mean(paces)
@@ -949,10 +1266,10 @@ def build_document(streams: dict | None, summary: dict | None = None,
         # around line 308): one definition of a block across both producers.
         # Task 2's step rule makes the single-survivor case common, and
         # without this a 205 m fragment of a run/walk asserts "1 min block"
-        # (handoff P2.7a). The `>= 2` rep threshold is deliberately NOT
-        # unified with the stream path's REPS_MIN_COUNT here — see P2.7b,
-        # which is entangled with Change 2's expect_reps.
-        if len(work) >= 2:
+        # (handoff P2.7a). The rep threshold is `_reps_min` — the SAME floor
+        # classify() applies on the stream path (add-workout-prior D4 retires
+        # handoff P2.7b's two independent floors).
+        if len(work) >= _reps_min(expect):
             shape = "reps"
         elif work and (work[0]["durS"] >= BLOCK_MIN_S
                        or work[0]["distM"] >= BLOCK_MIN_M):
@@ -960,8 +1277,31 @@ def build_document(streams: dict | None, summary: dict | None = None,
         else:
             shape = "steady"
         nominal, varied = _rep_variation([s["distM"] for s in work])
+        by_time = bool(prior_joins and prior["byTime"] and prior["repValue"])
+        if by_time:
+            # A set prescribed by TIME is named and compared by time (handoff
+            # N3): 2026-02-06's six 90 s hill reps cover different distances
+            # precisely because the athlete tires — "6×0.23 km" measured the
+            # fatigue, not the set. Uniform by construction: the reps all
+            # executed one time-prescribed step.
+            nominal, varied = None, False
+        # Confidence (D8, on the base fix-lap-confidence laid): a FRESH
+        # prescription is the strongest evidence available — execution
+        # agreeing with it asserts, disagreeing hedges. A stale prescription
+        # (corrected D5) is never evidence either way, and a run with no
+        # usable prior keeps the inference levels.
+        if prior_joins and not prior["stale"]:
+            agreed = ((shape == "reps" and len(work) == expect)
+                      or (shape == "block" and prior["count"] == 1))
+            confidence = 1.0 if agreed else _PRIOR_HEDGED
+        else:
+            # reads the RAW segments — _lap_rep_segments re-roles the demoted
+            # laps, and the materiality re-run has to see the same work-role
+            # population the original selection saw
+            _level, confidence = _lap_confidence(raw_segments, laps)
         if shape == "reps":
-            label = _reps_label([s["distM"] for s in work])
+            label = (f"{len(work)}×{prior['repValue']:g} s" if by_time
+                     else _reps_label([s["distM"] for s in work]))
         elif shape == "block":
             # Same wording as label_for's block branch, over the ONE
             # surviving work segment's own duration.
@@ -976,6 +1316,12 @@ def build_document(streams: dict | None, summary: dict | None = None,
         # has to be enforced explicitly rather than falling out for free.
         if shape == "steady":
             segments = []
+        if shape != "reps":
+            # D10: a prescribed set with NOTHING found is a real training
+            # event — the shortfall is reported, never hidden. A block found
+            # instead is a disagreement for corroboration (D8), not a zero.
+            lap_set = (_zero_set(expect)
+                       if shape == "steady" and expect and expect >= 2 else None)
         return {
             **base,
             "shape": shape, "source": "laps", "confidence": confidence,
@@ -983,8 +1329,8 @@ def build_document(streams: dict | None, summary: dict | None = None,
             "calibrated": True,
             "label": label,
             "segments": segments,
-            "set": None if shape != "reps" else {
-                "found": len(work), "prescribed": None,
+            "set": lap_set if shape != "reps" else {
+                "found": len(work), "prescribed": expect,
                 "nominalDistM": None if varied else (nominal or None),
                 "varied": varied,
                 "paceS": int(round(mean_pace)) if mean_pace else None,
@@ -1004,7 +1350,6 @@ def build_document(streams: dict | None, summary: dict | None = None,
     hr = _hr_grid(streams, len(series))
     classes = split_classes(series)
     bouts = find_bouts(series, dist_at, classes[0], classes[1]) if classes else []
-    expect = (prior or {}).get("count")
 
     # Cross-run calibration (Task 7b): a bout must be genuinely fast for THIS
     # athlete, not merely faster than the rest of its own run. Without a floor
@@ -1015,11 +1360,34 @@ def build_document(streams: dict | None, summary: dict | None = None,
                  if (_mean(series[a:b]) or 0) >= work_floor]
     else:
         bouts = []
-    shape = classify(bouts, series, dist_at, expect)
+    if prior and not prior["hard"]:
+        # VETO, whole-run form (D2): the workout prescribed nothing hard —
+        # every step's target value is easy — so a fast half must not be
+        # promoted to a set or a block. Progression stays reachable: a
+        # negative-split easy run is a reading of pacing, not a quality claim.
+        bouts = []
+    point = None
+    if prior and prior.get("block"):
+        blk = prior["block"]
+        if blk.get("band") and blk.get("endCondition") == "distance":
+            point = _point_window(series, raw_grid, dist_at, len(series), blk,
+                                  bouts)
+    if point:
+        a, b, gap_hedged = point
+        bouts = [(a, b)]
+        shape = "block"
+    else:
+        shape = classify(bouts, series, dist_at, expect)
     if shape in ("steady", "progression"):
         bouts = []
     stats = (set_stats(bouts, series, dist_at, hr, raw_grid, gap_grid)
              if shape == "reps" else None)
+    if stats:
+        stats["prescribed"] = expect
+    elif shape == "steady" and expect and expect >= 2:
+        # D10: the prescribed set the athlete never started (or abandoned
+        # before any rep survived) is reported, not hidden.
+        stats = _zero_set(expect)
     if shape == "steady":
         segments = []
     elif shape == "progression":
@@ -1032,8 +1400,18 @@ def build_document(streams: dict | None, summary: dict | None = None,
     else:
         segments = _segments_from_bouts(bouts, series, dist_at, hr, len(series),
                                         raw_grid, gap_grid)
-    confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
-                             stats["paceCvPct"] if stats else None)
+    if point:
+        # D8: a POINT block is prescription-corroborated — it asserts, unless
+        # its execution was interrupted, in which case the shape is the best
+        # reading available but not a certainty.
+        confidence = _PRIOR_HEDGED if gap_hedged else _PRIOR_CONFIRMED
+    else:
+        confidence = _confidence(classes[2] if classes else 0.0, bouts, series,
+                                 stats["paceCvPct"] if stats else None)
+        if prior and not prior["stale"] and expect and expect >= 2 and stats:
+            # D8 on the stream path too: one prescription, one rule.
+            confidence = (_PRIOR_CONFIRMED if stats.get("found") == expect
+                          else _PRIOR_HEDGED)
     return {
         **base,
         "shape": shape, "source": "stream", "calibrated": calibrated,

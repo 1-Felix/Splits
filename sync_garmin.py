@@ -41,6 +41,7 @@ from garminconnect import Garmin
 import activity_archive
 import block_lens
 import coach_briefing
+import coach_pass
 import course_lens
 import insight_metrics
 import interval_lens
@@ -967,73 +968,6 @@ def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. ASSEMBLE + WRITE
 # ──────────────────────────────────────────────────────────────────────────────
-def fetch_insights() -> dict | None:
-    """The assembled insights block from the archive (design D1 phase 2), or
-    None — in which case the caller omits the key entirely. Never a partial
-    block: assemble_insights raises on any problem and safe() maps that to
-    None (design D8)."""
-    def assemble():
-        conn = activity_archive.open_archive(DATA_DIR)
-        try:
-            return insight_metrics.assemble_insights(conn, TODAY)
-        finally:
-            conn.close()
-    return safe(assemble, None, "insights assembly")
-
-
-def fetch_compliance() -> dict | None:
-    """The assembled compliance block, or None (key omitted entirely). A fail
-    domain INDEPENDENT of insights (coach-loop design D5): a plan problem
-    drops this block while insights survives, and vice versa."""
-    def assemble():
-        loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
-        if not loaded:
-            return None
-        conn = activity_archive.open_archive(DATA_DIR)
-        try:
-            return plan_compliance.assemble_compliance(conn, loaded[1], TODAY)
-        finally:
-            conn.close()
-    return safe(assemble, None, "compliance assembly")
-
-
-def fetch_block_lens() -> dict | None:
-    """The assembled blockLens object from the stored lens rows, or None (key
-    omitted entirely — fresh installs and ingest-fed instances have no plan
-    snapshots and therefore no lens). A fail domain independent of insights
-    AND compliance, like each of them (add-block-lens design D4)."""
-    def assemble():
-        conn = activity_archive.open_archive(DATA_DIR)
-        try:
-            return block_lens.assemble_block_lens(conn, TODAY)
-        finally:
-            conn.close()
-    return safe(assemble, None, "block lens assembly")
-
-
-def fetch_course_lens() -> dict | None:
-    """The stored course document for the plan's race, or None (key omitted
-    entirely — a race without a `courseId` has no course, which is the normal
-    state). An independent fail domain like insights, compliance and the block
-    lens (add-course-lens design D8)."""
-    def assemble():
-        loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
-        if not loaded:
-            return None
-        course_id = ((loaded[1] or {}).get("race") or {}).get("courseId")
-        if not course_id:
-            return None
-        conn = activity_archive.open_archive(DATA_DIR)
-        try:
-            doc = activity_archive.course_document(conn, course_id)
-            if doc:
-                doc["map"] = activity_archive.course_map_row(conn, course_id)
-            return doc
-        finally:
-            conn.close()
-    return safe(assemble, None, "course lens assembly")
-
-
 def build_data(client, acts: list[dict], pred_doc: dict | None = None,
                sleep_raw_out: list | None = None) -> dict:
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
@@ -1054,23 +988,6 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     vo2_current = monthly["vo2max"][-1] if monthly["vo2max"] else None
 
     predictions = fetch_predictions(pred_doc or {})
-    insights = fetch_insights()
-    if insights:
-        trend = insight_metrics.trend_verdict(insights["trajectory"]["weekly"])
-        if trend:
-            predictions["trend"] = trend
-        log(f"✓ insights assembled ({len(insights['efficiency']['monthly'])} months, "
-            f"{len(insights['trajectory']['weekly'])} weeks)")
-    compliance = fetch_compliance()
-    if compliance:
-        log(f"✓ compliance assembled ({len(compliance['days'])} days, "
-            f"{len(compliance['weeks'])} weeks)")
-    lens = fetch_block_lens()
-    course = fetch_course_lens()
-    if lens:
-        log(f"✓ block lens assembled ("
-            + ("current + " if lens.get("current") else "")
-            + f"{len(lens['past'])} past)")
 
     data = {
         "profile": fetch_profile(client, vo2_current),
@@ -1093,15 +1010,28 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
         },
         "heatmapKm": fetch_heatmap(acts),
     }
-    if insights:
-        data["insights"] = insights
-    if compliance:
-        data["compliance"] = compliance
-    if lens:
-        data["blockLens"] = lens
-    if course:
-        data["courseLens"] = course
+    # coach_pass owns the archive-derived blocks (ingest-coach-loop design D1):
+    # one connection for all four assemblies, each an independent fail domain,
+    # and predictions.trend filled in place — `predictions` above is the same
+    # dict object data["predictions"] refers to. safe(): an unreachable
+    # archive db degrades to a warning and the telemetry keeps every
+    # non-derived key, exactly as the old per-helper wrappers guaranteed.
+    safe(lambda: attach_blocks_step(data), None, "coach block assembly")
     return data
+
+
+def attach_blocks_step(data: dict) -> None:
+    """Attach the archive-derived blocks and the trend to the telemetry dict.
+    Called from build_data, only ever inside safe() — attach_blocks fail-domains
+    per key, and this wrapper covers the two shared raise points (opening the
+    archive, loading the plan)."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
+        coach_pass.attach_blocks(conn, loaded[1] if loaded else None,
+                                 TODAY, data, log=log)
+    finally:
+        conn.close()
 
 
 def validate(data: dict) -> None:
@@ -1311,47 +1241,19 @@ def metrics_step(client, pred_doc) -> None:
 
 
 def compliance_step() -> None:
-    """Bank today's plan snapshot and rescore compliance (coach-loop design
-    D2/D3). Runs AFTER the archive step (it matches against archived
-    activities) and BEFORE build_data (the block must land in garmin-data.js);
-    only ever inside safe() — a plan problem is a warning, never a failed
-    sync."""
+    """Bank today's plan snapshot, rescore compliance and refresh the
+    block-lens rows (coach-loop design D2/D3, add-block-lens D2/D3 — the lens
+    is the second half of this step now, both moved into coach_pass.derive).
+    Runs AFTER the archive step and BEFORE build_data; only ever inside
+    safe() — a plan problem is a warning, never a failed sync."""
     loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
     if not loaded:
         return
     raw, plan = loaded
-    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
     conn = activity_archive.open_archive(DATA_DIR)
     try:
-        stats = plan_compliance.run_compliance(conn, raw, plan, TODAY, max_hr)
-        # Ratchet the coverage expectation --verify-archive checks against:
-        # scored weeks only ever accumulate, so a shrink is a regression.
-        weeks_now = activity_archive.compliance_coverage(
-            conn, plan_compliance.COMPLIANCE_VERSION)["weeks_scored"]
-        prev = activity_archive.get_meta(conn, "expected_compliance_weeks")
-        if weeks_now > int(prev or 0):
-            activity_archive.set_meta(conn, "expected_compliance_weeks", weeks_now)
-        parts = [f"{stats['weeks_scored']} weeks scored"]
-        if stats["weeks_healed"]:
-            parts.append(f"{stats['weeks_healed']} stale weeks healed")
-        log("✓ compliance: " + ", ".join(parts))
-    finally:
-        conn.close()
-
-
-def block_lens_step() -> None:
-    """Derive/refresh the per-block lens rows (add-block-lens design D2/D3).
-    Runs AFTER compliance and metrics (it rolls both up) and BEFORE
-    build_data (the blockLens object must land in garmin-data.js); only ever
-    inside safe() — a lens problem is a warning, never a failed sync."""
-    conn = activity_archive.open_archive(DATA_DIR)
-    try:
-        stats = block_lens.derive_block_lens(conn, TODAY)
-        if stats["blocks"]:
-            log(f"✓ block lens: {stats['blocks']} blocks, "
-                f"{stats['recomputed']} recomputed")
-        else:
-            log("✓ block lens: no plan snapshots — nothing to derive")
+        coach_pass.derive(conn, raw, plan, TODAY,
+                          int(os.getenv("ATHLETE_MAX_HR", "197")), log=log)
     finally:
         conn.close()
 
@@ -1387,19 +1289,17 @@ def course_lens_step(client) -> None:
 
 
 def briefing_step(data: dict) -> None:
-    """Render coach-briefing.md into the data dir (coach-loop design D6).
-    Runs strictly AFTER garmin-data.js is written and only ever inside
-    safe() — a briefing problem can never affect the contract file."""
+    """Render coach-briefing.md into the data dir (coach-loop design D6). Runs
+    strictly AFTER garmin-data.js is written and only ever inside safe()."""
     loaded = plan_compliance.load_plan(DATA_DIR / "plan-data.js")
     if not loaded:
         return
     conn = activity_archive.open_archive(DATA_DIR)
     try:
-        text = coach_briefing.render_briefing(conn, loaded[1], data, TODAY)
+        coach_pass.briefing(conn, loaded[1], data, TODAY,
+                            DATA_DIR / "coach-briefing.md", log=log)
     finally:
         conn.close()
-    coach_briefing.write_briefing(DATA_DIR / "coach-briefing.md", text)
-    log("✓ coach briefing written")
 
 
 def wellness_step(client, readiness: dict, sleep_raw: list) -> None:
@@ -1893,21 +1793,21 @@ def main() -> None:
         return
 
     # Order per insight-metrics design D8 + coach-loop design D6 (+ course-lens
-    # D8 + add-interval-lens D6): archive, intervals, metrics, compliance, the
-    # block lens and the course lens all run BEFORE build_data so insights
-    # include today's run and the compliance, blockLens and courseLens blocks
-    # land in the contract; the briefing renders strictly AFTER the write.
-    # Intervals runs right after archive (it only reads the streams that step
-    # just wrote and has no garmin-data.js key of its own yet). Every step is
-    # safe()-wrapped, so garmin-data.js is written with every existing key
-    # even if all of them fail.
+    # D8 + add-interval-lens D6): archive, intervals, metrics, compliance
+    # (whose second half derives the block lens — both moved into
+    # coach_pass.derive) and the course lens all run BEFORE build_data so
+    # insights include today's run and the compliance, blockLens and
+    # courseLens blocks land in the contract; the briefing renders strictly
+    # AFTER the write. Intervals runs right after archive (it only reads the
+    # streams that step just wrote and has no garmin-data.js key of its own
+    # yet). Every step is safe()-wrapped, so garmin-data.js is written with
+    # every existing key even if all of them fail.
     acts = load_activities(client)
     safe(lambda: archive_step(client, acts), None, "archive step")
     safe(intervals_step, None, "intervals step")
     pred_doc = fetch_raw_predictions(client)
     safe(lambda: metrics_step(client, pred_doc), None, "metrics step")
     safe(compliance_step, None, "compliance step")
-    safe(block_lens_step, None, "block lens step")
     safe(lambda: course_lens_step(client), None, "course lens step")
     sleep_raw: list = []
     data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)

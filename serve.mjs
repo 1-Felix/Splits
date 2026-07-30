@@ -456,17 +456,26 @@ function getArchiveActivity(db, id) {
   // and no bests, not an outage.
   let plan = null;
   try {
+    // SELECT * on purpose (add-plan-prescription): serve opens the archive
+    // read-only and never migrates, so right after a deploy the table may not
+    // carry quality_json yet — a named-column SELECT would throw and take the
+    // whole plan card with it. Missing column → absent field, nothing more.
     const p = db.prepare(
-      `SELECT date, wk, planned_kind, planned_km, planned_load, planned_title,
-              status, reason, actual_km, actual_pace_s, actual_hr
-       FROM plan_compliance WHERE activity_id = ? ORDER BY date LIMIT 1`).get(id);
+      `SELECT * FROM plan_compliance WHERE activity_id = ?
+       ORDER BY date LIMIT 1`).get(id);
     if (p) {
+      let quality;
+      if (p.quality_json) {
+        try { quality = JSON.parse(p.quality_json); } catch { /* malformed → absent */ }
+      }
       plan = {
         date: p.date, wk: p.wk,
         plannedKind: p.planned_kind, plannedKm: p.planned_km,
         plannedLoad: p.planned_load, plannedTitle: p.planned_title,
         status: p.status, reason: p.reason,
         actualKm: p.actual_km, actualPaceS: p.actual_pace_s, actualHr: p.actual_hr,
+        // add-plan-prescription D5: the rep-level verdict, OMITTED when absent
+        ...(quality ? { quality } : {}),
       };
     }
   } catch { /* no plan_compliance table in this archive */ }

@@ -137,6 +137,12 @@
       <sc-for list="{{ pl.reason }}" as="rr" hint-placeholder-count="0">
         <div style="font-size:var(--fs-xs);color:var(--warn);font-weight:600;margin-top:var(--sp-2)">{{ rr.t }}</div>
       </sc-for>
+      <sc-for list="{{ pl.quality }}" as="qv" hint-placeholder-count="0">
+        <div class="plan-quality" style="display:flex;gap:var(--sp-5);flex-wrap:wrap;margin-top:var(--sp-3)">
+          <div><div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700">THE SESSION PRESCRIBED</div><div style="font-size:var(--fs-sm);font-weight:700;margin-top:var(--sp-0)">{{ qv.planned }}</div></div>
+          <div><div style="font-size:var(--fs-2xs);color:var(--sub);font-weight:700">REP VERDICT</div><div style="font-size:var(--fs-sm);font-weight:700;margin-top:var(--sp-0);font-family:'JetBrains Mono'">{{ qv.verdict }}</div></div>
+        </div>
+      </sc-for>
     </div>
   </sc-for>
 
@@ -406,7 +412,11 @@ class Component extends DCLogic {
           statusGlyph: glyph[0], statusColor: glyph[1], statusWord: glyph[2],
           planned: (P.plannedTitle || P.plannedKind || 'session') + (P.plannedKm ? ' · ' + P.plannedKm + ' km' : '') + (P.plannedLoad ? ' · ' + P.plannedLoad : ''),
           actual: km.toFixed(1) + ' km @ ' + this.fmtPace(paceS) + '/km' + (run.avgHr ? ' · HR ' + run.avgHr : ''),
-          reason: P.reason ? [{ t: reasonWord }] : []
+          reason: P.reason ? [{ t: reasonWord }] : [],
+          // add-plan-prescription D5: the rep-level verdict — present only
+          // when the compliance row carries one; absent renders NOTHING new
+          quality: P.quality && P.quality.verdict
+            ? [{ planned: P.quality.planned, verdict: P.quality.verdict }] : []
         }];
       }
 

@@ -245,7 +245,8 @@ function makeArchive(dir) {
     snapshot_id INTEGER NOT NULL, compliance_version INTEGER NOT NULL,
     planned_kind TEXT, planned_km REAL, planned_load TEXT, planned_title TEXT,
     status TEXT NOT NULL, reason TEXT, actual_km REAL, actual_pace_s REAL,
-    actual_hr INTEGER, activity_id INTEGER, updated_at TEXT NOT NULL)`);
+    actual_hr INTEGER, activity_id INTEGER, quality_json TEXT,
+    updated_at TEXT NOT NULL)`);
   db.exec(`CREATE TABLE run_metrics (
     activity_id INTEGER PRIMARY KEY, metrics_version INTEGER,
     best_1k_s REAL, best_mile_s REAL, best_5k_s REAL, best_10k_s REAL, best_half_s REAL)`);
@@ -315,6 +316,16 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     REP_RUN_ID, 1, "2026-07-10 06:51:15", "reps", "5×1 km", 0.86, "stream",
     5000, 1250, JSON.stringify(REP_DOC), "2026-07-27T09:00:00");
+  // add-plan-prescription: REP_RUN_ID's plan day carries a rep-level verdict —
+  // the plan card must render it. Run 7's row above stays verdict-less on
+  // purpose: it pins the discriminating unchanged case.
+  db.prepare(`INSERT INTO plan_compliance (date, wk, snapshot_id, compliance_version,
+      planned_kind, planned_km, planned_load, planned_title, status, reason,
+      actual_km, actual_pace_s, actual_hr, activity_id, quality_json, updated_at)
+    VALUES ('2026-07-10', 'Wk 3', 1, 2, 'run', 7.0, 'Hard', 'Track Reps', 'done',
+      NULL, 6.6, 282, 158, ?, ?, 'x')`).run(REP_RUN_ID, JSON.stringify({
+        planned: "5×1 km @ 5:25–5:35", kind: "reps", prescribed: 5, found: 5,
+        inBand: 4, zoneOk: null, verdict: "5/5 reps, 4 inside 5:25–5:35" }));
 
   // ── fix-round finding 2: LOWCONF_RUN_ID — a genuine "reps" detection below
   // the 0.5 hedge threshold. Renders as a rep table, but must hedge honestly.
@@ -647,6 +658,17 @@ try {
   assert.ok(repPageText.includes("Splits") && repPageText.includes("km 6"),
     "the km splits card still renders its real rows alongside the rep table");
 
+  // add-plan-prescription D5: the plan card renders the rep-level verdict —
+  // prescription text and counts — for a run whose compliance row carries
+  // one. Mutation-proven: dropping the quality node from run.dc.html sends
+  // the count red.
+  assert.equal(await page.locator(".plan-quality").count(), 1,
+    "the verdict block renders on a quality day");
+  const qualityText = await page.locator(".plan-quality").innerText();
+  assert.ok(qualityText.includes("5×1 km @ 5:25–5:35")
+    && qualityText.includes("5/5 reps, 4 inside 5:25–5:35"),
+    "prescription and verdict, verbatim from the compliance row: " + qualityText);
+
   // sweep-lens-tail N7: the rep card was the page's one horizontal overflow
   // at phone width (~18 px at 390, pre-existing, measured on .card.rep-table
   // itself). The page body must never scroll horizontally.
@@ -796,6 +818,13 @@ try {
   await page.goto(B + `/run/${PLAIN_RUN_ID}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".card");
   assert.equal(await page.locator(".rep-table").count(), 0, "no structure detected — no rep table");
+  // add-plan-prescription: run 7's plan row has NO verdict — the plan card
+  // renders exactly its pre-existing content, nothing new (the delta spec's
+  // discriminating scenario)
+  const plainPlanText = await page.evaluate(() => document.body.innerText);
+  assert.ok(plainPlanText.includes("Tempo Run"), "the plan card itself still renders");
+  assert.equal(await page.locator(".plan-quality").count(), 0,
+    "no verdict → no quality block");
   const plainText = await page.evaluate(() => document.body.innerText);
   assert.ok(plainText.includes("Splits") && plainText.includes("km 6"),
     "the km splits card still renders its real per-km rows — 'km 6' is DETAIL's last split");

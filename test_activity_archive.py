@@ -1441,7 +1441,7 @@ def test_schema_v11_tables_exist():
     assert conn.execute(
         "SELECT COUNT(*) FROM activities WHERE distilled_version IS NOT NULL"
     ).fetchone()[0] == 0, "migration leaves every pre-v13 row NULL (the self-heal)"
-    assert arch.get_meta(conn, "schema_version") == "13"
+    assert arch.get_meta(conn, "schema_version") == "14"
     conn.close()
 
 
@@ -1477,7 +1477,7 @@ def test_v11_migration_recovers_from_interrupted_alter():
     assert "laps_fetched_at" in cols, \
         "each v11 column must be guarded independently (like v5/v7), or a " \
         "mid-migration crash permanently loses laps_fetched_at"
-    assert arch.get_meta(reopened, "schema_version") == "13"
+    assert arch.get_meta(reopened, "schema_version") == "14"
     reopened.close()
 
 

@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS plan_compliance (
   actual_pace_s      REAL,
   actual_hr          INTEGER,
   activity_id        INTEGER,
+  quality_json       TEXT,
   updated_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_plan_compliance_date ON plan_compliance(date);
@@ -386,6 +387,14 @@ def _apply_schema_v13(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {name} {decl}")
 
 
+def _apply_schema_v14(conn: sqlite3.Connection) -> None:
+    """v14 (add-plan-prescription): the compliance row carries the rep-level
+    verdict — an ANNOTATION beside status/reason, never a change to them."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(plan_compliance)")}
+    if "quality_json" not in cols:
+        conn.execute("ALTER TABLE plan_compliance ADD COLUMN quality_json TEXT")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -428,7 +437,8 @@ def _open(db: Path) -> sqlite3.Connection:
         _apply_schema_v11(conn)
         conn.executescript(SCHEMA_V12_SQL)
         _apply_schema_v13(conn)
-        # Forward-only migration: v1→…→v13 is purely additive (CREATE IF
+        _apply_schema_v14(conn)
+        # Forward-only migration: v1→…→v14 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -934,7 +944,7 @@ def snapshot_plan(conn: sqlite3.Connection, snapshot_id: int) -> dict | None:
 _COMPLIANCE_COLS = (
     "date", "wk", "snapshot_id", "compliance_version", "planned_kind",
     "planned_km", "planned_load", "planned_title", "status", "reason",
-    "actual_km", "actual_pace_s", "actual_hr", "activity_id",
+    "actual_km", "actual_pace_s", "actual_hr", "activity_id", "quality_json",
 )
 
 

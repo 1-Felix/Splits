@@ -24,6 +24,7 @@ a briefing failure is a warning, never a broken contract file.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import re
 import tempfile
@@ -239,7 +240,18 @@ def _actual_cell(r: dict, run_notes: dict) -> str:
 
 
 def _status_cell(r: dict) -> str:
-    return f"{r['status']} ({r['reason']})" if r.get("reason") else r["status"]
+    out = f"{r['status']} ({r['reason']})" if r.get("reason") else r["status"]
+    # add-plan-prescription D5: the rep-level verdict rides BESIDE the status
+    # (annotate-only) — counts and bands, never a grade; judgment is /coach's.
+    q = r.get("quality_json")
+    if q:
+        try:
+            verdict = json.loads(q).get("verdict")
+        except (ValueError, TypeError):
+            verdict = None
+        if verdict:
+            out += f" · {verdict}"
+    return out
 
 
 def _week_table(rows: list[dict], run_notes: dict) -> list[str]:

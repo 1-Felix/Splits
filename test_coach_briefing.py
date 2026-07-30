@@ -143,6 +143,35 @@ def _seeded_conn(d: Path):
     return conn, plan
 
 
+def test_render_speaks_the_rep_verdict_beside_the_status():
+    """add-plan-prescription D5: an annotated quality day's status cell
+    carries the verdict sentence — counts and bands beside the status word,
+    never replacing it. Mutation-proven: dropping the `· verdict` append in
+    _status_cell sends this red while every other assertion stays green."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [_garmin_act(3, "2026-07-03", 7.4, 2580, hr=167)])
+    arch.upsert_run_intervals(conn, {
+        "activity_id": 3, "lens_version": 6,
+        "start_time_local": "2026-07-03 08:00:00", "shape": "reps",
+        "label": "4×1 km", "confidence": 0.9, "source": "stream",
+        "work_dist_m": 4000, "work_dur_s": 1320,
+        "doc_json": json.dumps({
+            "shape": "reps", "label": "4×1 km", "set": {"found": 4},
+            "segments": [{"role": "work", "paceS": p}
+                         for p in (330, 330, 333, 340)],
+            "quality": {"zone": "Z4"}})})
+    plan = _plan()
+    fri = plan["block"][0]["days"][4]
+    assert fri["date"] == "2026-07-03", "fixture anchor: Wk 2's hard Friday"
+    fri["segments"] = [{"label": "Reps", "val": "4×1 km @ 5:25–5:35"}]
+    pc.run_compliance(conn, "raw", plan, TODAY, MAX_HR)
+    text = cb.render_briefing(conn, plan, DATA, TODAY)
+    conn.close()
+    assert "done · 4/4 reps, 3 inside 5:25–5:35" in text, \
+        "the verdict rides beside the status in the compliance table"
+
+
 # ── pace formatting: total-seconds rounding, no 6:60 carry ───────────────────
 def test_fmt_pace_rounds_total_seconds():
     assert cb._fmt_pace(419.9) == "7:00", "59.9s must carry into the minute"

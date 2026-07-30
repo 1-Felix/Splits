@@ -1,0 +1,48 @@
+# add-plan-prescription — implementation notes
+
+## Deviations from the task list
+
+- **3.2's pins live in `test_run_page.mjs`, not `test_archive_api.mjs`** —
+  that suite's archive deliberately carries NO `plan_compliance` table (its
+  absence proves the block endpoints touch nothing beyond `block_lens`).
+  The run-page suite owns the plan fixtures, so presence and absence of
+  `quality` are pinned there, over the real server.
+- **`serve.mjs` reads the plan row with `SELECT *`** (named columns before):
+  serve opens the archive read-only and never migrates, so right after a
+  deploy the table may not carry `quality_json` yet — a named-column SELECT
+  would throw and take the whole plan card with it. Missing column → absent
+  field, nothing else changes.
+- The briefing golden (`fixtures/coach-pass/golden-blocks.json`) moved by
+  exactly one line: `complianceVersion` 1 → 2.
+
+## Mutation ledger (run 2026-07-30/31, against finished code)
+
+| Mutation | Pinned test | Result |
+|---|---|---|
+| drop single-pace ±5 band widening | `test_single_pace_widens_to_a_symmetric_band` | RED (killed) |
+| steady accepts `@` without `~` | `test_steady_target_requires_the_approx_marker` | RED (killed) |
+| rep regex anchored to string head | `test_embedded_rep_set_wins_over_its_warmup` | RED (killed) |
+| zone never read | `test_time_based_sets_carry_durations_not_distances` | RED (killed) |
+| `min` not converted to seconds | same | RED (killed) |
+| verdict writer downgrades status | `test_annotation_never_changes_status_or_reason` | RED (killed) |
+| `inBand` counts every rep | `test_quality_verdict_counts_reps_and_the_band` | RED (killed) |
+| zone verdict always confirms | `test_quality_verdict_zone_sets_judge_the_zone_not_pace` | RED (killed) |
+| steady tolerance unbounded | `test_quality_verdict_steady_target_tolerance` | RED (killed) |
+| drop the plan-card quality node | run-page quality case | RED (killed) |
+| drop the briefing verdict append | `test_render_speaks_the_rep_verdict_beside_the_status` | RED (killed) |
+
+11 mutations, 11 killed.
+
+## Suite at merge
+
+Python `591 passed / 2 skipped` (569 before this change); all four JS suites
+ALL PASS; style-audit `/run` clean at 390.
+
+## Pre-deploy status capture (for 4.3's byte-identical check)
+
+35 planned rows, 2026-06-29 → 2026-08-02. Non-`done`: 07-08 partial
+(distance), 07-15 missed, 07-23 missed, 07-24 swapped, 07-25 missed, 07-26
+missed, 07-30…08-02 pending. Every one of these must be IDENTICAL after the
+version-2 rescore — only `quality_json` may appear.
+
+## Post-deploy (filled after 4.3/4.4)

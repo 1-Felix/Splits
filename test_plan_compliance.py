@@ -508,6 +508,173 @@ def test_verify_archive_compliance_regressions():
         sg.DATA_DIR, sg.CACHE_DIR = orig
 
 
+# ── rep-level quality verdicts (add-plan-prescription) ───────────────────────
+def _quality_day(segments_val, date="2026-07-03"):
+    d = _day("Fri", date, "run", "Threshold", "Hard", 7)
+    d["segments"] = [{"label": "Reps", "val": segments_val}]
+    return d
+
+
+def _quality_week(segments_val):
+    w = _closed_week()
+    w["days"] = [d if d["date"] != "2026-07-03"
+                 else _quality_day(segments_val) for d in w["days"]]
+    return w
+
+
+def _doc_conn(doc, aid=1):
+    conn = arch.open_archive(_tmp())
+    arch.upsert_run_intervals(conn, {
+        "activity_id": aid, "lens_version": 6,
+        "start_time_local": "2026-07-03 06:00:00", "shape": doc.get("shape"),
+        "label": doc.get("label"), "confidence": 0.9, "source": "stream",
+        "work_dist_m": 0, "work_dur_s": 0, "doc_json": json.dumps(doc)})
+    return conn
+
+
+def _annotated(week, doc, act):
+    conn = _doc_conn(doc)
+    rows = pc.score_week(week, [act], TODAY, MAX_HR, SNAP)
+    pc._annotate_quality(conn, week, rows)
+    conn.close()
+    return _by_date(rows, "2026-07-03")
+
+
+_REPS_DOC = {"shape": "reps", "label": "4×1 km",
+             "set": {"found": 4, "prescribed": None},
+             "segments": [{"role": "work", "paceS": p}
+                          for p in (330, 330, 333, 340)],
+             "quality": {"zone": "Z4"}}
+
+
+def test_quality_verdict_counts_reps_and_the_band():
+    r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), _REPS_DOC,
+                   _a(1, "2026-07-03", "run", 7.2))
+    q = json.loads(r["quality_json"])
+    assert q["prescribed"] == 4 and q["found"] == 4
+    assert q["inBand"] == 3, "340 is outside 5:25–5:35"
+    assert q["verdict"] == "4/4 reps, 3 inside 5:25–5:35"
+    assert r["status"] == "done", "annotation only — coarse scoring decided this"
+
+
+def test_quality_verdict_shows_a_bailed_set_without_touching_status():
+    doc = dict(_REPS_DOC, set={"found": 2},
+               segments=[{"role": "work", "paceS": 330}] * 2)
+    r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), doc,
+                   _a(1, "2026-07-03", "run", 7.0))
+    q = json.loads(r["quality_json"])
+    assert q["found"] == 2 and q["verdict"].startswith("2/4 reps")
+    assert r["status"] == "done", \
+        "distance landed; the shortfall is the ANNOTATION's story"
+
+
+def test_quality_verdict_zone_sets_judge_the_zone_not_pace():
+    r = _annotated(_quality_week("6×3 min hard (Z4 effort)"),
+                   dict(_REPS_DOC, set={"found": 6}),
+                   _a(1, "2026-07-03", "run", 7.0))
+    q = json.loads(r["quality_json"])
+    assert q["zoneOk"] is True and q["inBand"] is None
+    assert "Z4 confirmed" in q["verdict"]
+    mism = _annotated(_quality_week("6×3 min hard (Z4 effort)"),
+                      dict(_REPS_DOC, set={"found": 6}, quality={"zone": "Z3"}),
+                      _a(1, "2026-07-03", "run", 7.0))
+    assert "zone read Z3" in json.loads(mism["quality_json"])["verdict"]
+
+
+def test_quality_verdict_steady_target_tolerance():
+    on = _annotated(_quality_week("16 km easy @ ~6:10"), _REPS_DOC,
+                    _a(1, "2026-07-03", "run", 16.0, pace_s=373.0))
+    q = json.loads(on["quality_json"])
+    assert q["kind"] == "steady" and q["onTarget"] is True
+    assert q["verdict"] == "6:13 vs ~6:10 — on target"
+    off = _annotated(_quality_week("16 km easy @ ~6:10"), _REPS_DOC,
+                     _a(1, "2026-07-03", "run", 16.0, pace_s=390.0))
+    assert json.loads(off["quality_json"])["verdict"] == "6:30 vs ~6:10 — +20 s/km"
+
+
+def test_quality_verdict_without_a_document_is_honest():
+    conn = arch.open_archive(_tmp())  # no run_intervals row at all
+    week = _quality_week("4×1 km @ 5:25–5:35")
+    rows = pc.score_week(week, [_a(1, "2026-07-03", "run", 7.0)],
+                         TODAY, MAX_HR, SNAP)
+    pc._annotate_quality(conn, week, rows)
+    conn.close()
+    q = json.loads(_by_date(rows, "2026-07-03")["quality_json"])
+    assert q["verdict"] == "no interval document"
+
+
+def test_quality_verdict_steady_doc_against_a_rep_prescription():
+    doc = {"shape": "steady", "set": None, "segments": [], "quality": {"zone": None}}
+    r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), doc,
+                   _a(1, "2026-07-03", "run", 7.0))
+    q = json.loads(r["quality_json"])
+    assert q["found"] == 0
+    assert "no structured set detected" in q["verdict"]
+
+
+def test_unparseable_day_gets_no_quality_json():
+    r = _annotated(_quality_week("2 km easy — shin gate: pain-free before any rep"),
+                   _REPS_DOC, _a(1, "2026-07-03", "run", 7.0))
+    assert r.get("quality_json") is None
+
+
+def test_annotation_never_changes_status_or_reason():
+    """D3's structural pin: identical days, one with a parseable prescription
+    — status and reason byte-identical. Mutation-proven: making the verdict
+    writer downgrade status goes red here."""
+    week_plain = _closed_week()
+    week_rx = _quality_week("4×1 km @ 5:25–5:35")
+    act = [_a(1, "2026-07-03", "run", 7.0)]
+    conn = _doc_conn(dict(_REPS_DOC, set={"found": 1},
+                          segments=[{"role": "work", "paceS": 400}]))
+    rows_plain = pc.score_week(week_plain, list(act), TODAY, MAX_HR, SNAP)
+    rows_rx = pc.score_week(week_rx, list(act), TODAY, MAX_HR, SNAP)
+    pc._annotate_quality(conn, week_rx, rows_rx)
+    conn.close()
+    p, r = _by_date(rows_plain, "2026-07-03"), _by_date(rows_rx, "2026-07-03")
+    assert (p["status"], p["reason"]) == (r["status"], r["reason"]), \
+        "a 1-of-4 disaster set still cannot move the coarse status"
+    assert r["quality_json"] and json.loads(r["quality_json"])["found"] == 1
+
+
+def test_rescore_at_version_2_adds_verdicts_and_keeps_statuses():
+    """COMPLIANCE_VERSION 1→2 self-heal: stale rows gain quality_json by
+    rescore against their ORIGINAL snapshot; statuses do not move."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    week = _quality_week("4×1 km @ 5:25–5:35")
+    plan = {"block": [week]}
+    snap = arch.bank_plan_snapshot(conn, "raw-v2-test", plan, "2026-07-06")
+    arch.upsert_activities(conn, [{
+        "activityId": 1, "activityName": "Threshold",
+        "startTimeLocal": "2026-07-03 06:00:00",
+        "activityType": {"typeKey": "running"},
+        "distance": 7200.0, "duration": 2592.0, "averageHR": 170}])
+    arch.upsert_run_intervals(conn, {
+        "activity_id": 1, "lens_version": 6,
+        "start_time_local": "2026-07-03 06:00:00", "shape": "reps",
+        "label": "4×1 km", "confidence": 0.9, "source": "stream",
+        "work_dist_m": 4000, "work_dur_s": 1320,
+        "doc_json": json.dumps(_REPS_DOC)})
+    acts = pc._acts_for_range(conn, week["mon"], week["sun"])
+    rows = pc.score_week(week, acts, TODAY, MAX_HR, snap)
+    for r in rows:  # simulate the version-1 era: old stamp, no annotation
+        r["compliance_version"] = 1
+        r.pop("quality_json", None)
+    arch.replace_compliance_week(conn, week["mon"], week["sun"], rows)
+    before = {r[0]: r[1] for r in conn.execute(
+        "SELECT date, status FROM plan_compliance WHERE planned_kind IS NOT NULL")}
+
+    healed = pc._rescore_stale(conn, TODAY, MAX_HR)
+    assert healed == 1
+    after = conn.execute(
+        "SELECT status, quality_json FROM plan_compliance "
+        "WHERE date = '2026-07-03' AND planned_kind IS NOT NULL").fetchone()
+    assert after[0] == before["2026-07-03"], "rescore moves no status"
+    assert json.loads(after[1])["verdict"] == "4/4 reps, 3 inside 5:25–5:35"
+    conn.close()
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

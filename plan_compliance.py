@@ -38,14 +38,16 @@ import tempfile
 from pathlib import Path
 
 import activity_archive
+import plan_prescription
 
-COMPLIANCE_VERSION = 1
+COMPLIANCE_VERSION = 2   # 2: rep-level quality verdicts (add-plan-prescription)
 
 # Scoring constants (design D4) — coarse by design.
 DIST_DONE_RATIO = 0.85     # matched km ≥ 85% of planned → distance satisfied
 DIST_PARTIAL_RATIO = 0.50  # ≥ 50% → partial; below → missed (and no swap pairing)
 EASY_HR_CEILING = 0.85     # Easy/Moderate intent: avg HR above this × max HR → flagged
 EASY_LOADS = {"Easy", "Moderate"}
+STEADY_TOLERANCE_S = 10    # a `~` steady target is approximate by its own notation
 
 PLAN_DUMP_TIMEOUT_S = float(os.environ.get("SPLITS_PLAN_DUMP_TIMEOUT_S", "10"))
 
@@ -272,6 +274,76 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
     return rows
 
 
+def _fmt_pace(sec) -> str:
+    return f"{int(sec) // 60}:{int(sec) % 60:02d}"
+
+
+def _quality_verdict(rx: dict, doc: dict | None, row: dict) -> dict:
+    """The rep-level verdict (add-plan-prescription D2): prescription ×
+    executed interval document, worded as counts and bands — never a grade.
+    Judgment stays with the coach (the coach-loop's standing rule)."""
+    if rx["kind"] == "steady":
+        target = rx["paceS"]
+        actual = row.get("actual_pace_s")
+        out = {"planned": rx["text"], "kind": "steady",
+               "targetS": target, "actualS": actual}
+        if actual is None:
+            out.update(onTarget=None, verdict=f"~{_fmt_pace(target)} planned, pace unknown")
+            return out
+        diff = int(round(actual)) - target
+        out["onTarget"] = abs(diff) <= STEADY_TOLERANCE_S
+        out["verdict"] = (f"{_fmt_pace(actual)} vs ~{_fmt_pace(target)}"
+                          + (" — on target" if out["onTarget"]
+                             else f" — {diff:+d} s/km"))
+        return out
+
+    out = {"planned": rx["text"], "kind": "reps",
+           "prescribed": rx["count"], "found": 0,
+           "inBand": None, "zoneOk": None}
+    if not doc:
+        out["verdict"] = "no interval document"
+        return out
+    doc_set = doc.get("set") or {}
+    found = doc_set.get("found") if doc.get("shape") == "reps" else 0
+    out["found"] = found or 0
+    bits = [f"{out['found']}/{rx['count']} reps"]
+    if out["found"] == 0 and doc.get("shape") != "reps":
+        bits.append("no structured set detected")
+    band = rx.get("paceBandS")
+    if band and rx.get("repDistM") and out["found"]:
+        # distance reps judged per rep against the band; time-based sets
+        # (strides) are count-only — per-rep pace on a 20 s effort is noise
+        paces = [s.get("paceS") for s in (doc.get("segments") or [])
+                 if s.get("role") == "work" and s.get("paceS")]
+        out["inBand"] = sum(1 for p in paces if band[0] <= p <= band[1])
+        bits.append(f"{out['inBand']} inside {_fmt_pace(band[0])}–{_fmt_pace(band[1])}")
+    if rx.get("zone") and out["found"]:
+        doc_zone = (doc.get("quality") or {}).get("zone")
+        out["zoneOk"] = doc_zone == f"Z{rx['zone']}"
+        bits.append(f"Z{rx['zone']} confirmed" if out["zoneOk"]
+                    else f"zone read {doc_zone or '—'}")
+    out["verdict"] = ", ".join(bits)
+    return out
+
+
+def _annotate_quality(conn, week: dict, rows: list[dict]) -> None:
+    """Post-pass over one week's scored rows (add-plan-prescription D3):
+    writes ONLY `quality_json` — status and reason are whatever the coarse
+    scoring decided, with or without a parseable prescription. Runs where the
+    conn lives; `score_week` stays pure."""
+    days = {d.get("date"): d for d in (week.get("days") or []) if isinstance(d, dict)}
+    for row in rows:
+        day = days.get(row.get("date"))
+        if not day or not row.get("activity_id"):
+            continue
+        rx = plan_prescription.prescription_for_day(day.get("segments"))
+        if not rx:
+            continue
+        doc = activity_archive.interval_document(conn, row["activity_id"])
+        row["quality_json"] = json.dumps(
+            _quality_verdict(rx, doc, row), ensure_ascii=False)
+
+
 def _days_apart(a: str, b: str) -> int:
     return (dt.date.fromisoformat(a) - dt.date.fromisoformat(b)).days
 
@@ -315,6 +387,7 @@ def run_compliance(conn, raw_text: str, plan: dict, today: dt.date,
         acts = _acts_for_range(conn, week["mon"], week["sun"])
         rows = score_week(week, acts, today, max_hr, week_snapshot)
         if rows:
+            _annotate_quality(conn, week, rows)
             activity_archive.replace_compliance_week(conn, week["mon"], week["sun"], rows)
             scored += 1
     healed = _rescore_stale(conn, today, max_hr)
@@ -347,6 +420,7 @@ def _rescore_stale(conn, today: dt.date, max_hr: int) -> int:
             continue  # unknown label — verify-archive keeps flagging the stale rows
         acts = _acts_for_range(conn, week["mon"], week["sun"])
         rows = score_week(week, acts, today, max_hr, snapshot_id)
+        _annotate_quality(conn, week, rows)
         activity_archive.replace_compliance_week(conn, week["mon"], week["sun"], rows)
         healed += 1
     return healed

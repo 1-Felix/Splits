@@ -350,9 +350,44 @@ export async function writeLayoutFixture(dir) {
   await writeFile(join(dir, "garmin-data.js"),
     "/* GENERATED from fixtures/layout/fixture.mjs — the responsive gate's data. */\n" +
     "export const garminData = " + JSON.stringify(telemetry, null, 1) + ";\n");
-  await copyFile(join(REPO, "plan-data.default.js"), join(dir, "plan-data.js"));
+  // The plan is the shipped default plus a deliberately HOSTILE coach block:
+  // the real note is one 5,503-character text node with no newline in it and
+  // the real log runs to 17 entries, which is what made the cockpit 18.3
+  // screens tall. The sample plan's 431-character note and single log entry
+  // would never exercise the paragraph split, the phone clamp or the sheet.
+  const plan = await readFile(join(REPO, "plan-data.default.js"), "utf8");
+  await writeFile(join(dir, "plan-data.js"), plan + "\n" + FIXTURE_COACH_OVERRIDE);
   buildFixtureArchive(dir);
   return dir;
 }
+
+const LONG_NOTE = [
+  "Aug 1 check-in, eight days out.",
+  "The block did what it was asked to do and the numbers say so plainly.",
+  "Friday's session held pace within one and a half percent across three kilometre repeats, which is the discipline the race needs.",
+  "Heart rate climbed through the set in the heat, so the cool morning air is worth several beats.",
+  "CHANGES: (1) Sunday's long run becomes sixty to seventy-five minutes on the bike, with the gel at forty minutes so the fuelling rehearsal survives.",
+  "(2) The descent drill is cut, and the cost is named rather than hidden: the quads meet kilometre fourteen unrehearsed.",
+  "(3) Wednesday's four kilometres becomes the gate, and what it says decides the opening pace.",
+  "(4) Friday's four hundreds are conditional on that gate.",
+  "(5) Cadence becomes an explicit race instruction, because it drifted the wrong way across this block.",
+  "Honest read: a patient, controlled race lands somewhere between two hours five and two hours twelve.",
+  "Floor before ceiling, unchanged.",
+].join(" ");
+
+const FIXTURE_COACH_OVERRIDE = `
+/* fixture only — see fixtures/layout/fixture.mjs */
+planData.coach = {
+  ...(planData.coach || {}),
+  headline: 'Eight days out — sharpen, do not pile on.',
+  note: ${JSON.stringify(LONG_NOTE)},
+  log: ${JSON.stringify(seq(9, (i) => ({
+    date: "2026-0" + (7 - Math.floor(i / 5)) + "-" + String(28 - i * 3).padStart(2, "0"),
+    text: "Session design and the sub-two conversation, adjustment " + (9 - i)
+        + ". The week's load was repriced against what the last block actually delivered, and the "
+        + "long run moved to keep the quality day intact.",
+  })))},
+};
+`;
 
 export const FIXTURE_DIR = HERE;

@@ -66,6 +66,9 @@ const TRACK = {
 // The sweep. 1920/1600 exercise the wide tier, 768 the tablet tier, 390/360 the
 // phone tier — and 360 is the width the audit found the worst compositions at.
 const WIDTHS = [1920, 1600, 1200, 768, 390, 360];
+// A phone is not 1600px tall. Measuring the phone tier in a desktop-height
+// viewport makes every "is it in the viewport" claim trivially true.
+const heightFor = (w) => (w <= 700 ? 844 : 1600);
 
 // Expected grid track COUNTS per width. getComputedStyle resolves fr → px, so we
 // count tracks, not template strings. ranges are [min,max] inclusive; numbers
@@ -189,7 +192,7 @@ async function shellWidth(page) {
 }
 
 async function snapshot(page, width) {
-  await page.setViewportSize({ width, height: 1600 });
+  await page.setViewportSize({ width, height: heightFor(width) });
   await page.goto(PAGE, { waitUntil: "networkidle" });
   await page.waitForSelector("#sec-hero");
   const out = {};
@@ -258,7 +261,7 @@ try {
     const shellWidths = {};
 
     for (const width of WIDTHS) {
-      await page.setViewportSize({ width, height: 1600 });
+      await page.setViewportSize({ width, height: heightFor(width) });
       await page.goto(PAGE, { waitUntil: "networkidle" });
       await page.waitForSelector("#sec-hero");
       for (const [sel, byW] of Object.entries(LAYOUT)) {
@@ -431,7 +434,7 @@ try {
     // that spans the chart grid (desktop) or the viewport (phone sheet), and
     // never overflows the page.
     for (const width of [1200, 390]) {
-      await page.setViewportSize({ width, height: 1600 });
+      await page.setViewportSize({ width, height: heightFor(width) });
       await page.goto(PROGRESS, { waitUntil: "domcontentloaded" });
       await page.waitForSelector("#sec-charts", { timeout: 15000 });
       const eff = await page.waitForSelector('svg[aria-label^="Pace at reference HR"]', { timeout: 15000 }).catch(() => null);
@@ -462,7 +465,7 @@ try {
       check(spanOk && m.scrollW <= width + 1 && m.focusInPanel,
         `${width} /progress drill panel spans its frame (${Math.round(m.panelW)}/${Math.round(m.gridW)}px), focus inside=${m.focusInPanel}, no overflow (scrollWidth=${m.scrollW})`);
       // chart-drill: "the evidence view opens where it can be read"
-      check(m.top >= -1 && m.top < 1600, `${width} /progress drill panel heading is in the viewport (top=${Math.round(m.top)})`);
+      check(m.top >= -1 && m.top < heightFor(width), `${width} /progress drill panel heading is in the viewport (top=${Math.round(m.top)})`);
     }
     console.log(code ? "LAYOUT: FAIL" : "LAYOUT: ALL PASS");
   } else {

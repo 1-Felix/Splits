@@ -417,6 +417,69 @@ class Component extends DCLogic {
   // one expanded past block page-wide; the two-block comparison mirrors its
   // selection into the URL so a comparison is a link.
   toggleBlockWeek = (key) => this.setState({ blockWeek: this.state.blockWeek === key ? null : key });
+
+  // A week's days below the phone tier open in the sheet rather than as an
+  // accordion: an accordion opening under a row near the bottom of the
+  // viewport puts its first day off-screen, and the page has no way to say so.
+  // The rows are built with the same classes the accordion uses, so one set of
+  // styles serves both and the phone composition is not a second copy.
+  openWeekSheet = (w) => {
+    const tb = this.tb(); if (!tb || !tb.openSheet) return false;
+    const d = document, wrap = d.createElement('div');
+    const days = w.days || [];
+    if (!days.length) {
+      const p = d.createElement('p');
+      p.className = 'sheet-p';
+      p.textContent = 'This week has no days planned yet — the plan must stay detailed to race day.';
+      wrap.appendChild(p);
+    }
+    for (const day of days) {
+      const g = this.BLOCK_GLYPH[day.status] || this.BLOCK_GLYPH.pending;
+      const row = d.createElement('div');
+      row.className = 'block-day';
+      const cell = (cls, text, color) => {
+        const s = d.createElement('span');
+        s.className = cls;
+        s.textContent = text;
+        if (color) s.style.color = color;
+        row.appendChild(s);
+        return s;
+      };
+      cell('bd-date', this.dowName(day.date).slice(0, 3) + ' ' + this.mDate(day.date));
+      cell('bd-title', day.title || day.plannedKind || 'Unplanned run');
+      cell('bd-plan', day.plannedKind
+        ? (day.plannedKm ? day.plannedKm + ' km' : day.plannedKind) + (day.plannedLoad ? ' · ' + day.plannedLoad : '')
+        : 'not planned');
+      cell('bd-status', g.t + ' ' + g.word + (day.reason ? ' — ' + (this.BLOCK_DAY_REASON[day.reason] || day.reason) : ''), g.fg);
+      cell('bd-actual', day.actualKm != null
+        ? day.actualKm + ' km' + (day.actualPaceS ? ' @ ' + this.fmtPace(day.actualPaceS) + '/km' : '') + (day.actualHr ? ' · HR ' + day.actualHr : '')
+        : '');
+      if (day.activityId != null) {
+        const a = d.createElement('a');
+        a.className = 'block-run-link';
+        a.href = './run/' + day.activityId;
+        a.textContent = 'run →';
+        row.appendChild(a);
+      }
+      wrap.appendChild(row);
+    }
+    tb.openSheet({ title: (w.wk || this.mDate(w.mon)) + ' · days', node: wrap, onDismiss: this.dismissHover });
+    return true;
+  };
+
+  // "insufficient data" used to explain itself only through a `title`. It says
+  // why on activation now — on any device, and to a screen reader.
+  openReason = (label, why) => {
+    const tb = this.tb(); if (!tb || !tb.openSheet) return;
+    tb.openSheet({ title: label + ' — not enough evidence', node: why, onDismiss: this.dismissHover });
+  };
+
+  activateBlockWeek = (key, w) => {
+    const tb = this.tb();
+    const phone = tb && typeof window !== 'undefined' && window.innerWidth <= tb.PHONE_MAX;
+    if (phone && this.openWeekSheet(w)) return;
+    this.toggleBlockWeek(key);
+  };
   openPastBlock = (raceDate) => {
     if (this.state.blockPastOpen === raceDate) { this.setState({ blockPastOpen: null }); return; }
     this.setState({ blockPastOpen: raceDate, blockWeek: null });
@@ -517,11 +580,14 @@ class Component extends DCLogic {
       }
     }
 
+    // Same id, same children, same state machine — only the container changes.
+    // Below the phone tier `.drill-panel` becomes a bottom sheet in CSS, which
+    // is why the margin and the entrance animation moved out of the inline
+    // style: an inline declaration cannot be re-composed by a media query.
     return h('div', {
-      id: 'drill-panel', role: 'region', 'aria-label': p.title, className: 'card',
+      id: 'drill-panel', role: 'region', 'aria-label': p.title, className: 'card drill-panel',
       onClick: (e) => { if (e.stopPropagation) e.stopPropagation(); },
       onKeyDown: (e) => { if (e.key === 'Escape') { if (e.stopPropagation) e.stopPropagation(); this.closePanel(); } },
-      style: { marginTop: 'var(--sp-1)', animation: 'rise .18s ease' },
     },
       h('div', { key: 'head', style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--sp-3)' } },
         h('div', { key: 'l' },
@@ -575,7 +641,10 @@ class Component extends DCLogic {
     return h('div', { key: label, style: { minWidth: '84px' } },
       value != null
         ? h('div', { style: { fontFamily: "'JetBrains Mono',monospace", fontWeight: 800, fontSize: 'var(--fs-lg)', color: color || 'var(--ink)' } }, value)
-        : h('div', { className: 'block-insufficient', title: this.BLOCK_REASON[reason] || reason || 'not enough evidence in this block', style: { fontSize: 'var(--fs-xs)', fontWeight: 700, color: 'var(--warn)', padding: '3px 0' } }, 'insufficient data'),
+        : h('button', { type: 'button', className: 'block-insufficient',
+            'aria-label': 'insufficient data for ' + label + '. Why?',
+            onClick: () => this.openReason(label, this.BLOCK_REASON[reason] || reason || 'not enough evidence in this block'),
+          }, 'insufficient data'),
       h('div', { style: { fontSize: 'var(--fs-2xs)', fontWeight: 700, letterSpacing: '.08em', color: 'var(--sub)', marginTop: '2px' } }, label));
   }
 
@@ -641,10 +710,17 @@ class Component extends DCLogic {
     if (q.of) stats.splice(3, 0, this.blockStat(h, 'QUALITY', q.hit + '/' + q.of, q.hit === q.of ? 'var(--good)' : 'var(--warn)'));
 
     // ---- phase strip: one segment per week, coloured by phase ----
+    // The segments were divs whose only carrier was a `title` — hover-only, so
+    // on touch they said nothing at all and a screen reader skipped them. They
+    // are buttons now: the name is in the accessible name, and activating one
+    // opens that week's days, the same as the row below.
     const strip = h('div', { key: 'strip' },
       h('div', { style: { display: 'flex', gap: '2px', marginTop: 'var(--sp-3)' } }, weeks.map((w, i) =>
-        h('div', { key: w.mon, title: (w.wk || '') + ' · ' + (w.phase || '') + ' · ' + w.mon,
-          style: { flex: 1, height: '6px', borderRadius: '3px',
+        h('button', { key: w.mon, type: 'button', className: 'blk-seg',
+          'aria-label': (w.wk || '') + ', ' + (w.phase || 'no phase') + ', week of ' + w.mon
+            + (live && i === wkNow ? ', this week' : '') + '. Show its days.',
+          onClick: () => this.activateBlockWeek(doc.raceDate + ':' + w.mon, w),
+          style: {
             background: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--accent)',
             opacity: !live ? 1 : i === wkNow ? 1 : (displayToday > w.sun ? .4 : .75),
             outline: live && i === wkNow ? '2px solid var(--ink)' : 'none', outlineOffset: '1px' } }))),
@@ -683,7 +759,7 @@ class Component extends DCLogic {
       return h('div', { key: w.mon },
         h('button', { className: 'block-week' + (cur ? ' block-week--cur' : ''), 'aria-expanded': String(open),
           'aria-label': (w.wk || w.mon) + (cur ? ', this week' : '') + ', ' + km + '. ' + dayNarration + ' Show its days.',
-          onClick: () => this.toggleBlockWeek(key) },
+          onClick: () => this.activateBlockWeek(key, w) },
           h('span', { key: 'wk', className: 'blk-wk' }, w.wk || this.mDate(w.mon)),
           h('span', { key: 'ph', className: 'blk-ph', style: { color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.retired ? 'retired' : w.phase || '').toUpperCase()),
           cur ? h('span', { key: 'tag', className: 'blk-tag' }, 'THIS WK') : null,

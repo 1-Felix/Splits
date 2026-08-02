@@ -139,10 +139,17 @@
         <svg viewBox="0 0 120 120" style="width:108px;height:108px;display:block" tabIndex="0" role="img" aria-label="{{ ringHover.navLabel }}" onKeyDown="{{ ringHover.onKey }}" onMouseLeave="{{ ringHover.onLeave }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:3px;border-radius:8px">
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--line)" stroke-width="11"></circle>
           <circle cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="{{ ring.c }}" stroke-dashoffset="{{ ring.off }}" transform="rotate(-90 60 60)"></circle>
-          <text x="60" y="58" text-anchor="middle" fill="var(--ink)" style="font:900 30px 'JetBrains Mono'">{{ readiness.score }}</text>
-          <text x="60" y="76" text-anchor="middle" fill="var(--accent)" style="font:700 11px 'Archivo';letter-spacing:.12em">{{ readiness.status }}</text>
           <sc-for list="{{ ringHover.bands }}" as="b" hint-placeholder-count="1"><circle data-hb="ring" cx="60" cy="60" r="58" fill="transparent" style="cursor:pointer" onMouseEnter="{{ b.onEnter }}" onClick="{{ b.onClick }}" aria-label="{{ b.aria }}"></circle></sc-for>
         </svg>
+        <!-- The score and status are HTML centred over the ring, not SVG <text>.
+             The dc runtime wraps every interpolation in a <span>, and a <span>
+             inside <svg> is not an SVG element: both nodes measured 0×0, so the
+             card's headline number had never once been displayed. This is the
+             pattern chart-view.js already uses for every chart label. -->
+        <div class="ring-center">
+          <div class="ring-score">{{ readiness.score }}</div>
+          <div class="ring-status">{{ readiness.status }}</div>
+        </div>
         <sc-for list="{{ ringHover.card }}" as="cd" hint-placeholder-count="0">
           <div data-card="ring" class="pop" style="position:absolute;left:{{ cd.left }};top:{{ cd.top }};transform:{{ cd.transform }};z-index:6">
             <sc-for list="{{ cd.rows }}" as="row" hint-placeholder-count="3"><div style="color:{{ row.color }};font-weight:{{ row.weight }};font-family:'JetBrains Mono',monospace">{{ row.t }}</div></sc-for>
@@ -172,8 +179,17 @@
         <span style="margin-left:auto;font-size:var(--fs-2xs);color:var(--sub);font-weight:600">via Claude Code</span>
       </div>
       <div class="pin-scroll">
-        <div style="font-size:var(--fs-md);font-weight:800;letter-spacing:-.01em;margin:var(--sp-3) 0 var(--sp-2);line-height:1.25">{{ coach.headline }}</div>
-        <div style="font-size:var(--fs-base);line-height:1.5;color:var(--sub);font-weight:500">{{ coach.note }}</div>
+        <div class="coach-headline">{{ coach.headline }}</div>
+        <!-- the note is prose, so it renders as paragraphs; on a phone the
+             block is clamped and the whole of it is one activation away -->
+        <div class="coach-note">
+          <sc-for list="{{ noteParas }}" as="p" hint-placeholder-count="3">
+            <p class="coach-p">{{ p.t }}</p>
+          </sc-for>
+        </div>
+        <sc-for list="{{ noteMore }}" as="nm" hint-placeholder-count="1">
+          <button class="more-btn" onClick="{{ nm.open }}">{{ nm.label }}</button>
+        </sc-for>
         <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)">
           <sc-for list="{{ coach.focus }}" as="f" hint-placeholder-count="3">
             <span style="font-size:var(--fs-xs);font-weight:600;padding:5px 9px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--ink);border:1px solid var(--line)">{{ f }}</span>
@@ -434,6 +450,9 @@
         <div style="width:20px;height:20px;border-radius:var(--r-sm);background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:var(--fs-xs);color:#0E0F12">AI</div>
         <div style="font-size:var(--fs-base);font-weight:800">Plan adjustments</div>
       </div>
+      <sc-for list="{{ logMore }}" as="lm" hint-placeholder-count="1">
+        <button class="more-btn" style="margin-bottom:var(--sp-3)" onClick="{{ lm.open }}">{{ lm.label }}</button>
+      </sc-for>
       <div class="timeline pin-scroll">
         <sc-for list="{{ coachLog }}" as="l" hint-placeholder-count="3">
           <div class="timeline-item">
@@ -477,6 +496,81 @@ class Component extends DCLogic {
   // ---- sync pill (machine in topbar.js — one implementation, every page) ----
   syncNow = () => { this.tb() && this.tb().syncNow(this); };
   waitForSync = () => { this.tb() && this.tb().waitForSync(this); };
+
+  // ---- coach prose (live-dashboard: "coach prose renders as paragraphs") ----
+  // The note is coach-written and arrives as ONE text node — the live one is
+  // 5,503 characters with not a single newline in it, which is unreadable at
+  // any width, not only on a phone. Split it on whatever separators it does
+  // carry, most explicit first: blank lines, then lines, and failing both, the
+  // note's own enumerations plus a three-sentence rhythm. Pure and total: any
+  // string in, an array of paragraphs out.
+  splitNote(text) {
+    const raw = String(text == null ? '' : text);
+    if (!raw.trim()) return [];
+    const byBlank = raw.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+    if (byBlank.length > 1) return byBlank;
+    const byLine = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (byLine.length > 1) return byLine;
+    const flat = raw.replace(/\s+/g, ' ').trim();
+    const out = [];
+    for (const chunk of flat.split(/(?=\(\d+\)\s)/)) {
+      const sentences = (chunk.match(/[^.!?]+(?:[.!?]+|$)/g) || [chunk])
+        .map((s) => s.trim()).filter(Boolean);
+      let buf = '', n = 0;
+      for (const s of sentences) {
+        buf += (buf ? ' ' : '') + s;
+        if (++n >= 3) { out.push(buf); buf = ''; n = 0; }
+      }
+      if (buf) out.push(buf);
+    }
+    return out.filter(Boolean);
+  }
+
+  paras(text) {
+    const d = document, wrap = d.createElement('div');
+    for (const t of this.splitNote(text)) {
+      const p = d.createElement('p');
+      p.className = 'sheet-p';
+      p.textContent = t;
+      wrap.appendChild(p);
+    }
+    return wrap;
+  }
+
+  openNote = () => {
+    const tb = this.tb(); if (!tb || !tb.openSheet) return;
+    const D = this.state.data || this.buildData();
+    const c = (D && D.coach) || {};
+    const node = this.paras(c.note);
+    if (c.headline) {
+      const h = document.createElement('p');
+      h.className = 'sheet-p';
+      h.style.fontWeight = '800';
+      h.textContent = c.headline;
+      node.insertBefore(h, node.firstChild);
+    }
+    tb.openSheet({ title: 'Coach note', node, onDismiss: this.dismissHover });
+  };
+
+  openLog = () => {
+    const tb = this.tb(); if (!tb || !tb.openSheet) return;
+    const D = this.state.data || this.buildData();
+    const log = ((D && D.coach) || {}).log || [];
+    const d = document, wrap = d.createElement('div');
+    for (const l of log) {
+      const item = d.createElement('div');
+      item.className = 'sheet-log';
+      const date = d.createElement('div');
+      date.className = 'sheet-log-date';
+      date.textContent = l.date || '';
+      const body = d.createElement('div');
+      body.className = 'sheet-log-text';
+      body.textContent = l.text || '';
+      item.appendChild(date); item.appendChild(body);
+      wrap.appendChild(item);
+    }
+    tb.openSheet({ title: 'Plan adjustments', node: wrap, onDismiss: this.dismissHover });
+  };
 
   // ---- datapoint hover/tap ----
   hoverPoint = (chart, i) => { const h = this.state.hover; if (h && h.pinned) return; this.setState({ hover: { chart, i, pinned: false } }); };
@@ -1207,6 +1301,19 @@ class Component extends DCLogic {
     const loadFail = this.state.dataError && !this.state.data && window.location.protocol !== 'file:'
       ? [{ reload: () => window.location.reload() }] : [];
 
+    // Coach long-form: bounded here, whole in the sheet. The summarised form
+    // states how much is behind the control rather than hinting at it, so the
+    // viewer knows there is something to open.
+    const noteText = (D.coach && D.coach.note) || '';
+    const noteParas = this.splitNote(noteText).map((t) => ({ t }));
+    const noteMore = noteParas.length
+      ? [{ open: this.openNote, label: 'Read the full note (' + noteParas.length + ' paragraphs)' }]
+      : [];
+    const logAll = (D.coach && D.coach.log) || [];
+    const logMore = logAll.length > 2
+      ? [{ open: this.openLog, label: 'All ' + logAll.length + ' plan adjustments' }]
+      : [];
+
     return {
       rootStyle, themes, nav, initial:D.profile.name[0],
       greeting: this.greetingText(now) + ', ' + D.profile.name, syncWrap, loadFail,
@@ -1214,7 +1321,8 @@ class Component extends DCLogic {
       // the hero interpolates pred.halfNow directly — degrade a null (fresh
       // instance, no eligible run yet) to the same em-dash the KPI tile uses
       race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:{...pred, halfNow: pred.halfNow || '—'}, kpis,
-      week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, roadTitle, coach:D.coach, coachLog:D.coach.log,
+      week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, roadTitle,
+      coach:D.coach, coachLog:D.coach.log, noteParas, noteMore, logMore,
       zones, sleep:sleepObj, hrv:hrvObj, hasSleep, rhr:rhrObj, hasRhr, heat, runs,
       traj, trajCard,
       liveText

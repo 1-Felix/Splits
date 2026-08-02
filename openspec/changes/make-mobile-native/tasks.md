@@ -55,17 +55,17 @@
 
 ## 6. The sheet layer and containment (Move 3)
 
-- [ ] 6.1 Implement `openSheet({ title, node })` in `topbar.js`: body-level, `z-index:70`, focus trap, Escape / backdrop / drag-down dismissal, `overscroll-behavior: contain`, safe-area padding, and an explicit `onDismiss` call so pinned popovers do not survive it.
-- [ ] 6.2 Un-gate `.card--pin .pin-scroll` from `min-width:901px` so containment exists at every width; keep the absolute `inset:0` layout desktop-only. Verify the 768px readiness-card stretch (2,889px) is gone.
+- [x] 6.1 Implement `openSheet({ title, node })` in `topbar.js`: body-level, `z-index:70`, focus trap, Escape / backdrop / drag-down dismissal, `overscroll-behavior: contain`, safe-area padding, and an explicit `onDismiss` call so pinned popovers do not survive it.
+- [x] 6.2 Un-gate `.card--pin .pin-scroll` from `min-width:901px` so containment exists at every width; keep the absolute `inset:0` layout desktop-only. Verify the 768px readiness-card stretch (2,889px) is gone.
 - [x] 6.3 Add `align-items:start` to `.hero-grid` in the tablet tier so a short card is never stretched by a tall partner.
-- [ ] 6.4 Split `coach.note` on its own separators into an array in `renderVals()` and render it via `<sc-for>` so paragraphs exist — this fixes desktop legibility too.
-- [ ] 6.5 Clamp the coach note to its headline plus ~4 lines on phones with a "Read the full note" control opening the sheet.
-- [ ] 6.6 Split the coach log into `visibleLog` (newest 1–2, collapsed) and `fullLog` behind a "Plan adjustments" sheet.
-- [ ] 6.7 Fix the readiness ring: delete the two SVG `<text>` nodes and centre an HTML block in the existing `position:relative` wrapper (the pattern `chart-view.js` already uses). Verify the score and status render at every width.
-- [ ] 6.8 Restyle `#drill-panel` as a sheet under the phone tier — same id, same children, `left:0;right:0;bottom:0;width:100%`, `max-height:75dvh`. Keep `test_progress_page.mjs`'s panel contract green.
-- [ ] 6.9 Route the progress week drill into a sheet, removing the accordion's jump-scroll.
-- [ ] 6.10 Retire the 52 hover-only `title` attributes: fold day statuses into the week row's accessible name, make the phase strip real buttons, and turn the `insufficient data` chip into a button that opens its reason.
-- [ ] 6.11 Verify the cockpit at 390px is under 6 viewport heights with all coach content still reachable.
+- [x] 6.4 Split `coach.note` on its own separators into an array in `renderVals()` and render it via `<sc-for>` so paragraphs exist — this fixes desktop legibility too.
+- [x] 6.5 Clamp the coach note to its headline plus ~4 lines on phones with a "Read the full note" control opening the sheet.
+- [x] 6.6 Split the coach log into `visibleLog` (newest 1–2, collapsed) and `fullLog` behind a "Plan adjustments" sheet.
+- [x] 6.7 Fix the readiness ring: delete the two SVG `<text>` nodes and centre an HTML block in the existing `position:relative` wrapper (the pattern `chart-view.js` already uses). Verify the score and status render at every width.
+- [x] 6.8 Restyle `#drill-panel` as a sheet under the phone tier — same id, same children, `left:0;right:0;bottom:0;width:100%`, `max-height:75dvh`. Keep `test_progress_page.mjs`'s panel contract green.
+- [x] 6.9 Route the progress week drill into a sheet, removing the accordion's jump-scroll.
+- [x] 6.10 Retire the 52 hover-only `title` attributes: fold day statuses into the week row's accessible name, make the phase strip real buttons, and turn the `insufficient data` chip into a button that opens its reason.
+- [x] 6.11 Verify the cockpit at 390px is under 6 viewport heights with all coach content still reachable.
 
 ## 7. Charts on touch (Move 4)
 

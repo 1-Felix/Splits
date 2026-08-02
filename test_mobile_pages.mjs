@@ -262,6 +262,84 @@ try {
     await ctx.close();
   }
 
+  // ── the cockpit's content contract (live-dashboard) ──────────────────────
+  {
+    const ctx = await browser.newContext({ viewport: PHONE });
+    const page = await ctx.newPage();
+    step = "cockpit content";
+    await page.goto(B + "/", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#sec-hero", { timeout: 20000 });
+    await page.waitForSelector("#card-ready", { timeout: 20000 });
+
+    // the readiness card displays its score — it never had, at any width: the
+    // runtime wraps interpolations in a <span>, and a <span> inside <svg> is
+    // not an SVG element, so both <text> nodes measured 0×0
+    const ring = await page.evaluate(() => {
+      const s = document.querySelector(".ring-score"), t = document.querySelector(".ring-status");
+      const box = (el) => (el ? el.getBoundingClientRect() : null);
+      const rs = box(s), ts = box(t);
+      return { score: s && s.innerText.trim(), status: t && t.innerText.trim(),
+               scoreBox: rs && [Math.round(rs.width), Math.round(rs.height)],
+               statusBox: ts && [Math.round(ts.width), Math.round(ts.height)] };
+    });
+    assert.ok(ring.score && /\d/.test(ring.score), "the readiness score renders as text: " + JSON.stringify(ring));
+    assert.ok(ring.status && ring.status.length > 1, "the readiness status renders as text: " + JSON.stringify(ring));
+    assert.ok(ring.scoreBox[0] > 0 && ring.scoreBox[1] > 0, "the score has a non-zero box: " + JSON.stringify(ring.scoreBox));
+    assert.ok(ring.statusBox[0] > 0 && ring.statusBox[1] > 0, "the status has a non-zero box: " + JSON.stringify(ring.statusBox));
+
+    // coach prose is paragraphs, not one text node
+    const paras = await page.evaluate(() => document.querySelectorAll("#card-coach .coach-p").length);
+    assert.ok(paras >= 2, `the coach note renders as paragraphs (got ${paras})`);
+
+    // and both long-form blocks are one activation from complete
+    const noteBtn = await page.$("#card-coach .more-btn");
+    assert.ok(noteBtn, "the coach note offers its full text");
+    await noteBtn.click();
+    await page.waitForSelector(".sheet-backdrop .sheet", { timeout: 5000 });
+    const sheet = await page.evaluate(() => {
+      const s = document.querySelector(".sheet");
+      const full = [...document.querySelectorAll(".sheet-body .sheet-p")].map((p) => p.textContent).join(" ");
+      const clamped = [...document.querySelectorAll("#card-coach .coach-p")].map((p) => p.textContent).join(" ");
+      return { title: s.querySelector(".sheet-title").innerText.trim(),
+               modal: s.getAttribute("aria-modal"),
+               focusInside: s.contains(document.activeElement),
+               fullLen: full.length, clampedLen: clamped.length,
+               scrollW: document.documentElement.scrollWidth };
+    });
+    assert.strictEqual(sheet.modal, "true", "the sheet is a modal dialog");
+    assert.ok(sheet.focusInside, "focus moves into the sheet");
+    assert.ok(sheet.fullLen >= sheet.clampedLen, "the sheet carries the whole note, nothing removed");
+    assert.ok(sheet.scrollW <= PHONE.width + 1, "the sheet does not widen the document");
+    // Escape closes it and gives focus back
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".sheet-backdrop"), null, { timeout: 5000 });
+
+    // the coach log shows its newest entries and offers the rest complete
+    const logState = await page.evaluate(() => {
+      const items = [...document.querySelectorAll("#card-planlog .timeline-item")];
+      const shown = items.filter((el) => el.getBoundingClientRect().height > 0);
+      const btn = document.querySelector("#card-planlog .more-btn");
+      return { total: items.length, shown: shown.length, label: btn && btn.innerText.trim() };
+    });
+    assert.ok(logState.total > 2, "the fixture's log is deep enough to exercise the collapse");
+    assert.ok(logState.shown <= 2, `the log shows its newest entries only (${logState.shown} of ${logState.total})`);
+    assert.ok(logState.label && logState.label.includes(String(logState.total)),
+      "the control states how much is behind it: " + JSON.stringify(logState.label));
+    await page.click("#card-planlog .more-btn");
+    await page.waitForSelector(".sheet-backdrop .sheet", { timeout: 5000 });
+    const inSheet = await page.evaluate(() => document.querySelectorAll(".sheet-body .sheet-log").length);
+    assert.strictEqual(inSheet, logState.total, "the sheet carries every adjustment");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".sheet-backdrop"), null, { timeout: 5000 });
+
+    // the whole cockpit fits in a handful of screens, with nothing deleted
+    const screens = await page.evaluate(() =>
+      document.documentElement.scrollHeight / window.innerHeight);
+    assert.ok(screens < 6, `the cockpit is ${screens.toFixed(1)} viewport heights at 390px (budget: under 6)`);
+    console.log(`cockpit at 390px: ${screens.toFixed(1)} viewport heights`);
+    await ctx.close();
+  }
+
   // ── the floors (responsive-layout) ────────────────────────────────────────
   {
     const ctx = await browser.newContext({ viewport: PHONE });

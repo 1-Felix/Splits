@@ -106,16 +106,56 @@
 /* pinned cards — cards whose body is live, unbounded coach text (coach.note,
    coach.log). On desktop they must not set their grid row's height: the row
    partner does (countdown card / runs table), and the .pin-scroll region
-   scrolls inside instead. Below 900px the rows stack to one column (no row
-   partner to stretch), so the cards simply grow with their content. */
+   scrolls inside instead.
+   CONTAINMENT IS NOT DESKTOP-ONLY (make-mobile-native 6.2): the scroll region
+   used to be gated at 901px, so below it the coach card simply grew — 5,503
+   characters of note stretched its 768px row partner, the readiness card, to
+   2,889px of empty panel. The scroll region now exists at every width; only
+   the absolute inset:0 layout, which needs a row partner to set the height,
+   stays desktop-only. */
 .pin-body { display: flex; flex-direction: column; min-height: 0; }
+.card--pin .pin-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+@media (max-width: 900px) {
+  .card--pin { max-height: 70dvh; overflow: hidden; }
+}
 @media (min-width: 901px) {
   .card--pin { position: relative; overflow: hidden; }
   .card--pin > .pin-body { position: absolute; inset: 0; padding: inherit; }
-  .card--pin .pin-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
   #card-coach   { min-height: 240px; }  /* floors, in case the row partner is short */
   #card-planlog { min-height: 380px; }
 }
+
+/* ---- coach prose ---- */
+.coach-headline { font-size: var(--fs-md); font-weight: var(--fw-extrabold); letter-spacing: -.01em; margin: var(--sp-3) 0 var(--sp-2); line-height: 1.25; }
+.coach-note { font-size: var(--fs-base); line-height: 1.5; color: var(--sub); font-weight: var(--fw-medium); }
+.coach-p + .coach-p { margin-top: var(--sp-3); }
+/* "the summarised form always states what the sheet contains and how much is
+   behind it" — so this control is a sentence, not a chevron */
+.more-btn {
+  display: none; margin-top: var(--sp-3);
+  font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-bold);
+  color: var(--accent); background: var(--accentFade);
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: var(--sp-2) var(--sp-4); cursor: pointer;
+}
+.more-btn:active { filter: brightness(1.3); }
+
+/* ---- the readiness ring's centre (live-dashboard 6.7) ---- */
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.ring-score  { font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-black); font-size: 30px; line-height: 1; color: var(--ink); }
+.ring-status { font-weight: var(--fw-bold); font-size: 11px; letter-spacing: .12em; color: var(--accent); margin-top: var(--sp-1); text-align: center; }
+
+/* ---- the chart drill's evidence panel ----
+   On desktop it sits under the chart grid it belongs to; below the phone tier
+   it becomes a bottom sheet WITHOUT changing its identity: same #drill-panel,
+   same children, same focus and Escape contract (design D8). left/right/width
+   rather than 100vw, because five pages assert the document never widens. */
+.drill-panel { margin-top: var(--sp-1); animation: rise .18s ease; }
+
+/* ---- the sheet's own long-form furniture ---- */
+.sheet-log + .sheet-log { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+.sheet-log-date { font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-bold); letter-spacing: .04em; }
+.sheet-log-text { font-size: var(--fs-base); line-height: 1.5; margin-top: var(--sp-1); }
 
 /* floating data-point card (hover/tap). position/left/top/transform stay inline (dynamic). */
 .pop { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2); font-size: var(--fs-xs); line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-pop); pointer-events: none; }
@@ -215,6 +255,9 @@
 .blk-none  { color: var(--warn); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
 .blk-km    { font-family: 'JetBrains Mono', monospace; color: var(--sub); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap; }
 .blk-chev  { color: var(--sub); }
+/* the block's phase strip: real controls, not decorative divs with a title */
+.blk-seg   { flex: 1; height: 6px; border: none; border-radius: 3px; padding: 0; cursor: pointer; font-family: inherit; }
+.block-insufficient { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--warn); padding: 3px 0; background: none; border: none; font-family: inherit; cursor: pointer; text-align: left; text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* the expanded week's per-day rows — same story: the layout moves out of the
    inline styles so the phone tier can re-compose rather than squeeze. The six
@@ -454,6 +497,10 @@
   .cmp-toggle { width: 44px; height: 44px; }
   .arch-search { font-size: 16px; min-height: 44px; }   /* 16px: below it, focus zooms the page */
   .block-week { min-height: 44px; }
+  /* the phase strip stops being a 6px hairline and becomes what it now is: a
+     row of real controls, one per week, each a legible band of its phase */
+  .blk-seg { height: 44px; border-radius: var(--r-sm); }
+  .block-insufficient { min-height: 44px; }
 
   /* ---- a press is acknowledged ---- */
   a, button, [role="button"] { -webkit-tap-highlight-color: transparent; }
@@ -530,6 +577,34 @@
     -webkit-mask-size: contain; mask-size: contain;
   }
   .hdr-more:active { background: var(--accentFade); }
+
+  /* ---- coach long-form: bounded, with the whole one activation away ----
+     69.9% of the cockpit's 18.3 phone screens was these two blocks. Nothing is
+     deleted: the note is clamped to its headline plus about four lines, the
+     log shows its two newest entries, and both open complete in the sheet. */
+  .card--pin { max-height: none; overflow: visible; }   /* the clamp does the bounding now */
+  .card--pin .pin-scroll { overflow: visible; }
+  .coach-note {
+    max-height: calc(4 * 1.5 * var(--fs-base));
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+  .more-btn { display: block; width: 100%; min-height: 44px; }
+  #card-planlog .timeline-item:nth-child(n+3) { display: none; }
+
+  /* the evidence panel becomes a bottom sheet — it used to open below the fold
+     at the bottom of a 15,456px document */
+  .drill-panel {
+    position: fixed; left: 0; right: 0; bottom: 0; width: 100%;
+    max-height: 75dvh; overflow-y: auto; overscroll-behavior: contain;
+    z-index: 70; margin-top: 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    border-bottom: none;
+    padding-bottom: calc(var(--sp-4) + var(--safe-b));
+    box-shadow: var(--shadow-pop);
+  }
+  .drill-close { width: 44px !important; height: 44px !important; }
 
   /* a section heading whose meta is a sentence: the rule collapses to nothing
      and the meta takes its own line, instead of squeezing the heading */

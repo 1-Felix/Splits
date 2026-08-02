@@ -232,6 +232,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
   syncNow = () => { this.tb() && this.tb().syncNow(this); };
 

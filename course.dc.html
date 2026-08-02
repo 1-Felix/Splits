@@ -35,7 +35,7 @@
   .crs-tbl th:first-child{text-align:left}
   .crs-tbl td{text-align:right;padding:var(--sp-2);border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
   .crs-tbl td:first-child{text-align:left;font-weight:700}
-  .crs-wrap{overflow-x:auto}
+  /* the pace table scrolls through .scroller now (dashboard.css) */
 </style>
 </helmet>
 
@@ -124,7 +124,7 @@
       </sc-for>
       <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-3)">
         <sc-for list="{{ p.segments }}" as="s" hint-placeholder-count="2">
-          <div style="{{ s.style }}">{{ s.label }}</div>
+          <button class="crs-seg" aria-label="{{ s.aria }}" onClick="{{ s.pick }}" style="{{ s.style }}">{{ s.label }}</button>
         </sc-for>
       </div>
     </div>
@@ -162,15 +162,19 @@
         </sc-for>
       </div>
       <div style="margin-top:var(--sp-3);padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-md);font-size:var(--fs-sm);color:var(--sub)">{{ pl.note }}</div>
-      <div class="crs-wrap" style="margin-top:var(--sp-3)">
+      <div class="crs-wrap scroller" data-scroller style="margin-top:var(--sp-3)">
         <table class="crs-tbl">
           <thead>
             <tr><th>KM</th><th>GRADE</th><th>TARGET</th><th>Δ vs FLAT</th><th>ELAPSED</th></tr>
           </thead>
           <tbody>
             <sc-for list="{{ pl.rows }}" as="r" hint-placeholder-count="21">
+              <!-- data-label: below the phone tier the header row is replaced
+                   by per-row labelling, so a value read halfway down the plan
+                   still says what it is (course-lens: "the pace plan keeps its
+                   headers in view") -->
               <tr style="{{ r.style }}">
-                <td>{{ r.km }}</td><td>{{ r.grade }}</td><td>{{ r.pace }}</td><td>{{ r.delta }}</td><td>{{ r.elapsed }}</td>
+                <td data-label="KM">{{ r.km }}</td><td data-label="GRADE">{{ r.grade }}</td><td data-label="TARGET">{{ r.pace }}</td><td data-label="Δ vs FLAT">{{ r.delta }}</td><td data-label="ELAPSED">{{ r.elapsed }}</td>
               </tr>
             </sc-for>
           </tbody>
@@ -221,6 +225,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   componentDidMount() {
@@ -306,6 +315,20 @@ class Component extends DCLogic {
   // and compare.dc.html. Taking a numeric step here instead would coerce the
   // event to a string and land the crosshair on NaN, silently breaking the
   // keyboard navigation the chart's own aria-label promises.
+  // A decisive segment activates: the crosshair moves to where the segment
+  // starts, which is the same reading a finger on the profile would place —
+  // so the chip carries its meaning on a device with no hover.
+  showSegment = (s) => {
+    const xs = this._xs;
+    if (!xs || !xs.length || !s) return;
+    const target = s.startKm * 1000;
+    let best = 0;
+    for (let i = 1; i < xs.length; i++) {
+      if (Math.abs(xs[i] - target) < Math.abs(xs[best] - target)) best = i;
+    }
+    this.setState({ cross: best });
+  };
+
   crossKey = (e) => {
     if (!this._xs) return;
     const n = this._xs.length;
@@ -404,14 +427,20 @@ class Component extends DCLogic {
       }
       // Segment chips come from the DOCUMENT — the page never hardcodes where
       // the wall is, because the next race has a different shape.
+      // A decisive segment is a CONTROL, not an inert mark: activating it puts
+      // the crosshair on the segment's start and states what the segment costs.
       const segs = (lens.segments || []).slice(0, 4).map((s) => {
         const up = s.kind === 'climb';
+        const grade = cp ? cp.fmtGrade(s.grade) : '';
+        const span = 'km ' + s.startKm.toFixed(1) + '–' + s.endKm.toFixed(1);
         return {
-          label: (up ? '▲ ' : '▼ ') + 'km ' + s.startKm.toFixed(1) + '–' + s.endKm.toFixed(1) +
-                 ' · ' + (s.changeM >= 0 ? '+' : '') + Math.round(s.changeM) + ' m · ' +
-                 (cp ? cp.fmtGrade(s.grade) : ''),
-          style: 'padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;' +
-                 'border:1px solid ' + (up ? 'var(--warn)' : 'var(--accent2)') + ';color:' + (up ? 'var(--warn)' : 'var(--accent2)'),
+          label: (up ? '▲ ' : '▼ ') + span + ' · ' + (s.changeM >= 0 ? '+' : '') +
+                 Math.round(s.changeM) + ' m · ' + grade,
+          aria: (up ? 'Climb ' : 'Descent ') + span + ', ' + Math.round(s.changeM) +
+                ' metres at ' + grade + '. Show it on the profile.',
+          style: 'border-color:' + (up ? 'var(--warn)' : 'var(--accent2)') +
+                 ';color:' + (up ? 'var(--warn)' : 'var(--accent2)'),
+          pick: () => this.showSegment(s),
         };
       });
       profile = [{

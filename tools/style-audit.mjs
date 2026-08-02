@@ -77,7 +77,11 @@ const LAYOUT = {
   "#sec-hero":   { 1920: 3, 1600: 3, 1200: 3, 768: 2, 390: 1, 360: 1 },
   "#sec-stats":  { 1920: 4, 1600: 4, 1200: 4, 768: 2, 390: 2, 360: 2 },
   "#sec-week1":  { 1920: 7, 1600: 7, 1200: 7, 768: [2, 6], 390: 1, 360: 1 },
-  "#sec-week2":  { 1920: 7, 1600: 7, 1200: 7, 768: [2, 6], 390: 1, 360: 1 },
+  // #sec-week2 is the training block. Below the phone tier it stops being a
+  // grid at all and becomes a horizontal snap RAIL (a flex scroller), so its
+  // track count is 0 there by design — the rail's own contract is asserted
+  // explicitly below rather than through a number that would have hidden it.
+  "#sec-week2":  { 1920: 7, 1600: 7, 1200: 7, 768: [2, 6], 390: 0, 360: 0 },
   "#sec-charts": { 1920: [2, 5], 1600: [2, 5], 1200: [2, 4], 768: [1, 2], 390: 1, 360: 1 },
   "#sec-split":  { 1920: 2, 1600: 2, 1200: 2, 768: 1, 390: 1, 360: 1 },
 };
@@ -129,7 +133,14 @@ async function resolveRunId() {
   return null;
 }
 
-function trackCount(v) {
+// Track count of a section, or 0 when it is NOT A GRID at this width — the
+// map's own convention. A flex container still reports something for
+// grid-template-columns, so the display value is what decides.
+function trackCount(props) {
+  if (!props) return 0;
+  const d = props.display;
+  if (d !== "grid" && d !== "inline-grid") return 0;
+  const v = props["grid-template-columns"];
   if (!v || v === "none") return 0;
   return v.trim().split(/\s+/).length;
 }
@@ -265,8 +276,8 @@ try {
       await page.goto(PAGE, { waitUntil: "networkidle" });
       await page.waitForSelector("#sec-hero");
       for (const [sel, byW] of Object.entries(LAYOUT)) {
-        const v = await read(page, sel, ["grid-template-columns"]);
-        const n = trackCount(v?.["grid-template-columns"]);
+        const v = await read(page, sel, ["display", "grid-template-columns"]);
+        const n = trackCount(v);
         check(matchCount(n, byW[width]), `${width} ${sel} tracks=${n} expected=${JSON.stringify(byW[width])}`);
       }
       // phone-only component checks
@@ -275,6 +286,32 @@ try {
         const row = await read(page, ".runs-row", ["display"]);
         check(!head || head.display === "none", `${width} .runs-head display=${head?.display} (expect none/absent)`);
         check(!row || row.display !== "grid", `${width} .runs-row display=${row?.display} (expect not grid)`);
+        // the block rail: it scrolls, it contains its own overscroll, and more
+        // than one week is visible at once (a stack of one card per week is
+        // exactly what this replaces)
+        const rail = await page.evaluate(() => {
+          const el = document.getElementById("sec-week2");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          const box = el.getBoundingClientRect();
+          const cards = [...el.children].filter((c) => c.getBoundingClientRect().width > 0);
+          const inView = cards.filter((c) => {
+            const r = c.getBoundingClientRect();
+            return r.left < box.right - 1 && r.right > box.left + 1;
+          }).length;
+          return { display: cs.display, overflowX: cs.overflowX, snap: cs.scrollSnapType,
+                   chain: cs.overscrollBehaviorX, cards: cards.length, inView,
+                   railH: Math.round(box.height),
+                   stackedH: cards.reduce((a, c) => a + c.getBoundingClientRect().height, 0) };
+        });
+        if (check(rail != null, `${width} the cockpit renders a training block`)) {
+          check(rail.overflowX === "auto" || rail.overflowX === "scroll",
+            `${width} #sec-week2 scrolls horizontally (overflow-x=${rail.overflowX})`);
+          check(rail.chain === "contain", `${width} #sec-week2 contains its overscroll (${rail.chain})`);
+          check(rail.inView >= 2, `${width} more than one block week is visible at a time (${rail.inView} of ${rail.cards})`);
+          check(rail.railH < rail.stackedH * 0.5,
+            `${width} the block occupies far less than one card per week (${rail.railH}px vs ${rail.stackedH}px stacked)`);
+        }
       }
       await assertNoOverflow(page, width, "cockpit");
       shellWidths[width] = { cockpit: await shellWidth(page) };
@@ -283,8 +320,8 @@ try {
       await page.goto(PROGRESS, { waitUntil: "networkidle" });
       await page.waitForSelector("#sec-charts");
       for (const [sel, byW] of Object.entries(PROGRESS_LAYOUT)) {
-        const v = await read(page, sel, ["grid-template-columns"]);
-        const n = trackCount(v?.["grid-template-columns"]);
+        const v = await read(page, sel, ["display", "grid-template-columns"]);
+        const n = trackCount(v);
         check(matchCount(n, byW[width]), `${width} /progress ${sel} tracks=${n} expected=${JSON.stringify(byW[width])}`);
       }
       for (const sel of PROGRESS_REQUIRED) {

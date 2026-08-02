@@ -296,7 +296,11 @@
     <div class="rule"></div>
     <span class="meta">{{ blockMeta }}</span>
   </div>
-  <section id="sec-week2" class="week-grid">
+  <!-- Below the phone tier this becomes a horizontal snap RAIL rather than
+       seven full-width cards: the weeks of a block are peers meant to be
+       compared, and one card per week turned that comparison into seven
+       screens. data-scroller makes it say that it scrolls. -->
+  <section id="sec-week2" class="week-grid" data-scroller>
     <sc-for list="{{ block }}" as="w" hint-placeholder-count="7">
       <div class="day day--sel" style="background:{{ w.bg }};border:1px solid {{ w.border }};opacity:{{ w.opacity }};box-shadow:{{ w.ring }}" role="button" tabIndex="0" aria-pressed="{{ w.ariaPressed }}" aria-label="{{ w.ariaLabel }}" onClick="{{ w.onSelect }}" onKeyDown="{{ w.onKey }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:2px">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -390,7 +394,9 @@
         <span style="width:11px;height:11px;border-radius:var(--r-sm);background:var(--hm4)"></span>more
       </div>
     </div>
-    <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
+    <!-- data-scroller="end": a year-long heatmap opens on TODAY, not on the
+         oldest half of the year, and says at which edge more of it lives -->
+    <div class="scroller" data-scroller="end">
       <div style="width:{{ heat.w }}px">{{ heat.chart }}</div>
     </div>
     <!-- day-cell drill (chart-drill D9): chooser / offline note, inline -->
@@ -489,6 +495,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
 
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name, hover: null }); };
   toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };

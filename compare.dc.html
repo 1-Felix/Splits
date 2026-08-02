@@ -110,21 +110,42 @@
   <!-- ===== SUMMARY, SIDE BY SIDE ===== -->
   <div class="card" style="margin-bottom:var(--sp-4)">
     <div class="card-title" style="margin-bottom:var(--sp-3)">Summary</div>
-    <div class="cmp-summary" style="{{ pg.sumGrid }}">
-      <span></span>
-      <sc-for list="{{ pg.sumHead }}" as="hd" hint-placeholder-count="2">
-        <span style="display:flex;align-items:center;gap:var(--sp-1);font-size:var(--fs-xs);font-weight:800;min-width:0">
-          <span style="width:8px;height:8px;border-radius:50%;background:{{ hd.dot }};flex:none"></span>
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ hd.name }}</span>
-        </span>
-      </sc-for>
-      <sc-for list="{{ pg.sumRows }}" as="row" hint-placeholder-count="6">
-        <span style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ row.label }}</span>
-        <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="2">
-          <span class="metric" style="font-size:var(--fs-sm);color:{{ c.color }};font-weight:{{ c.weight }}">{{ c.v }}</span>
+    <!-- wide: one column per run, one row per measure -->
+    <sc-for list="{{ pg.sumWide }}" as="sw" hint-placeholder-count="1">
+      <div class="cmp-summary" style="{{ pg.sumGrid }}">
+        <span></span>
+        <sc-for list="{{ pg.sumHead }}" as="hd" hint-placeholder-count="2">
+          <span style="display:flex;align-items:center;gap:var(--sp-1);font-size:var(--fs-xs);font-weight:800;min-width:0">
+            <span style="width:8px;height:8px;border-radius:50%;background:{{ hd.dot }};flex:none"></span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ hd.name }}</span>
+          </span>
         </sc-for>
-      </sc-for>
-    </div>
+        <sc-for list="{{ pg.sumRows }}" as="row" hint-placeholder-count="6">
+          <span style="font-size:var(--fs-xs);color:var(--sub);font-weight:700">{{ row.label }}</span>
+          <sc-for list="{{ row.cells }}" as="c" hint-placeholder-count="2">
+            <span class="metric" style="font-size:var(--fs-sm);color:{{ c.color }};font-weight:{{ c.weight }}">{{ c.v }}</span>
+          </sc-for>
+        </sc-for>
+      </div>
+    </sc-for>
+    <!-- phone: one lane per run, every measure it carries, named in full -->
+    <sc-for list="{{ pg.sumLanes }}" as="ln" hint-placeholder-count="0">
+      <div class="cmp-lane">
+        <div class="cmp-lane-head">
+          <span class="cmp-lane-dot" style="background:{{ ln.dot }}"></span>
+          <span class="cmp-lane-name">{{ ln.name }}</span>
+          <span class="cmp-lane-date">{{ ln.date }}</span>
+        </div>
+        <div class="cmp-lane-grid">
+          <sc-for list="{{ ln.cells }}" as="c" hint-placeholder-count="6">
+            <div class="cmp-lane-cell" data-mark="{{ c.mark }}">
+              <div class="cmp-lane-k">{{ c.label }}</div>
+              <div class="cmp-lane-v metric" style="color:{{ c.color }};font-weight:{{ c.weight }}">{{ c.v }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
   </div>
 
   <!-- ===== STREAMS: one track per measure, every run on the same scale ===== -->
@@ -168,14 +189,15 @@
       <div class="card-sub" style="margin-bottom:var(--sp-3)">Bar length is speed on a shared scale — the fastest split of any run is full width. A longer run's extra kilometres render alone.</div>
       <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
         <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="8">
-          <div class="cmp-splits-row" style="display:grid;gap:var(--sp-3);align-items:center;{{ sp.rowGrid }}">
+          <div class="cmp-splits-row" style="{{ sp.rowGrid }}">
             <span style="color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.km }}</span>
             <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="2">
-              <div style="display:flex;align-items:center;gap:var(--sp-2)">
-                <div style="flex:1;height:8px;position:relative;background:var(--panel2);border-radius:2px;overflow:hidden">
-                  <div style="position:absolute;left:0;top:0;bottom:0;width:{{ c.w }}%;background:{{ c.color }};border-radius:2px"></div>
+              <div class="cmp-split-cell">
+                <span class="cmp-split-dot" style="background:{{ c.color }}"></span>
+                <div class="cmp-split-track">
+                  <div class="cmp-split-fill" style="width:{{ c.w }}%;background:{{ c.color }}"></div>
                 </div>
-                <span style="width:42px;text-align:right;font-family:'JetBrains Mono';font-size:var(--fs-xs);font-weight:600">{{ c.pace }}</span>
+                <span class="cmp-split-pace">{{ c.pace }}</span>
               </div>
             </sc-for>
           </div>
@@ -206,6 +228,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   ids() {
@@ -356,9 +383,27 @@ class Component extends DCLogic {
             v: (v != null && Number.isFinite(v)) ? row.fmt(v) : '—',
             color: best != null && v === best ? 'var(--accent)' : 'var(--ink)',
             weight: best != null && v === best ? '800' : '600',
+            best: best != null && v === best,
           })),
         };
       });
+
+      // ---- the phone composition: ONE LANE PER RUN ----
+      // Four runs across an N-column table at 390px truncated every name to
+      // "Lein…" — four runs that could not be told apart. A lane per run keeps
+      // every measure the wide composition shows, including the best-per-
+      // measure mark, and names the run once at full width. Only one of the
+      // two compositions is ever in the document (run-comparison 2.x).
+      const phone = this.isPhone();
+      pg.sumWide = phone ? [] : [{}];
+      pg.sumLanes = phone ? ready.map((s, i) => ({
+        dot: color.get(s.id), name: label(s), date: shortDate(s),
+        cells: pg.sumRows.map((row) => ({
+          label: row.label, v: row.cells[i].v,
+          color: row.cells[i].color, weight: row.cells[i].weight,
+          mark: row.cells[i].best ? 'best' : '',
+        })),
+      })) : [];
 
       // ---- streams: resample every streamed run onto ONE distance grid so
       //      the tracks share an x domain and each measure resolves one y
@@ -473,7 +518,7 @@ class Component extends DCLogic {
         }
         const notes = ready.filter((s) => !byKm.get(s.id).size)
           .map((s) => ({ t: label(s) + ' has no split data — its lane stays empty.' }));
-        pg.splits = [{ rows, notes, rowGrid: 'grid-template-columns:44px repeat(' + ready.length + ',minmax(0,1fr))' }];
+        pg.splits = [{ rows, notes, rowGrid: '--cmp-cols:44px repeat(' + ready.length + ',minmax(0,1fr))' }];
       }
 
       page = [pg];

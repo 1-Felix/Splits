@@ -391,6 +391,156 @@ try {
     await ctx.close();
   }
 
+  // ── every record in the wall is reachable (progress-views) ───────────────
+  {
+    const ctx = await browser.newContext({ viewport: PHONE });
+    const page = await ctx.newPage();
+    step = "records wall";
+    await page.goto(B + "/progress", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#sec-records", { timeout: 20000 });
+    await page.waitForSelector(".rec-unit", { timeout: 20000 });
+
+    const wall = await page.evaluate(() => {
+      const sec = document.querySelector("#sec-records");
+      const clipped = [...sec.querySelectorAll("*")].filter((el) => {
+        const cs = getComputedStyle(el);
+        return (cs.overflowX === "auto" || cs.overflowX === "scroll")
+          && el.scrollWidth > el.clientWidth + 1
+          && !el.hasAttribute("data-overflow");
+      }).length;
+      return {
+        units: document.querySelectorAll(".rec-unit").length,
+        wide: document.querySelectorAll("#sec-records .scroller").length,
+        primary: document.querySelectorAll(".rec-unit-primary .rec-cell").length,
+        disclosures: document.querySelectorAll(".rec-years-btn").length,
+        yearsShown: document.querySelectorAll(".rec-cell--year").length,
+        undisclosed: clipped,
+      };
+    });
+    assert.strictEqual(wall.wide, 0, "only the phone composition is in the document");
+    assert.ok(wall.units >= 5, `one unit per distance (${wall.units})`);
+    assert.strictEqual(wall.primary, wall.units * 2, "all-time and last-90-days lead every unit");
+    assert.ok(wall.disclosures >= 1, "the by-year bests are behind a disclosure that says how many");
+    assert.strictEqual(wall.yearsShown, 0, "and start closed");
+    assert.strictEqual(wall.undisclosed, 0, "nothing is hidden behind a scroller that does not say so");
+
+    // opening a disclosure reveals every year it named
+    const label = await page.locator(".rec-years-btn").first().innerText();
+    const claimed = Number((label.match(/\d+/) || [0])[0]);
+    await page.locator(".rec-years-btn").first().click();
+    await page.waitForFunction(() => document.querySelectorAll(".rec-cell--year").length > 0,
+      null, { timeout: 5000 });
+    const revealed = await page.evaluate(() => document.querySelectorAll(".rec-cell--year").length);
+    assert.strictEqual(revealed, claimed, `the disclosure holds what it claimed (${revealed} vs ${claimed})`);
+
+    // and a record still opens the run it was set in
+    const target = page.locator('.rec-unit-primary .rec-cell[aria-label*="Open the run"]').first();
+    assert.ok(await target.count() > 0, "at least one record knows the run it was set in");
+    await target.click();
+    await page.waitForFunction(() => /^\/run\/\d+$/.test(window.location.pathname), null, { timeout: 10000 });
+    await ctx.close();
+  }
+
+  // ── a comparison is one lane per run, with nothing dropped (run-comparison) ─
+  {
+    const ctx = await browser.newContext({ viewport: PHONE });
+    const page = await ctx.newPage();
+    step = "compare lanes";
+    const CMP = B + "/compare?ids=9101,9102,9103";
+    await page.goto(CMP, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".cmp-lane", { timeout: 20000 });
+
+    const phoneSide = await page.evaluate(() => ({
+      lanes: [...document.querySelectorAll(".cmp-lane")].map((l) => ({
+        name: l.querySelector(".cmp-lane-name").innerText.trim(),
+        cells: [...l.querySelectorAll(".cmp-lane-cell")].map((c) => [
+          c.querySelector(".cmp-lane-k").innerText.trim(),
+          c.querySelector(".cmp-lane-v").innerText.trim(),
+        ]),
+        best: l.querySelectorAll('.cmp-lane-cell[data-mark="best"]').length,
+      })),
+      wide: document.querySelectorAll(".cmp-summary").length,
+      scrollW: document.documentElement.scrollWidth,
+    }));
+    assert.strictEqual(phoneSide.wide, 0, "only ONE composition is in the document at a time");
+    assert.strictEqual(phoneSide.lanes.length, 3, "one lane per compared run");
+    // "a run's identity is not reduced to a truncation" — every name is whole
+    const names = phoneSide.lanes.map((l) => l.name);
+    assert.strictEqual(new Set(names).size, names.length, "the runs can be told apart: " + JSON.stringify(names));
+    assert.ok(names.every((n) => !n.includes("…")), "no name is truncated: " + JSON.stringify(names));
+    assert.ok(phoneSide.lanes.every((l) => l.cells.length >= 6),
+      "every measure the wide composition shows is present per lane");
+    assert.ok(phoneSide.lanes.some((l) => l.best > 0), "the best-per-measure marking survives");
+    assert.ok(phoneSide.scrollW <= PHONE.width + 1, "and the comparison does not widen the document");
+
+    // splits keep enough width to convey a length
+    const bar = await page.evaluate(() => {
+      const t = document.querySelector(".cmp-split-track");
+      return t ? Math.round(t.getBoundingClientRect().width) : null;
+    });
+    assert.ok(bar != null && bar >= 180, `each per-kilometre bar keeps real width (${bar}px)`);
+
+    // "the comparison offers a way back" — from a shared link, without the
+    // browser's back control
+    const ways = await page.evaluate(() => ({
+      tabs: document.querySelectorAll("nav.tabbar a").length,
+      hrefs: [...document.querySelectorAll("nav.tabbar a")].map((a) => new URL(a.href).pathname),
+    }));
+    assert.ok(ways.tabs >= 2, "navigation to the rest of the app is present: " + JSON.stringify(ways.hrefs));
+
+    // and above the phone tier the WIDE composition is the only one present
+    await page.setViewportSize({ width: 1200, height: 1400 });
+    await page.waitForFunction(() => document.querySelectorAll(".cmp-summary").length === 1
+      && document.querySelectorAll(".cmp-lane").length === 0, null, { timeout: 5000 });
+    await ctx.close();
+  }
+
+  // ── the run page leads with what the run WAS (run-detail) ────────────────
+  {
+    const ctx = await browser.newContext({ viewport: PHONE });
+    const page = await ctx.newPage();
+    step = "run page order";
+    await page.goto(B + "/run/" + RUN_ID, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".rep-table", { timeout: 20000 });
+    await page.waitForSelector(".run-card--trace", { timeout: 20000 });
+
+    const order = await page.evaluate(() => {
+      const y = (s) => {
+        const el = document.querySelector(s);
+        return el ? Math.round(el.getBoundingClientRect().top + window.scrollY) : null;
+      };
+      return { reps: y(".rep-table"), splits: y(".run-card--splits"),
+               trace: y(".run-card--trace"), bests: y(".run-card--bests"),
+               docH: document.documentElement.scrollHeight };
+    });
+    assert.ok(order.reps != null && order.trace != null,
+      "the run carries both a rep table and a route: " + JSON.stringify(order));
+    assert.ok(order.reps < order.trace,
+      `the detected structure is above the route trace (${order.reps} vs ${order.trace})`);
+    if (order.splits != null) assert.ok(order.reps < order.splits, "reps precede the splits table");
+    if (order.bests != null) assert.ok(order.trace < order.bests, "best efforts come last");
+    // it sat 5th at 74% of the document before this change; the cards above it
+    // now are the ones that answer the run first — the headline, planned vs
+    // actual, and the sample stack
+    const depth = order.reps / order.docH;
+    assert.ok(depth < 0.5,
+      `the rep card is in the first half of the document, not 74% down (${(depth * 100).toFixed(0)}%)`);
+    console.log(`run page at 390px: rep card at ${(depth * 100).toFixed(0)}% depth (was 74%)`);
+
+    // the deviation bar survives phone width — it measured 6.0px at 360
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.waitForTimeout(300);
+      const bar = await page.evaluate(() => {
+        const b = document.querySelector(".rep-table .rep-row .rep-bar");
+        return b ? Math.round(b.getBoundingClientRect().width) : null;
+      });
+      assert.ok(bar != null && bar >= 180,
+        `the deviation bar has room to mean something at ${width}px (track=${bar}px)`);
+    }
+    await ctx.close();
+  }
+
   // ── the cockpit's content contract (live-dashboard) ──────────────────────
   {
     const ctx = await browser.newContext({ viewport: PHONE });
@@ -460,6 +610,39 @@ try {
     assert.strictEqual(inSheet, logState.total, "the sheet carries every adjustment");
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector(".sheet-backdrop"), null, { timeout: 5000 });
+
+    // "today is answered first": the countdown, readiness WITH ITS SCORE, and
+    // the coach's current instruction are all on the first screen
+    const first = await page.evaluate(() => {
+      const y = (s) => {
+        const el = document.querySelector(s);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return r.height > 0 ? Math.round(r.bottom) : null;
+      };
+      return { countdown: y("#card-hero"), score: y(".ring-score"),
+               coach: y(".coach-headline"), vh: window.innerHeight };
+    });
+    for (const [what, bottom] of Object.entries(first)) {
+      if (what === "vh" || bottom == null) continue;
+      assert.ok(bottom <= first.vh,
+        `${what} is on the first screen (bottom=${bottom}, viewport=${first.vh})`);
+    }
+
+    // the block's weeks stay comparable — a rail, not seven screens
+    const rail = await page.evaluate(() => {
+      const el = document.getElementById("sec-week2");
+      const box = el.getBoundingClientRect();
+      const cards = [...el.children].filter((c) => c.getBoundingClientRect().width > 0);
+      return { h: Math.round(box.height), cards: cards.length,
+               inView: cards.filter((c) => {
+                 const r = c.getBoundingClientRect();
+                 return r.left < box.right - 1 && r.right > box.left + 1;
+               }).length,
+               scrolls: getComputedStyle(el).overflowX };
+    });
+    assert.ok(rail.inView >= 2, `more than one block week is visible (${rail.inView} of ${rail.cards})`);
+    assert.ok(rail.h < 400, `the block occupies a strip, not a stack (${rail.h}px for ${rail.cards} weeks)`);
 
     // the whole cockpit fits in a handful of screens, with nothing deleted
     const screens = await page.evaluate(() =>

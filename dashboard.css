@@ -320,6 +320,26 @@
 
 /* ---- run page (/run/:id): trace + bests beside the splits table ---- */
 .run-lower { display: grid; grid-template-columns: minmax(260px, 1fr) 1.6fr; gap: var(--sp-4); }
+.run-left  { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+/* ---- the rep table and the splits table (one row grammar, two users) ----
+   Widths live here rather than inline so the phone tier can re-compose the
+   row instead of fighting it with !important. */
+.rep-head, .rep-row, .split-row { display: flex; align-items: center; gap: var(--sp-3); }
+.rep-head { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .04em; color: var(--sub); padding-bottom: var(--sp-1); }
+.rep-row, .split-row { font-size: var(--fs-sm); }
+.rep-c-n    { width: 34px; color: var(--sub); font-weight: var(--fw-bold); font-size: var(--fs-xs); }
+.rep-c-dist { width: 56px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); color: var(--sub); }
+.rep-c-time { width: 48px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); color: var(--sub); }
+.rep-c-pace { width: 52px; text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-semibold); }
+.rep-c-gap  { width: 52px; text-align: right; font-family: 'JetBrains Mono', monospace; color: var(--sub); }
+.rep-c-hr   { width: 44px; text-align: right; font-family: 'JetBrains Mono', monospace; color: var(--sub); }
+.rep-head .rep-c-n, .rep-head .rep-c-dist, .rep-head .rep-c-time { font-family: inherit; }
+.rep-bar      { flex: 1; position: relative; height: 16px; min-width: 0; }
+.rep-bar-mid  { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line); }
+.rep-bar-fill { position: absolute; top: 2px; height: 12px; border-radius: 2px; }
+.rep-bar--head .rep-bar-mid { display: none; }
+.rep-rec { display: flex; gap: var(--sp-2); padding: 2px 0 6px 34px; font-size: var(--fs-2xs); color: var(--sub); }
 
 .runs-head, .runs-row { display: grid; grid-template-columns: 1fr 1.3fr .8fr .9fr .9fr .7fr .7fr; gap: var(--sp-2); }
 .runs-head { font-size: var(--fs-2xs); letter-spacing: .06em; color: var(--sub); font-weight: var(--fw-bold); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); }
@@ -368,9 +388,75 @@
 .cmp-hint   { font-size: var(--fs-xs); color: var(--warn); font-weight: var(--fw-semibold); }
 .cmp-spacer { flex: 1; }
 
+/* the course's decisive segments are controls, not inert marks */
+.crs-seg { padding: var(--sp-1) var(--sp-3); min-height: 44px; border-radius: var(--r-pill); font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-bold); border: 1px solid var(--line); background: transparent; cursor: pointer; text-align: left; }
+.crs-seg:active { background: var(--accentFade); }
+
+/* ---- horizontal scrollers (responsive-layout) ----
+   Anything that scrolls sideways SAYS SO, and only while it actually
+   overflows: topbar.js's armScrollers sets data-overflow to the edge that
+   still has content. An inset shadow is used rather than an overlay because
+   it is painted against the scroller's own box and therefore does not scroll
+   away with the content. overscroll-behavior-x: contain claims the horizontal
+   axis locally, so the page swipe never competes with it. */
+.scroller {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: var(--sp-1);
+  -webkit-overflow-scrolling: touch;
+}
+.scroller > * > * { scroll-snap-align: start; }
+.scroller[data-overflow="end"]   { box-shadow: inset -20px 0 15px -15px rgba(0, 0, 0, .6); }
+.scroller[data-overflow="start"] { box-shadow: inset  20px 0 15px -15px rgba(0, 0, 0, .6); }
+.scroller[data-overflow="both"]  { box-shadow: inset -20px 0 15px -15px rgba(0, 0, 0, .6),
+                                               inset  20px 0 15px -15px rgba(0, 0, 0, .6); }
+
+/* ---- the records wall (/progress) ----
+   Wide it is a grid; on a phone it becomes one unit per distance, because the
+   grid's own scroller hid 49% of it without saying so. Same cells, same
+   handlers — one composition at a time. */
+.rec-cell { min-height: 44px; }
+.rec-unit { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-3); background: var(--panel2); }
+.rec-unit + .rec-unit { margin-top: var(--sp-2); }
+.rec-unit-head { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .08em; color: var(--sub); margin-bottom: var(--sp-2); }
+.rec-unit-primary { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
+.rec-cell-k { display: block; font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-bold); letter-spacing: .06em; }
+.rec-cell-t { display: block; font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-bold); font-size: var(--fs-sm); margin-top: 2px; }
+.rec-cell-d { display: block; font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-semibold); }
+.rec-cell--year { margin-top: var(--sp-2); }
+.rec-years-btn { display: block; width: 100%; min-height: 44px; margin-top: var(--sp-2); font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: var(--accent); background: transparent; border: 1px dashed var(--line); border-radius: var(--r-md); cursor: pointer; }
+.rec-years-btn:active { background: var(--accentFade); }
+/* the feed's rows navigate too — to the year in the archive, since the feed
+   carries no activity id to open a run with */
+.rec-feed-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); color: var(--ink); text-decoration: none; }
+.rec-feed-row:hover .rec-feed-dist { background: var(--accent); color: var(--bg); }
+.rec-feed-dist { min-width: 46px; text-align: center; font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .04em; padding: 3px 8px; border-radius: var(--r-pill); background: var(--accentFade); color: var(--accent); }
+
 /* ---- run comparison (/compare): summary + aligned splits ---- */
 .cmp-summary { display: grid; gap: var(--sp-2) var(--sp-3); align-items: baseline; }
-.cmp-splits-row { font-size: var(--fs-sm); padding: var(--sp-0) 0; }  /* layout (grid columns per run count) stays inline */
+/* the split row's COLUMN COUNT is per-comparison, so it arrives as a custom
+   property rather than a whole grid-template declaration — that lets the phone
+   tier restack the row without having to out-important an inline style */
+.cmp-splits-row { display: grid; grid-template-columns: var(--cmp-cols); gap: var(--sp-3); align-items: center; font-size: var(--fs-sm); padding: var(--sp-0) 0; }
+.cmp-split-cell  { display: flex; align-items: center; gap: var(--sp-2); }
+.cmp-split-dot   { display: none; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.cmp-split-track { flex: 1; height: 8px; position: relative; background: var(--panel2); border-radius: 2px; overflow: hidden; min-width: 0; }
+.cmp-split-fill  { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; }
+.cmp-split-pace  { width: 42px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+
+/* the phone composition: one lane per run (run-comparison 2.x) */
+.cmp-lane { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-3); background: var(--panel2); }
+.cmp-lane + .cmp-lane { margin-top: var(--sp-3); }
+.cmp-lane-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.cmp-lane-dot  { width: 10px; height: 10px; border-radius: 50%; flex: none; align-self: center; }
+.cmp-lane-name { font-weight: var(--fw-bold); font-size: var(--fs-base); min-width: 0; overflow-wrap: anywhere; }
+.cmp-lane-date { color: var(--sub); font-size: var(--fs-xs); font-weight: var(--fw-semibold); margin-left: auto; white-space: nowrap; }
+.cmp-lane-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-3); }
+.cmp-lane-k    { font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-bold); letter-spacing: .04em; }
+.cmp-lane-v    { font-size: var(--fs-sm); margin-top: 1px; }
+/* the best-per-measure mark survives the re-composition */
+.cmp-lane-cell[data-mark="best"] .cmp-lane-v::after { content: " ★"; font-size: var(--fs-2xs); }
 
 .timeline { display: flex; flex-direction: column; gap: 0; }
 .timeline-item { display: flex; gap: var(--sp-3); padding-bottom: var(--sp-4); }
@@ -592,6 +678,30 @@
   }
   .hdr-more:active { background: var(--accentFade); }
 
+  /* ---- the training block is a RAIL, not seven screens ----
+     live-dashboard: "peer items that are meant to be compared SHALL remain
+     comparable rather than being stacked into separate screens". Flex, not a
+     grid with column auto-flow, so the responsive gate can tell the two
+     compositions apart by more than a track count. */
+  #sec-week2 {
+    display: flex; gap: var(--sp-2);
+    overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    padding-bottom: var(--sp-2);
+  }
+  #sec-week2 > .day { flex: 0 0 58%; scroll-snap-align: start; min-height: 0; }
+
+  /* ---- the first screen answers TODAY ----
+     the countdown, readiness with its score, and the coach's instruction,
+     compacted so all three are above the fold rather than three roomy cards
+     deep */
+  .hero-grid   { gap: var(--sp-3); margin-bottom: var(--sp-3); }
+  .card--roomy { padding: var(--sp-4); }
+  #card-ready .ring-center { inset: 0; }
+  #card-ready svg[role="img"] { width: 84px !important; height: 84px !important; }
+  #card-ready .ring-score  { font-size: 24px; }
+  #card-ready .ring-status { font-size: 11px; letter-spacing: .04em; }   /* 11px is the floor, not a suggestion */
+
   /* ---- coach long-form: bounded, with the whole one activation away ----
      69.9% of the cockpit's 18.3 phone screens was these two blocks. Nothing is
      deleted: the note is clamped to its headline plus about four lines, the
@@ -631,6 +741,58 @@
   }
   .chart-readout--idle { display: none; }
   .pop-drill { min-height: 44px; display: flex; align-items: center; }
+
+  /* ---- the run page leads with what the run WAS ----
+     Measured on the real lap-backed 5×1 km run at 390px: the rep card sat 5th
+     at y=1765 of a 2393px document — 74% down, below a 410px route card and
+     the best-efforts list. The cards are re-ordered, not re-authored; the left
+     column becomes display:contents so its two cards can take their own place
+     in that order. */
+  .run-lower { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .run-left  { display: contents; }
+  .rep-table, .rep-uncal  { order: 1; }
+  .run-card--splits       { order: 2; }
+  .run-card--trace        { order: 3; }
+  .run-card--bests        { order: 4; }
+
+  /* ---- the deviation bar takes its own line ----
+     Its track measured 6.0px at 360px (filling 0.0–3.0px) between the five
+     fixed columns — the interval lens's whole point, invisible. The columns
+     compress AND the bar wraps, so it gets the card's full width. */
+  .rep-head, .rep-row, .split-row { gap: var(--sp-2); flex-wrap: wrap; }
+  .rep-c-dist { width: 48px; }
+  .rep-c-time { width: 40px; }
+  .rep-c-pace { width: 44px; }
+  .rep-c-gap  { width: 44px; }
+  .rep-c-hr   { width: 30px; }
+  .rep-row .rep-c-dist, .rep-row .rep-c-time,
+  .rep-row .rep-c-pace, .rep-row .rep-c-gap, .rep-row .rep-c-hr,
+  .split-row .rep-c-pace, .split-row .rep-c-hr { font-size: var(--fs-2xs); }
+  .rep-row .rep-bar, .split-row .rep-bar { flex: 1 1 100%; order: 1; height: 14px; margin-top: 2px; }
+  .rep-head .rep-bar { display: none; }
+  .rep-head .rep-c-pace { margin-left: auto; }
+
+  /* ---- /compare's splits: one line per run inside each kilometre ----
+     Four runs sharing one 358px row gave each bar ~60px of track; stacked,
+     each keeps the full width and names its run with the same colour the
+     lanes, the legend and the readout use. */
+  .cmp-splits-row { grid-template-columns: 1fr; gap: var(--sp-1); padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
+  .cmp-split-dot  { display: block; }
+
+  /* the records feed row is a target, not a line of text */
+  .rec-feed-row { min-height: 44px; flex-wrap: wrap; }
+
+  /* ---- the course pace plan: per-row labelling instead of a header row ----
+     The header scrolled away after the first few kilometres and the rest of
+     the plan was read blind. Twenty-one rows of "5:41" mean nothing without
+     their column. */
+  .crs-wrap { overflow-x: visible; box-shadow: none; }
+  .crs-tbl thead { display: none; }
+  .crs-tbl tr { display: grid; grid-template-columns: 1fr 1fr; gap: 2px var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
+  .crs-tbl td { border: none; padding: 0; text-align: left; display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); }
+  .crs-tbl td::before { content: attr(data-label); color: var(--sub); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .08em; }
+  .crs-tbl td:first-child { grid-column: 1 / -1; font-size: var(--fs-base); }
+  .crs-seg { width: 100%; }
 
   /* a section heading whose meta is a sentence: the rule collapses to nothing
      and the meta takes its own line, instead of squeezing the heading */

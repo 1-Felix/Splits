@@ -43,21 +43,10 @@
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   ::-webkit-scrollbar{height:9px;width:9px}
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
-  /* sweep-lens-tail N7: the rep card's fixed columns sum past a phone
-     viewport (~18px over at 390). Compress the columns, not the page —
-     !important because the widths are inline styles. The deviation bar
-     (flex:1) absorbs the reclaimed space. */
-  @media (max-width: 430px){
-    .rep-head, .rep-row{gap:var(--sp-2) !important}
-    .rep-row .rep-c-dist, .rep-row .rep-c-time,
-    .rep-row .rep-c-pace, .rep-row .rep-c-gap,
-    .rep-row .rep-c-hr{font-size:var(--fs-2xs) !important}
-    .rep-c-dist{width:48px !important}
-    .rep-c-time{width:40px !important}
-    .rep-c-pace{width:44px !important}
-    .rep-c-gap{width:44px !important}
-    .rep-c-hr{width:30px !important}
-  }
+  /* (the rep table's phone composition moved to dashboard.css's phone tier —
+     the column widths are class-based now, so it no longer needs !important
+     to reach past inline styles, and the deviation bar takes its own line
+     instead of being squeezed to 6px between them) */
 </style>
 </helmet>
 
@@ -183,10 +172,14 @@
   </div>
 
   <!-- ===== TRACE + SPLITS + BESTS ===== -->
+  <!-- run-detail: below the phone tier these cards are re-ORDERED, not
+       re-authored — reps, then splits, then the route, then best efforts. The
+       left column is display:contents there so its two cards become siblings
+       of the rest and can take their own place in that order. -->
   <div class="run-lower" style="margin-bottom:var(--sp-4)">
-    <div style="display:flex;flex-direction:column;gap:var(--sp-4)">
+    <div class="run-left">
       <sc-for list="{{ pg.trace }}" as="tc" hint-placeholder-count="0">
-        <div class="card">
+        <div class="card run-card--trace">
           <div class="card-head" style="margin-bottom:var(--sp-2)">
             <div>
               <div class="card-title">{{ tc.title }}</div>
@@ -200,7 +193,7 @@
         </div>
       </sc-for>
       <sc-for list="{{ pg.bests }}" as="bs" hint-placeholder-count="0">
-        <div class="card">
+        <div class="card run-card--bests">
           <div class="card-title" style="margin-bottom:var(--sp-2)">Best efforts inside this run</div>
           <sc-for list="{{ bs.rows }}" as="b" hint-placeholder-count="0">
             <div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">
@@ -216,32 +209,35 @@
       <div class="card rep-table">
         <div class="card-title rep-title" style="margin-bottom:var(--sp-1)">{{ rp.label }}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">{{ rp.sub }}</div>
-        <div class="rep-head" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub);padding-bottom:var(--sp-1)">
-          <span class="rep-c-n" style="width:34px"></span>
-          <span class="rep-c-dist" style="width:56px"></span>
-          <span class="rep-c-time" style="width:48px"></span>
-          <div style="flex:1"></div>
-          <span class="rep-head-pace rep-c-pace" style="width:52px;text-align:right">PACE</span>
-          <span class="rep-head-gap rep-c-gap" style="width:52px;text-align:right">GAP</span>
-          <span class="rep-c-hr" style="width:44px;text-align:right">HR</span>
+        <div class="rep-head">
+          <span class="rep-c-n"></span>
+          <span class="rep-c-dist"></span>
+          <span class="rep-c-time"></span>
+          <div class="rep-bar rep-bar--head"></div>
+          <span class="rep-head-pace rep-c-pace">PACE</span>
+          <span class="rep-head-gap rep-c-gap">GAP</span>
+          <span class="rep-c-hr">HR</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ rp.rows }}" as="r" hint-placeholder-count="5">
             <div>
-              <div class="rep-row" style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
-                <span class="rep-c-n" style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.n }}</span>
-                <span class="rep-c-dist" style="width:56px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.dist }}</span>
-                <span class="rep-time rep-c-time" style="width:48px;font-family:'JetBrains Mono';font-size:var(--fs-xs);color:var(--sub)">{{ r.time }}</span>
-                <div style="flex:1;position:relative;height:16px">
-                  <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)"></div>
-                  <div style="position:absolute;top:2px;height:12px;border-radius:2px;left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
+              <div class="rep-row">
+                <span class="rep-c-n">{{ r.n }}</span>
+                <span class="rep-c-dist">{{ r.dist }}</span>
+                <span class="rep-time rep-c-time">{{ r.time }}</span>
+                <!-- the deviation from target: on a phone this takes its own
+                     line, where it has the card's full width instead of the
+                     6.0px the five fixed columns left it at 360 -->
+                <div class="rep-bar">
+                  <div class="rep-bar-mid"></div>
+                  <div class="rep-bar-fill" style="left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
                 </div>
-                <span class="rep-pace rep-c-pace" style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
-                <span class="rep-gap rep-c-gap" style="width:52px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.gap }}</span>
-                <span class="rep-c-hr" style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+                <span class="rep-pace rep-c-pace">{{ r.pace }}</span>
+                <span class="rep-gap rep-c-gap">{{ r.gap }}</span>
+                <span class="rep-c-hr">{{ r.hr }}</span>
               </div>
               <sc-for list="{{ r.rec }}" as="rc" hint-placeholder-count="0">
-                <div class="rep-rec" style="display:flex;gap:var(--sp-2);padding:2px 0 6px 34px;font-size:var(--fs-2xs);color:var(--sub)">
+                <div class="rep-rec">
                   <span>↓ {{ rc.time }} recovery</span>
                   <span>{{ rc.drop }}</span>
                 </div>
@@ -258,19 +254,19 @@
       </div>
     </sc-for>
     <sc-for list="{{ pg.splits }}" as="sp" hint-placeholder-count="0">
-      <div class="card">
+      <div class="card run-card--splits">
         <div class="card-title" style="margin-bottom:var(--sp-1)">Splits</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">Per-kilometre averages — blunt through a rep set, honest on a steady run</div>
         <div style="display:flex;flex-direction:column;gap:var(--sp-1)">
           <sc-for list="{{ sp.rows }}" as="r" hint-placeholder-count="8">
-            <div style="display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-sm)">
-              <span style="width:34px;color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.km }}</span>
-              <div style="flex:1;position:relative;height:16px">
-                <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)"></div>
-                <div style="position:absolute;top:2px;height:12px;border-radius:2px;left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
+            <div class="split-row">
+              <span class="rep-c-n">{{ r.km }}</span>
+              <div class="rep-bar">
+                <div class="rep-bar-mid"></div>
+                <div class="rep-bar-fill" style="left:{{ r.left }}%;width:{{ r.width }}%;background:{{ r.color }}"></div>
               </div>
-              <span style="width:52px;text-align:right;font-family:'JetBrains Mono';font-weight:600">{{ r.pace }}</span>
-              <span style="width:44px;text-align:right;font-family:'JetBrains Mono';color:var(--sub)">{{ r.hr }}</span>
+              <span class="rep-pace rep-c-pace">{{ r.pace }}</span>
+              <span class="rep-c-hr">{{ r.hr }}</span>
             </div>
           </sc-for>
         </div>
@@ -297,6 +293,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   runId() {

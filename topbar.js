@@ -454,6 +454,56 @@ function watchChrome() {
   schedule();
 }
 
+// ── horizontal scrollers disclose that they scroll (responsive-layout) ───────
+// A region narrower than its content used to give no sign of it: 49% of the
+// records wall was unreachable behind a scroller nothing announced. Every
+// [data-scroller] carries a data-overflow attribute naming which edge still
+// has content — "start", "end", "both", or absent when it all fits — and the
+// stylesheet paints an edge only for what the attribute says. The attribute is
+// also what a test can assert, which a painted gradient is not.
+export function scrollerState(el) {
+  if (!el) return null;
+  if (el.scrollWidth <= el.clientWidth + 1) return null;
+  const atStart = el.scrollLeft <= 1;
+  const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+  return atStart && atEnd ? null : atStart ? "end" : atEnd ? "start" : "both";
+}
+
+export function armScrollers(doc) {
+  const d = doc || (typeof document !== "undefined" ? document : null);
+  if (!d || typeof MutationObserver === "undefined") return;
+  const update = (el) => {
+    const s = scrollerState(el);
+    if (s) el.setAttribute("data-overflow", s);
+    else el.removeAttribute("data-overflow");
+  };
+  const sweep = () => {
+    for (const el of d.querySelectorAll("[data-scroller]")) {
+      if (!el.dataset.scrollerArmed) {
+        el.dataset.scrollerArmed = "1";
+        el.addEventListener("scroll", () => update(el), { passive: true });
+        // "the scroller opens where it matters" — a year-long heatmap opens on
+        // today, not on the oldest half of the year
+        if (el.getAttribute("data-scroller") === "end") el.scrollLeft = el.scrollWidth;
+      }
+      update(el);
+    }
+  };
+  let queued = false;
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    (typeof requestAnimationFrame === "function" ? requestAnimationFrame : setTimeout)(() => {
+      queued = false;
+      try { sweep(); } catch { /* mid-render */ }
+    }, 0);
+  };
+  new MutationObserver(schedule).observe(d.getElementById("dc-root") || d.body,
+    { childList: true, subtree: true });
+  if (typeof window !== "undefined") window.addEventListener("resize", schedule);
+  schedule();
+}
+
 // ── the shared sheet layer (mobile-chrome: "long-form content opens in a
 // sheet") ─────────────────────────────────────────────────────────────────────
 // Body-level, so it is outside React's reconciliation by construction and one
@@ -660,7 +710,7 @@ if (typeof window !== "undefined") {
     navModel, dayBucket, greetingText,
     syncPillModel, syncNow, waitForSync, initSyncStatus,
     tabModel, mountTabBar, mountHeaderMore, openSheet, closeSheet, sheetIsOpen,
-    chartCssWidth, watchWidth,
+    chartCssWidth, watchWidth, armScrollers, scrollerState,
     armSwipe, swipeRefused,
   };
   // Theme the document root before first paint: the body background, the tab
@@ -668,9 +718,10 @@ if (typeof window !== "undefined") {
   // render untokenised on a hardcoded black body.
   applyThemeVars(initialTheme());
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => { watchChrome(); armSwipe(document); }, { once: true });
+    document.addEventListener("DOMContentLoaded", () => { watchChrome(); armSwipe(document); armScrollers(document); }, { once: true });
   } else {
     watchChrome();
     armSwipe(document);
+    armScrollers(document);
   }
 }

@@ -208,12 +208,12 @@
       </div>
       <div style="display:flex;flex-direction:column;margin-top:var(--sp-2)">
         <sc-for list="{{ recs.rows }}" as="rec" hint-placeholder-count="0">
-          <div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">
-            <span style="min-width:46px;text-align:center;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:3px 8px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ rec.dist }}</span>
+          <a class="rec-feed-row" href="{{ rec.href }}" aria-label="{{ rec.aria }}">
+            <span class="rec-feed-dist">{{ rec.dist }}</span>
             <span style="font-family:'JetBrains Mono';font-weight:700">{{ rec.newTime }}</span>
             <span style="color:var(--sub);font-weight:500">was {{ rec.oldTime }}</span>
             <span style="margin-left:auto;color:var(--sub);font-size:var(--fs-xs);font-weight:600">{{ rec.date }}</span>
-          </div>
+          </a>
         </sc-for>
         <sc-for list="{{ recs.empty }}" as="emp" hint-placeholder-count="0">
           <div style="padding:var(--sp-4) 0;color:var(--sub);font-size:var(--fs-sm);font-weight:500;line-height:1.5">{{ emp.t }}</div>
@@ -240,7 +240,9 @@
         <div class="card-sub">All-time · last 90 days · by year — select a time to open that run's page</div>
       </div>
     </div>
-    <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
+    <!-- wide: the whole wall as one grid -->
+    <sc-for list="{{ wall.wide }}" as="ww" hint-placeholder-count="1">
+    <div class="scroller" data-scroller>
       <div style="display:flex;flex-direction:column;gap:var(--sp-2);min-width:640px">
         <div style="{{ wall.gridStyle }}">
           <div></div>
@@ -252,7 +254,7 @@
           <div style="{{ wall.gridStyle }}">
             <div style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.06em;color:var(--sub);align-self:center">{{ wr.dist }}</div>
             <sc-for list="{{ wr.cells }}" as="c" hint-placeholder-count="5">
-              <button onClick="{{ c.onClick }}" title="{{ c.title }}" aria-label="{{ c.aria }}" style="{{ c.style }}">
+              <button class="rec-cell" onClick="{{ c.onClick }}" aria-label="{{ c.aria }}" style="{{ c.style }}">
                 <span style="font-family:'JetBrains Mono';font-weight:700;font-size:var(--fs-sm)">{{ c.time }}</span>
                 <span style="display:block;font-size:var(--fs-2xs);color:var(--sub);font-weight:600;margin-top:2px">{{ c.date }}</span>
               </button>
@@ -260,6 +262,37 @@
           </div>
         </sc-for>
       </div>
+    </div>
+    </sc-for>
+
+    <!-- phone: ONE UNIT PER DISTANCE. Every record is reachable — the wall's
+         grid used to be clipped inside a scroller that hid 49% of itself
+         without saying so. The by-year columns move behind a disclosure that
+         states how many years it holds. -->
+    <sc-for list="{{ wall.units }}" as="u" hint-placeholder-count="0">
+      <div class="rec-unit">
+        <div class="rec-unit-head">{{ u.dist }}</div>
+        <div class="rec-unit-primary">
+          <sc-for list="{{ u.primary }}" as="c" hint-placeholder-count="2">
+            <button class="rec-cell" onClick="{{ c.onClick }}" aria-label="{{ c.aria }}" style="{{ c.style }}">
+              <span class="rec-cell-k">{{ c.col }}</span>
+              <span class="rec-cell-t">{{ c.time }}</span>
+              <span class="rec-cell-d">{{ c.date }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <sc-for list="{{ u.disclose }}" as="d" hint-placeholder-count="1">
+          <button class="rec-years-btn" aria-expanded="{{ d.open }}" onClick="{{ d.toggle }}">{{ d.label }}</button>
+        </sc-for>
+        <sc-for list="{{ u.years }}" as="y" hint-placeholder-count="0">
+          <button class="rec-cell rec-cell--year" onClick="{{ y.onClick }}" aria-label="{{ y.aria }}" style="{{ y.style }}">
+            <span class="rec-cell-k">{{ y.col }}</span>
+            <span class="rec-cell-t">{{ y.time }}</span>
+            <span class="rec-cell-d">{{ y.date }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </sc-for>
     </div>
 
   </div>
@@ -297,7 +330,7 @@
 class Component extends DCLogic {
   // theme, registry, sync machine, greeting and nav all live in topbar.js
   // (shared across pages, design D8); this component only holds the state.
-  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, panel: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {}, blockWeek: null, blockPast: {}, blockPastOpen: null, blockCompare: [] };
+  state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt', data: null, hover: null, panel: null, now: new Date(), syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false, scope: {}, blockWeek: null, blockPast: {}, blockPastOpen: null, blockCompare: [], wallOpen: null };
 
   tb() { return window.SplitsTopbar; }
 
@@ -305,6 +338,11 @@ class Component extends DCLogic {
   // null above the phone tier, where the frame is already narrower than
   // the render and the engine leaves the geometry alone.
   chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
+  // Below the phone tier a dense surface gets its own COMPOSITION, not a
+  // squeeze — and only one of the two is ever in the document. Re-evaluated
+  // on every render, and watchWidth re-renders when the width changes.
+  isPhone() { const t = this.tb(); return !!t && typeof window !== 'undefined' && window.innerWidth <= t.PHONE_MAX; }
 
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name, hover: null }); };
 
@@ -1303,8 +1341,15 @@ class Component extends DCLogic {
       const feed = INS.recordsFeed || [];
       recs = {
         count: feed.length,
+        // The feed's rows are navigable now, like the wall's cells — but to
+        // that YEAR IN THE ARCHIVE, not to a run: recordsFeed carries
+        // {date, distance, oldSec, newSec} and no activityId, so a link to
+        // /run/:id would be an invention. The archive is where the run is.
         rows: feed.map(ev => ({ dist: DL[ev.distance] || String(ev.distance).toUpperCase(),
-          newTime: this.fmtHMS(ev.newSec), oldTime: this.fmtHMS(ev.oldSec), date: this.mDate(ev.date) })),
+          newTime: this.fmtHMS(ev.newSec), oldTime: this.fmtHMS(ev.oldSec), date: this.mDate(ev.date),
+          href: './archive?type=running&year=' + String(ev.date).slice(0, 4),
+          aria: (DL[ev.distance] || ev.distance) + ' record, ' + this.fmtHMS(ev.newSec) + ' on ' + ev.date
+            + '. Open ' + String(ev.date).slice(0, 4) + ' in the archive.' })),
         empty: feed.length ? [] : [{ t: 'No records have fallen recently — steady weeks are building the base the next one comes from.' }]
       };
     }
@@ -1312,7 +1357,7 @@ class Component extends DCLogic {
     // ---- records wall: all-time / 90d / by-year, entirely from static data —
     // activating a record navigates to that run's own page (run-detail 7.1);
     // /run/:id owns the offline degradation from there.
-    const wall = { gridStyle: '', head: [], rows: [] };
+    const wall = { gridStyle: '', head: [], rows: [], wide: [], units: [] };
     if (INS && INS.bestEfforts) {
       const BE = INS.bestEfforts;
       const years = BE.byYear ? Object.keys(BE.byYear).sort() : [];
@@ -1347,6 +1392,26 @@ class Component extends DCLogic {
           })
         };
       });
+
+      // Phone: one unit per distance, all-time and the last 90 days in front,
+      // every year behind a disclosure that says how many there are. Same
+      // cells, same handlers, same accessible names — only the composition
+      // differs, and only one of the two is in the document at a time.
+      const phone = this.isPhone();
+      wall.wide = phone ? [] : [{}];
+      wall.units = phone ? wall.rows.map((r) => {
+        const open = this.state.wallOpen === r.dist;
+        const yearCells = r.cells.slice(2).map((c, i) => ({ ...c, col: cols[i + 2].label }));
+        return {
+          dist: r.dist,
+          primary: r.cells.slice(0, 2).map((c, i) => ({ ...c, col: cols[i].label })),
+          disclose: yearCells.length
+            ? [{ open: String(open), label: open ? 'Hide the by-year bests' : yearCells.length + ' years of bests',
+                 toggle: () => this.setState({ wallOpen: open ? null : r.dist }) }]
+            : [],
+          years: open ? yearCells : [],
+        };
+      }) : [];
     }
 
     // ---- year over year: grouped monthly bars from insights.yoy — one

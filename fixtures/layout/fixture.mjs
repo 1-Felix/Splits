@@ -114,17 +114,25 @@ const INSIGHTS = {
 // Deliberately long week identities: the audit's overflow was the week row's
 // identity column, so the fixture must carry the worst label the plan format
 // permits, not the tidiest.
-const BLOCK_PHASES = ["Rebuild", "Base", "Build", "Build", "Peak", "Taper", "Race"];
-const BLOCK_WEEK_LABELS = ["Wk 8", "Wk 9", "Wk 10", "Wk 11", "Wk 12", "Wk 13 · deload", "Wk 14"];
+// TWENTY-TWO weeks, not a tidy seven. A real base-to-race block runs a season:
+// the live one that caught this was 40 weeks, and at that length a phase strip
+// that divides its row hands each week 6px and a per-week silhouette extends
+// the document to 1,138px at a 390px viewport. Both were shipped and both were
+// found on a live instance, not here — so the fixture is long now.
+const BLOCK_WEEKS_N = 22;
+const PHASE_CYCLE = ["Rebuild", "Base", "Base", "Build", "Build", "Build", "Peak", "Taper"];
 const DAY_STATUS = ["done", "done", "partial", "done", "missed", "swapped", "done"];
+const weekLabel = (i) => (i === 13 ? "Wk 14 · deload" : "Wk " + (i + 1));
+const weekPhase = (i) => (i === BLOCK_WEEKS_N - 1 ? "Race"
+  : i >= BLOCK_WEEKS_N - 3 ? "Taper" : PHASE_CYCLE[i % PHASE_CYCLE.length]);
 
 const blockWeek = (i) => {
-  const mon = new Date(Date.UTC(2026, 5, 8 + i * 7));           // 2026-06-08 + i weeks
+  const mon = new Date(Date.UTC(2026, 2, 16 + i * 7));          // 2026-03-16 + i weeks
   const iso = (d) => d.toISOString().slice(0, 10);
   const sun = new Date(mon.getTime() + 6 * 86400000);
-  const scored = i < 5;
+  const scored = i < 18;
   return {
-    wk: BLOCK_WEEK_LABELS[i], mon: iso(mon), sun: iso(sun), phase: BLOCK_PHASES[i],
+    wk: weekLabel(i), mon: iso(mon), sun: iso(sun), phase: weekPhase(i),
     label: iso(mon).slice(5), focus: "Threshold repeats and a long run back to 18 km",
     plannedKm: 24 + i * 2, actualKm: scored ? round1(21 + i * 2.1) : null, scored,
     counts: { done: 4, partial: 1, missed: 1, swapped: 1, unplanned: 0 },
@@ -144,20 +152,20 @@ const blockWeek = (i) => {
   };
 };
 
-const BLOCK_WEEKS = seq(7, blockWeek);
+const BLOCK_WEEKS = seq(BLOCK_WEEKS_N, blockWeek);
 const BLOCK_CURRENT = {
   raceName: "Fixture Half Marathon", raceDate: "2026-08-09", goalTime: "1:59:59",
-  window: { start: "2026-06-08", end: "2026-08-09" },
-  isComplete: false, weeksTotal: 7, weekNow: 5,
+  window: { start: "2026-03-16", end: "2026-08-09" },
+  isComplete: false, weeksTotal: BLOCK_WEEKS_N, weekNow: 18,
   weeks: BLOCK_WEEKS,
-  execution: { percentExecuted: 84, scoredDays: 34, qualityHitRate: { hit: 3, of: 4 },
-               kmPlanned: 210, kmPlannedToDate: 138, kmActual: 129.4,
-               counts: { done: 24, partial: 4, missed: 4, swapped: 2, unplanned: 1 } },
+  execution: { percentExecuted: 84, scoredDays: 126, qualityHitRate: { hit: 14, of: 18 },
+               kmPlanned: 640, kmPlannedToDate: 520, kmActual: 486.4,
+               counts: { done: 88, partial: 14, missed: 16, swapped: 8, unplanned: 3 } },
   adaptation: {
     ef: { startRuns: 5, endRuns: 5, startPaceSPerKm: 471.2, endPaceSPerKm: 458.6, deltaSPerKm: -12.6 },
     cadence: { startRuns: 6, endRuns: 5, startSpm: 162.4, endSpm: 165.1, deltaSpm: 2.7 },
     // one null metric so the explicit insufficient-data mark renders too
-    goalGap: { goalS: 7199, startDate: "2026-06-08", startHalfS: 7526,
+    goalGap: { goalS: 7199, startDate: "2026-03-16", startHalfS: 7526,
                nowDate: FIXTURE_TODAY, nowHalfS: null, gapStartS: 327,
                gapNowS: null, deltaS: null, reason: "no-predictions" },
     records: [
@@ -165,13 +173,17 @@ const BLOCK_CURRENT = {
       { distance: "5k", sec: 1626, prevSec: 1644, date: "2026-07-03", activityId: 9101 },
     ],
   },
-  forward: { weeksRemaining: 2, kmRemaining: 33,
-             silhouette: [{ wk: "Wk 13 · deload", mon: "2026-07-27", km: 21, phase: "Taper" },
-                          { wk: "Wk 14", mon: "2026-08-03", km: 12, phase: "Race" }],
+  // Four remaining weeks of silhouette is a nothing test. One 18px bar per
+  // remaining week is what extended the document to 1,138px on a real block.
+  forward: { weeksRemaining: 12, kmRemaining: 318,
+             silhouette: seq(12, (i) => ({
+               wk: weekLabel(10 + i), mon: BLOCK_WEEKS[Math.min(BLOCK_WEEKS_N - 1, 10 + i)].mon,
+               km: 24 + (i % 5) * 4, phase: weekPhase(10 + i),
+             })),
              undetailedWeeks: [] },
   summary: { raceName: "Fixture Half Marathon", raceDate: "2026-08-09",
-             window: { start: "2026-06-08", end: "2026-08-09" }, isComplete: false,
-             weeksTotal: 7, percentExecuted: 84, kmPlanned: 210, kmActual: 129.4,
+             window: { start: "2026-03-16", end: "2026-08-09" }, isComplete: false,
+             weeksTotal: BLOCK_WEEKS_N, percentExecuted: 84, kmPlanned: 640, kmActual: 561.4,
              efDeltaSPerKm: -12.6, cadenceDeltaSpm: 2.7, goalGapDeltaS: null, recordsCount: 2 },
 };
 

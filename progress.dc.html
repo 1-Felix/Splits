@@ -757,8 +757,8 @@ class Component extends DCLogic {
     // on touch they said nothing at all and a screen reader skipped them. They
     // are buttons now: the name is in the accessible name, and activating one
     // opens that week's days, the same as the row below.
-    const strip = h('div', { key: 'strip' },
-      h('div', { style: { display: 'flex', gap: '2px', marginTop: 'var(--sp-3)' } }, weeks.map((w, i) =>
+    const strip = h('div', { key: 'strip', className: 'blk-strip scroller', 'data-scroller': '' },
+      h('div', { className: 'blk-strip-row' }, weeks.map((w, i) =>
         h('button', { key: w.mon, type: 'button', className: 'blk-seg',
           'aria-label': (w.wk || '') + ', ' + (w.phase || 'no phase') + ', week of ' + w.mon
             + (live && i === wkNow ? ', this week' : '') + '. Show its days.',
@@ -767,7 +767,7 @@ class Component extends DCLogic {
             background: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--accent)',
             opacity: !live ? 1 : i === wkNow ? 1 : (displayToday > w.sun ? .4 : .75),
             outline: live && i === wkNow ? '2px solid var(--ink)' : 'none', outlineOffset: '1px' } }))),
-      h('div', { style: { display: 'flex', gap: '2px', marginTop: '3px', marginBottom: 'var(--sp-3)' } },
+      h('div', { className: 'blk-strip-row blk-strip-labels' },
         (() => {
           const groups = [];
           weeks.forEach((w) => {
@@ -775,7 +775,8 @@ class Component extends DCLogic {
             if (last && last.phase === w.phase) last.n += 1;
             else groups.push({ phase: w.phase, n: 1 });
           });
-          return groups.map((g, i) => h('div', { key: i, style: { flex: g.n, fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.08em', color: this.BLOCK_PHASE_COLOR[g.phase] || 'var(--sub)', overflow: 'hidden', whiteSpace: 'nowrap' } }, (g.phase || '').toUpperCase()));
+          return groups.map((g, i) => h('div', { key: i, className: 'blk-phase-label',
+            style: { flex: g.n, color: this.BLOCK_PHASE_COLOR[g.phase] || 'var(--sub)' } }, (g.phase || '').toUpperCase()));
         })()));
 
     // ---- per-week execution rows (compliance visual language) ----
@@ -841,10 +842,17 @@ class Component extends DCLogic {
             ? h('div', { style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700, marginTop: 'var(--sp-1)' } },
               '⚠ undetailed: ' + fw.undetailedWeeks.join(', '))
             : null),
-        h('div', { key: 's', 'aria-label': 'Planned weekly kilometres to race day', style: { display: 'flex', alignItems: 'flex-end', gap: '6px', height: '46px' } },
-          (fw.silhouette || []).map((s) => h('div', { key: s.mon, title: (s.wk || s.mon) + ' · ' + (s.km != null ? s.km + ' km' : 'no km') },
-            h('div', { style: { width: '18px', height: Math.max(4, Math.round(38 * ((s.km || 0) / maxKm))) + 'px', borderRadius: '2px 2px 0 0', background: this.BLOCK_PHASE_COLOR[s.phase] || 'var(--accent)', opacity: .8 } }),
-            h('div', { style: { fontSize: 'var(--fs-2xs)', color: 'var(--sub)', fontWeight: 700, textAlign: 'center', marginTop: '2px' } }, s.km != null ? s.km : '—')))));
+        // The silhouette is one 18px bar per remaining week. A 40-week block —
+        // which is what a real base-building plan looks like — made that
+        // 1,138px of document at a 390px viewport. It scrolls in its own
+        // clipped container now, and says so (data-scroller).
+        h('div', { key: 's', className: 'blk-silhouette scroller', 'data-scroller': '',
+                   'aria-label': 'Planned weekly kilometres to race day' },
+          h('div', { className: 'blk-sil-row' },
+            (fw.silhouette || []).map((s) => h('div', { key: s.mon, className: 'blk-sil-wk',
+              'aria-label': (s.wk || s.mon) + ' · ' + (s.km != null ? s.km + ' km' : 'no km') },
+              h('div', { className: 'blk-sil-bar', style: { height: Math.max(4, Math.round(38 * ((s.km || 0) / maxKm))) + 'px', background: this.BLOCK_PHASE_COLOR[s.phase] || 'var(--accent)' } }),
+              h('div', { className: 'blk-sil-km' }, s.km != null ? s.km : '—'))))));
     }
 
     return h('div', { className: live ? 'card block-card-live' : 'block-card-past', style: live ? {} : { marginTop: 'var(--sp-2)', padding: 'var(--sp-3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md)' } },

@@ -269,8 +269,22 @@
 .blk-none  { color: var(--warn); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
 .blk-km    { font-family: 'JetBrains Mono', monospace; color: var(--sub); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap; }
 .blk-chev  { color: var(--sub); }
-/* the block's phase strip: real controls, not decorative divs with a title */
+/* the block's phase strip: real controls, not decorative divs with a title.
+   A block can run to 40 weeks, so the strip scrolls rather than dividing the
+   card into 6px slivers — and its rows share one width so the phase labels
+   stay over the weeks they name. */
+.blk-strip       { margin-top: var(--sp-3); margin-bottom: var(--sp-3); }
+.blk-strip-row   { display: flex; gap: 2px; min-width: 100%; }
+.blk-strip-labels { margin-top: 3px; }
+.blk-phase-label { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .08em; overflow: hidden; white-space: nowrap; }
 .blk-seg   { flex: 1; height: 6px; border: none; border-radius: 3px; padding: 0; cursor: pointer; font-family: inherit; }
+
+/* the forward silhouette — one bar per remaining week, in its own scroller */
+.blk-silhouette { flex: 1; min-width: 0; }
+.blk-sil-row    { display: flex; align-items: flex-end; gap: 6px; height: 46px; }
+.blk-sil-wk     { flex: none; }
+.blk-sil-bar    { width: 18px; border-radius: 2px 2px 0 0; opacity: .8; }
+.blk-sil-km     { font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-bold); text-align: center; margin-top: 2px; }
 .block-insufficient { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--warn); padding: 3px 0; background: none; border: none; font-family: inherit; cursor: pointer; text-align: left; text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* the expanded week's per-day rows — same story: the layout moves out of the
@@ -597,9 +611,13 @@
   .cmp-toggle { width: 44px; height: 44px; }
   .arch-search { font-size: 16px; min-height: 44px; }   /* 16px: below it, focus zooms the page */
   .block-week { min-height: 44px; }
-  /* the phase strip stops being a 6px hairline and becomes what it now is: a
-     row of real controls, one per week, each a legible band of its phase */
-  .blk-seg { height: 44px; border-radius: var(--r-sm); }
+  /* The phase strip stops being a 6px hairline and becomes what it now is: a
+     row of real controls, one per week, each a legible band of its phase. A
+     40-week block cannot give each of them 44px inside 358, so the strip
+     SCROLLS and every segment keeps its target width — dividing the row would
+     have handed each week 6px. */
+  .blk-seg { height: 44px; min-width: 44px; border-radius: var(--r-sm); flex: 1 0 44px; }
+  .blk-phase-label { flex: 1 0 44px; }
   .block-insufficient { min-height: 44px; }
 
   /* ---- a press is acknowledged ---- */

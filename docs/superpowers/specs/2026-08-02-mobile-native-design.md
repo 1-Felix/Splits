@@ -423,9 +423,12 @@ rather than duplicate-and-hide.
   its own line. (`.chart-grid`'s floor is fixed in Move 0, since the 360px assertions depend on it.)
 - **Run** — give `.run-lower` explicit mobile `order:` so the interval lens (the page's whole point)
   is not fifth, below the route and best-efforts, purely because the desktop grid's source order is
-  inherited. *Re-measure the rep table against the NUC's real lap data first* — the auditor's
-  numbers came from a synthetic interval document injected over the archive API, because the local
-  archive carries no laps.
+  inherited. **Verified 2026-08-02 against real lap data** (local archive refreshed from a NUC
+  snapshot — schema 14, 171 `run_intervals`): on the 5×1 km run `23543309396` at 390px the rep card
+  sits 5th at y=1765 of a 2393px document, and the rep row's deviation bar — the whole point of the
+  lens — has a **6.0px track at 360px** with 0.0–3.0px of ink (36px at 390, 73.6px at 430, 275px at
+  1440). `run.dc.html`'s helmet already carries a component-scoped `@media (max-width:430px)` block
+  compressing the five fixed columns; it is not enough. Target order: reps → splits → route → bests.
 - **Course** — the elevation crosshair is mouse-only (fixed by Move 4); 22 numeric rows become a
   shape plus the few decisions that matter, with sticky table headers.
 - **Cockpit** — the composition that turns 18.3 screens into ~4.5: screen 1 a merged *today* card
@@ -498,4 +501,4 @@ Evidence before assertions, at every stage:
 | The chart `k` divisor silently alters desktop | Verified arithmetically that tick caps still bind at desktop widths; `style-audit diff` + the chart test suites (`test_chart_core.mjs`, `test_chart_view.mjs`) gate it. |
 | Six-file edits drift again | Every per-file edit in this design is a **one-liner** (`<title>`, viewport meta, body background, root class, manifest link). All behaviour lands in `topbar.js`/`dashboard.css`. |
 | Max's instance differs (no course, possibly no archive) | The tab bar is driven by `navModel(page,{archive,course})`, which already yields 2/3/4 entries; `test_topbar.mjs` covers all three shapes. |
-| Rep-table measurements are synthetic | Re-measure on the NUC before sizing that composition. |
+| ~~Rep-table measurements are synthetic~~ | **Retired.** Local archive refreshed from a consistent NUC snapshot; both claims re-measured on real lap data and confirmed. |

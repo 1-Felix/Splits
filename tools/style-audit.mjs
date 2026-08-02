@@ -421,11 +421,18 @@ try {
       for (const c of tracks) {
         if (c.xticks > 0) sawXTicks = true;
         const yOk = c.yticks >= 2;
-        const legendOk = c.series >= 2 ? c.legend >= 2 : c.legend === 0;
         const gapOk = c.declaredPaths === c.domPaths;
-        check(yOk && legendOk && gapOk,
+        check(yOk && gapOk,
           `chart /compare "${c.label}" yticks=${c.yticks} series=${c.series} legend=${c.legend} paths=${c.domPaths}/${c.declaredPaths}`);
       }
+      // chart-engine: "a shared legend is stated once". The tracks overlay the
+      // SAME runs, so the stack names them once — a per-track rule would have
+      // demanded the same two names four times down the page.
+      const multi = tracks.filter((c) => c.series >= 2);
+      const withLegend = tracks.filter((c) => c.legend > 0);
+      check(multi.length === 0 || withLegend.length === 1,
+        `/compare states its shared legend once (${withLegend.length} of ${tracks.length} tracks carry one)`);
+      check(withLegend.every((c) => c.legend >= 2), "/compare's one legend names every run in it");
       if (tracks.length) check(sawXTicks, "/compare shared x axis labelled on the stack's last track");
     }
 

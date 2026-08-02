@@ -77,10 +77,15 @@ export function renderChart(spec, React) {
     }, t.label));
   });
   if (spec.y.label) {
-    // fully above the top tick's label (buildSpec reserved the headroom)
+    // INSIDE the reserved headroom, not above it. `top: py(plot.y) - 9px` with
+    // translateY(-100%) put the label its own height ABOVE that band, which on
+    // a stack landed it on top of the track caption of the track above — the
+    // "bpm" over "HEART RATE" collision, visible at every width, not only on a
+    // phone. buildSpec reserves 10 frame units of headroom for exactly this,
+    // so sit in them.
     html.push(h("span", {
       key: "ydir", className: "chart-ytick",
-      style: { position: "absolute", left: 0, width: "calc(" + px(plot.x) + " - 5px)", top: "calc(" + py(plot.y) + " - 9px)", transform: "translateY(-100%)", textAlign: "right", opacity: 0.85 },
+      style: { position: "absolute", left: 0, width: "calc(" + px(plot.x) + " - 5px)", top: py(plot.y - 10), textAlign: "right", opacity: 0.85 },
     }, spec.y.label));
   }
 
@@ -135,6 +140,10 @@ export function renderChart(spec, React) {
         const atEnd = f.x > W * 0.85;
         html.push(h("span", {
           key: "L" + li + "al" + fi, className: "chart-flag",
+          // a grouped flag names what it stands for, so nothing the data
+          // carries is lost to crowding
+          title: f.grouped ? f.grouped.join(" · ") : undefined,
+          "aria-label": f.grouped ? f.grouped.join(", ") : undefined,
           style: {
             position: "absolute", left: px(f.x), top: py(f.labelY),
             transform: atEnd ? "translate(-100%,-100%)" : "translateY(-100%)",
@@ -215,6 +224,60 @@ export function renderChart(spec, React) {
     ];
   }
 
+  // ── the touch path (chart-engine D6) ──────────────────────────────────────
+  // A tap used to work only because the browser synthesises a mouse event
+  // afterwards, and a DRAG produced no events at all: the whole engine hung
+  // off onMouseEnter on per-point hit bands. Pointer events give touch and pen
+  // a real path — press places the reading, drag scrubs it, release keeps it —
+  // and every handler bails on `pointerType === "mouse"`, so the existing
+  // mouse handlers stay the ONLY path a mouse takes and desktop cannot regress.
+  //
+  // Resolution is by NEAREST BAND rather than by hitting one: at 390px the
+  // points on a 30-month chart are spaced 9–11px apart, well under any usable
+  // touch target, and bandRects tile the full width by construction so they
+  // cannot simply be widened. This is chart-core's crosshairAt reasoning
+  // applied to the band primitive.
+  const xUnits = (e, el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 ? (e.clientX - r.left) / r.width * W : null;
+  };
+  const nearestBand = (x) => {
+    let best = null, bd = Infinity;
+    for (const b of hover.bands) {
+      if (x >= b.x && x <= b.x + b.w) return b.i;
+      const d = Math.min(Math.abs(x - b.x), Math.abs(x - (b.x + b.w)));
+      if (d < bd) { bd = d; best = b.i; }
+    }
+    return best;
+  };
+  const touchAt = (e, pin) => {
+    const x = xUnits(e, e.currentTarget);
+    if (x == null) return;
+    if (hover.onMove) hover.onMove(x, e);            // continuous crosshair tracks
+    if (!hover.bands.length) return;
+    const i = nearestBand(x);
+    if (i == null) return;
+    if (hover.onEnter) hover.onEnter(i);
+    if (pin && hover.onPin) hover.onPin(i, e);
+  };
+  const isTouch = (e) => e.pointerType && e.pointerType !== "mouse";
+  const pointerProps = (hover.onMove || hover.bands.length) ? {
+    onPointerDown: (e) => {
+      if (!isTouch(e)) return;
+      if (e.currentTarget.setPointerCapture && e.pointerId != null) {
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* released already */ }
+      }
+      touchAt(e, false);
+    },
+    onPointerMove: (e) => {
+      if (!isTouch(e)) return;
+      if (e.buttons === 0 && e.pressure === 0) return;   // a hovering pen, not a scrub
+      touchAt(e, false);
+    },
+    onPointerUp: (e) => { if (isTouch(e)) touchAt(e, true); },
+    onPointerCancel: (e) => { if (isTouch(e) && hover.onLeave) hover.onLeave(e); },
+  } : {};
+
   const svg = h("svg", {
     key: "svg",
     viewBox: `0 0 ${W} ${H}`,
@@ -223,7 +286,10 @@ export function renderChart(spec, React) {
     "data-line-paths": lineSegments,
     "data-series": seriesCount,
     preserveAspectRatio: "none",
-    style: { width: "100%", height: spec.height || "auto", display: "block", overflow: "visible" },
+    // pan-y so a vertical drag still scrolls the page over a chart, while the
+    // horizontal axis belongs to the chart (which is also what the page-swipe
+    // guard reads to refuse here)
+    style: { width: "100%", height: spec.height || "auto", display: "block", overflow: "visible", touchAction: "pan-y" },
     role: spec.a11y.role,
     "aria-label": spec.a11y.label,
     tabIndex: spec.a11y.keyboard ? 0 : undefined,
@@ -235,6 +301,7 @@ export function renderChart(spec, React) {
       const r = e.currentTarget.getBoundingClientRect();
       if (r.width > 0) hover.onMove((e.clientX - r.left) / r.width * W, e);
     } : undefined,
+    ...pointerProps,
   }, ...svgBody);
 
   // ── legend: present exactly when the chart carries ≥ 2 series; ink text,
@@ -282,13 +349,28 @@ export function renderChart(spec, React) {
         // that, or every click lands on the chart behind it
         pointerEvents: hover.drill ? "auto" : undefined,
       },
-    }, ...c.rows.map((r, ri) => h("div", {
-      key: "r" + ri,
-      style: r.drill
-        ? { color: "var(--accent)", fontWeight: "800", fontFamily: "'JetBrains Mono',monospace",
-            marginTop: "4px", paddingTop: "4px", borderTop: "1px solid var(--line)", whiteSpace: "nowrap" }
-        : { color: r.em ? "var(--ink)" : "var(--sub)", fontWeight: r.em ? "800" : "600", fontFamily: "'JetBrains Mono',monospace" },
-    }, r.t)));
+    }, ...c.rows.map((r, ri) => (r.drill
+      // The drill affordance is a real BUTTON, not a line of text inside a
+      // card whose activation depended on a second click surviving a
+      // re-render. A/B'd at the same viewport before this change: mouse@390
+      // opened the panel, touch@390 dismissed the pin and opened nothing.
+      // A button calls hover.drill.action() directly, and the phone tier gives
+      // it the 44px it owes a thumb.
+      ? h("button", {
+          key: "r" + ri, type: "button", className: "pop-drill",
+          onClick: (e) => {
+            if (e.stopPropagation) e.stopPropagation();
+            const svgEl = e.currentTarget.closest
+              && e.currentTarget.closest("div").parentElement
+              && e.currentTarget.closest("div").parentElement.querySelector("svg.chart-svg");
+            if (svgEl && svgEl.focus) svgEl.focus();
+            if (hover.drill) hover.drill.action();
+          },
+        }, r.t)
+      : h("div", {
+          key: "r" + ri,
+          style: { color: r.em ? "var(--ink)" : "var(--sub)", fontWeight: r.em ? "800" : "600", fontFamily: "'JetBrains Mono',monospace" },
+        }, r.t))));
   }
 
   const overlay = h("div", { key: "overlay", style: { position: "absolute", inset: 0, pointerEvents: "none" }, "aria-hidden": "true" }, ...html);

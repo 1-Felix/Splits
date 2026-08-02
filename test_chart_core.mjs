@@ -6,6 +6,7 @@ import {
   confidenceRadius, isConfident, placeAnnotations, buildSpec,
   monthKeyToDate, isoWeekToDate, datesBackFrom, POLICIES, fmt,
   crosshairAt, projectTrack, projectTrackMercator, tileLayout, multiTrackSpec,
+  frameScale, annotationExtent, sharedXScale,
 } from "./chart-core.js";
 import { scaleLinear } from "./vendor/d3-lite.js";
 
@@ -585,6 +586,134 @@ const baseDescriptor = {
   assert.strictEqual(specs[0].repBands.length, 2, "the track's rep windows reach its ChartSpec");
   assert.strictEqual(specs[0].repBands[0].rep, 1);
   assert.strictEqual(specs[0].repBands[1].rep, 2);
+}
+
+// ── density decided against the RENDERED width (chart-engine D5) ────────────
+// Every chart draws in a 600-unit frame that is then stretched to its card. The
+// engine was already width-aware; it was simply being fed the constant 600 at
+// every call site, so a 324px card and a 1066px card made identical decisions.
+{
+  assert.strictEqual(frameScale(600, undefined), 1, "no rendered width → nothing changes");
+  assert.strictEqual(frameScale(600, 0), 1, "a zero width is not a width");
+  assert.strictEqual(frameScale(600, 1066), 1,
+    "a chart rendered WIDER than its frame is clamped at 1 — desktop cannot move");
+  assert.ok(Math.abs(frameScale(600, 324) - 1.8519) < 1e-3, "600 units across 324 CSS px");
+
+  const months = Array.from({ length: 30 }, (_, i) => monthKeyToDate("2024-" + String((i % 12) + 1).padStart(2, "0")));
+  const desc = (cssW) => ({
+    id: "t", kind: "trend",
+    frame: { w: 600, h: 150, cssW },
+    x: { kind: "time", dates: months },
+    y: { policy: POLICIES.vo2 },
+    series: [{ key: "v", name: "VO2", color: "var(--series1)", values: months.map((_, i) => 44 + i * 0.1) }],
+  });
+
+  const wide = buildSpec(desc(1066));
+  const bare = buildSpec(desc(undefined));
+  // DESKTOP IS UNCHANGED BY CONSTRUCTION, not by argument: the whole spec is
+  // deep-equal to the one built without a rendered width at all.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(wide.x.ticks)), JSON.parse(JSON.stringify(bare.x.ticks)),
+    "a desktop-width chart emits exactly the ticks it did before this change");
+  assert.deepStrictEqual(wide.frame.pad, bare.frame.pad, "and exactly the same gutter");
+  assert.deepStrictEqual(wide.plot, bare.plot, "and exactly the same plot rect");
+
+  const narrow = buildSpec(desc(324));
+  assert.ok(narrow.x.ticks.length <= bare.x.ticks.length,
+    `a 324px chart never asks for MORE ticks (${narrow.x.ticks.length} vs ${bare.x.ticks.length})`);
+  assert.ok(narrow.x.ticks.length >= 2, "but never below two — an axis with one tick says nothing");
+
+  // Explicit per-index labels thin DETERMINISTICALLY (a time scale snaps to
+  // nice intervals, so its count can survive a narrower request) — this is the
+  // year-over-year month row, the densest label row in the app.
+  const labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const yoy = (cssW) => buildSpec({
+    id: "y", kind: "trend",
+    frame: { w: 600, h: 150, cssW },
+    x: { kind: "band", n: 12, labels },
+    y: { policy: POLICIES.yoy },
+    series: [{ key: "v", name: "km", color: "var(--series1)", values: labels.map((_, i) => 40 + i), marks: ["bars"] }],
+  });
+  const yWide = yoy(1066), yBare = yoy(undefined), yNarrow = yoy(324);
+  assert.strictEqual(yWide.x.ticks.length, yBare.x.ticks.length, "desktop label row unchanged");
+  assert.strictEqual(yBare.x.ticks.length, 12, "all twelve months fit at desktop");
+  assert.ok(yNarrow.x.ticks.length < 12,
+    `a 324px month row thins itself (${yNarrow.x.ticks.length} of 12 labels)`);
+  assert.ok(yNarrow.x.ticks.length >= 4, "and still says roughly where you are");
+
+  // the y gutter is a constant CSS-PIXEL column: 44 units at k=1 renders as
+  // 78 CSS px at 1066 and 23.8 at 324, against an 11px tick label
+  assert.strictEqual(bare.frame.pad.l, 44, "the authored gutter is unchanged at desktop");
+  const gutterCssPx = narrow.frame.pad.l / 600 * 324;
+  assert.ok(Math.abs(gutterCssPx - 44) < 1, `the narrow chart's gutter is ~44 CSS px (got ${gutterCssPx.toFixed(1)})`);
+  assert.ok(narrow.plot.w < bare.plot.w, "the PLOT gives up the width, not the label");
+}
+
+// ── the shared scale follows the same gutter, or the crosshair lies ──────────
+{
+  const xs = [0, 100, 200, 300];
+  const deskRange = sharedXScale(xs, 600, 46, 10).range();
+  assert.deepStrictEqual(deskRange, [46, 590], "unchanged without a rendered width");
+  const narrowRange = sharedXScale(xs, 600, 46, 10, 324).range();
+  const k = frameScale(600, 324);
+  assert.ok(Math.abs(narrowRange[0] - 46 * k) < 1e-6 && Math.abs(narrowRange[1] - (600 - 10 * k)) < 1e-6,
+    "the page bisects against exactly the plot the tracks drew");
+}
+
+// ── annotations are placed by their EXTENT, and crowding groups, never drops ──
+{
+  assert.ok(annotationExtent("race") < annotationExtent("half PB · Sonthofen"),
+    "a longer label claims more room");
+  const xs = scaleLinear().domain([0, 10]).range([0, 600]);
+  const anns = [
+    { at: 0, label: "start" }, { at: 5, label: "race" }, { at: 5.1, label: "half PB" },
+    { at: 5.2, label: "10k PB" }, { at: 5.3, label: "5k PB" }, { at: 5.4, label: "1k PB" },
+  ];
+  const placed = placeAnnotations(anns, xs, 600);
+  // nothing is silently lost: what cannot be separated becomes one honest mark
+  const grouped = placed.filter((f) => f.grouped);
+  assert.ok(grouped.length === 1, "the flags that could not be separated became one");
+  assert.ok(/more$/.test(grouped[0].label), "and it says how many: " + grouped[0].label);
+  const named = placed.filter((f) => !f.grouped).length + grouped[0].grouped.length;
+  assert.strictEqual(named, anns.length, "every annotation is still accounted for");
+  assert.ok(placed.every((f) => f.lane < 3), "lanes are still capped at three");
+
+  // widely separated flags all place, none groups
+  const spread = placeAnnotations(
+    [{ at: 0, label: "a" }, { at: 5, label: "b" }, { at: 10, label: "c" }], xs, 600);
+  assert.strictEqual(spread.length, 3);
+  assert.ok(spread.every((f) => f.lane === 0), "room enough → one lane");
+  assert.ok(spread.every((f) => !f.grouped), "and nothing is grouped");
+}
+
+// ── a shared legend is stated once per stack ────────────────────────────────
+{
+  const t = Array.from({ length: 20 }, (_, i) => i);
+  const two = (name) => [
+    { key: "a", name: "Run A", color: "var(--series1)", values: t.map(() => 1) },
+    { key: "b", name: "Run B", color: "var(--series2)", values: t.map(() => 2) },
+  ];
+  const specs = multiTrackSpec([
+    { id: "pace", ariaLabel: "pace", series: two(), policy: {} },
+    { id: "hr", ariaLabel: "hr", series: two(), policy: {} },
+    { id: "cad", ariaLabel: "cad", policy: {},
+      series: [{ key: "a", name: "Run A", color: "var(--series1)", values: t.map(() => 3) }] },
+    { id: "elev", ariaLabel: "elev", series: two(), policy: {} },
+  ], { values: t, fmt: String });
+  const withLegend = specs.filter((s) => s.legend);
+  assert.strictEqual(withLegend.length, 1, "four tracks over the same two runs name them once");
+  assert.strictEqual(withLegend[0].legend.length, 2, "and the one legend names both");
+  assert.strictEqual(specs[2].legend, null, "a single-series track never had one anyway");
+
+  // a track carrying a genuinely DIFFERENT cast still introduces it
+  const mixed = multiTrackSpec([
+    { id: "one", ariaLabel: "one", series: two(), policy: {} },
+    { id: "two", ariaLabel: "two", policy: {}, series: [
+      { key: "c", name: "Run C", color: "var(--series3)", values: t.map(() => 4) },
+      { key: "d", name: "Run D", color: "var(--series4)", values: t.map(() => 5) },
+    ] },
+  ], { values: t, fmt: String });
+  assert.strictEqual(mixed.filter((s) => s.legend).length, 2,
+    "a different set of series is news, and says so");
 }
 
 console.log("ALL PASS");

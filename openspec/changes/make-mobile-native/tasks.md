@@ -69,18 +69,18 @@
 
 ## 7. Charts on touch (Move 4)
 
-- [ ] 7.1 Add `frame.cssW` / `sharedX.cssW` and derive `k`; divide by `k` at `chart-core.js:316`, `:331`, `:324`/`:338`, `:580` and `:472`. Pass the measured width from every call site.
-- [ ] 7.2 Make the y-gutter a constant CSS-pixel column (`chart-view.js:70`/`:83`) instead of a percentage of SVG width.
-- [ ] 7.3 Fix the unit-label placement to sit inside the frame (`top: py(plot.y - 10)`, drop the `translateY(-100%)`) — this also fixes desktop's `bpm`-over-`HEART RATE`; promote the unit into the track caption on phones.
-- [ ] 7.4 Add `onPointerDown`/`Move`/`Up`/`Cancel` to `renderChart`, gated on `pointerType !== "mouse"`, with `touch-action: pan-y`.
-- [ ] 7.5 Switch phone-width dense charts from `bandRects` to `crosshairAt` nearest-point resolution.
-- [ ] 7.6 Reserve the readout row unconditionally with placeholders, and render it on phones as a bar at `bottom: var(--tabbar-h)` shown only while a reading is placed. Verify the run page's 104px tap-shift and 186px off-screen readout are both gone.
-- [ ] 7.7 Route the pinned reading into the sheet on phones, with the drill as a real ≥44px button calling `hover.drill.action()` directly; verify touch drill now matches mouse drill at the same viewport.
-- [ ] 7.8 Make `placeAnnotations` lane by the label's projected extent in CSS px, and group annotations that still collide.
-- [ ] 7.9 Emit the legend once per multi-track stack instead of per track.
-- [ ] 7.10 Give the phone tier `.chart-ytick`/`.chart-xtick`/`.chart-flag` an 11px floor, and make each scoped chart default to the narrowest useful scope on phones with the full range one tap away.
-- [ ] 7.11 Show the shared x-axis while scrubbing a stack taller than the viewport.
-- [ ] 7.12 Run `style-audit diff` plus `test_chart_core.mjs` and `test_chart_view.mjs` — desktop chart output must be unchanged.
+- [x] 7.1 Add `frame.cssW` / `sharedX.cssW` and derive `k`; divide by `k` at `chart-core.js:316`, `:331`, `:324`/`:338`, `:580` and `:472`. Pass the measured width from every call site.
+- [x] 7.2 Make the y-gutter a constant CSS-pixel column (`chart-view.js:70`/`:83`) instead of a percentage of SVG width.
+- [x] 7.3 Fix the unit-label placement to sit inside the frame (`top: py(plot.y - 10)`, drop the `translateY(-100%)`) — this also fixes desktop's `bpm`-over-`HEART RATE`; promote the unit into the track caption on phones.
+- [x] 7.4 Add `onPointerDown`/`Move`/`Up`/`Cancel` to `renderChart`, gated on `pointerType !== "mouse"`, with `touch-action: pan-y`.
+- [x] 7.5 Switch phone-width dense charts from `bandRects` to `crosshairAt` nearest-point resolution.
+- [x] 7.6 Reserve the readout row unconditionally with placeholders, and render it on phones as a bar at `bottom: var(--tabbar-h)` shown only while a reading is placed. Verify the run page's 104px tap-shift and 186px off-screen readout are both gone.
+- [x] 7.7 Route the pinned reading into the sheet on phones, with the drill as a real ≥44px button calling `hover.drill.action()` directly; verify touch drill now matches mouse drill at the same viewport.
+- [x] 7.8 Make `placeAnnotations` lane by the label's projected extent in CSS px, and group annotations that still collide.
+- [x] 7.9 Emit the legend once per multi-track stack instead of per track.
+- [x] 7.10 Give the phone tier `.chart-ytick`/`.chart-xtick`/`.chart-flag` an 11px floor, and make each scoped chart default to the narrowest useful scope on phones with the full range one tap away.
+- [x] 7.11 Show the shared x-axis while scrubbing a stack taller than the viewport.
+- [x] 7.12 Run `style-audit diff` plus `test_chart_core.mjs` and `test_chart_view.mjs` — desktop chart output must be unchanged.
 
 ## 8. Re-composition and the token tier (Moves 5 and 6)
 

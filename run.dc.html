@@ -166,9 +166,9 @@
         <sc-for list="{{ pg.xModes }}" as="xm" hint-placeholder-count="2"><button class="scope-chip" aria-pressed="{{ xm.on }}" onClick="{{ xm.pick }}">{{ xm.label }}</button></sc-for>
       </div>
     </div>
-    <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="0">
-      <div style="display:flex;gap:var(--sp-4);flex-wrap:wrap;font-family:'JetBrains Mono';font-size:var(--fs-sm);font-weight:600;margin-bottom:var(--sp-2);padding:var(--sp-2) var(--sp-3);background:var(--panel2);border-radius:var(--r-md)">
-        <sc-for list="{{ ro.cells }}" as="c" hint-placeholder-count="6"><span><span style="color:var(--sub)">{{ c.k }}</span> {{ c.v }}</span></sc-for>
+    <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="1">
+      <div class="{{ ro.cls }}">
+        <sc-for list="{{ ro.cells }}" as="c" hint-placeholder-count="6"><span><span class="ro-k">{{ c.k }}</span> {{ c.v }}</span></sc-for>
       </div>
     </sc-for>
     <sc-for list="{{ pg.noStreams }}" as="ns" hint-placeholder-count="0">
@@ -292,6 +292,11 @@ class Component extends DCLogic {
             xMode: 'dist', cross: null, traceMap: true, now: new Date() };
 
   tb() { return window.SplitsTopbar; }
+
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   runId() {
@@ -300,6 +305,7 @@ class Component extends DCLogic {
   }
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
     import('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
     import('./coach-read.js').then((m) => { this._cr = m; this.setState({}); }).catch(() => {});
@@ -452,7 +458,7 @@ class Component extends DCLogic {
           { label: 'distance', on: String(dist), pick: () => this.setXMode('dist') },
           { label: 'time', on: String(!dist), pick: () => this.setXMode('time') }
         ];
-        this._xScale = cc.sharedXScale(xs);
+        this._xScale = cc.sharedXScale(xs, 600, 46, 10, this.chartW());
         const xFmt = dist ? ((m) => (m / 1000).toFixed(1).replace(/\.0$/, '') + ' km') : ((s) => this.fmtHMS(s));
 
         // rep windows for the track shading (add-interval-lens), in the
@@ -509,10 +515,16 @@ class Component extends DCLogic {
         const ci = this.state.cross;
         const specs = cc.multiTrackSpec(
           defs.map((t) => ({ ...t, repBands: repWindows, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
-          { values: xs, fmt: xFmt, cross: ci != null ? { i: ci } : null });
+          { values: xs, fmt: xFmt, cssW: this.chartW(), cross: ci != null ? { i: ci } : null });
         pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
 
-        // the crosshair readout — every track's value at one sample (6.4)
+        // The crosshair readout — every track's value at one sample (6.4).
+        // The row is RESERVED whether or not a reading is placed: it used to
+        // be inserted on the first tap, which pushed the tracks 104px down and
+        // moved the chart out from under the finger that had just touched it.
+        // On a phone the same element is a fixed bar on the viewport floor
+        // (dashboard.css), so the reading is where it can be read — it used to
+        // render 186px off-screen at the bottom of the stack.
         if (ci != null) {
           const cells = [];
           cells.push({ k: 'at', v: (S.d && S.d[ci] != null ? (S.d[ci] / 1000).toFixed(2) + ' km' : '—') + ' · ' + this.fmtHMS(S.t[ci]) });
@@ -522,8 +534,12 @@ class Component extends DCLogic {
           if (S.cad && S.cad[ci] != null) cells.push({ k: 'cad', v: S.cad[ci] + ' spm' });
           if (S.elev && S.elev[ci] != null) cells.push({ k: 'elev', v: S.elev[ci] + ' m' });
           if (S.pwr && S.pwr[ci] != null) cells.push({ k: 'pwr', v: S.pwr[ci] + ' W' });
-          pg.readout = [{ cells }];
+          pg.readout = [{ cells, cls: 'chart-readout chart-readout--live' }];
           liveText = cells.map((c) => c.k + ' ' + c.v).join(', ');
+        } else {
+          pg.readout = [{ cls: 'chart-readout chart-readout--idle', cells: [
+            { k: 'at', v: '—' }, { k: 'pace', v: '—' }, { k: 'hr', v: '—' },
+          ] }];
         }
 
         // the trace (6.5 + route-basemap): with a stored map rect the polyline

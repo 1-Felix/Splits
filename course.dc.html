@@ -216,9 +216,15 @@ class Component extends DCLogic {
             cross: null, now: new Date() };
 
   tb() { return window.SplitsTopbar; }
+
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // Resolve modules against document.baseURI — the dc runtime's compiled
     // script can otherwise carry a stale base after a same-site navigation.
     const mod = (p) => import(new URL(p, document.baseURI).href);
@@ -373,7 +379,7 @@ class Component extends DCLogic {
       const xs = pts.map((r) => r.endM);
       const elev = pts.map((r) => r.elevEnd);
       this._xs = xs;
-      this._xScale = cc.sharedXScale(xs);
+      this._xScale = cc.sharedXScale(xs, 600, 46, 10, this.chartW());
       const ci = this.state.cross;
       const defs = [{
         id: 'crs-elev', label: 'ELEVATION BY DISTANCE', h: 150, height: '150px',
@@ -383,7 +389,7 @@ class Component extends DCLogic {
         hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey },
       }];
       const specs = cc.multiTrackSpec(defs, {
-        values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km',
+        values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km', cssW: this.chartW(),
         cross: ci != null ? { i: ci } : null,
       });
       const readout = [];
@@ -544,7 +550,7 @@ class Component extends DCLogic {
         policy: { minSpan: 20, tickCount: 4, fmt: cc.fmt.int }, unit: 's',
         series: [{ key: 'delta', name: 'vs target', color: 'var(--series1)', values: rows.map((r) => r.delta), width: 1.6 }],
       }];
-      const specs = cc.multiTrackSpec(defs, { values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km', cross: null });
+      const specs = cc.multiTrackSpec(defs, { values: xs, fmt: (m) => (m / 1000).toFixed(0) + ' km', cssW: this.chartW(), cross: null });
       chart = cv.renderChart(specs[0], R);
     }
 

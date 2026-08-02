@@ -57,6 +57,21 @@ export const POLICIES = {
   heatmap: { ramp: ["hm0", "hm1", "hm2", "hm3", "hm4"] }, // sequential single hue via theme tokens
 };
 
+// ── rendered width vs drawing frame (chart-engine D5) ────────────────────────
+// Every chart is drawn in a 600-unit frame and then STRETCHED to whatever CSS
+// width its card happens to have. Every density decision — how many ticks fit,
+// when to thin a label row, how far apart two annotations must be — is a
+// judgement about what fits ON SCREEN, so it has to be made in rendered CSS
+// pixels, not in frame units. k converts one to the other.
+//
+// Clamped at 1 deliberately: a chart rendered WIDER than its frame (every
+// desktop chart — 600 units across 1022–1066 CSS px) keeps exactly the
+// geometry it has today, so desktop output is unchanged by construction, not
+// by argument. Only a chart rendered NARROWER than its frame tightens.
+export function frameScale(w, cssW) {
+  return cssW > 0 && Number.isFinite(cssW) ? Math.max(1, w / cssW) : 1;
+}
+
 // ── domain policy (design D3) ─────────────────────────────────────────────────
 // nice-extent → forced inclusions → minimum-span expansion about the midpoint →
 // zero-anchor / hard bounds. Returns the resolved domain plus ticks with
@@ -204,22 +219,41 @@ export function isConfident(weight, policy = {}) {
 // ── annotations (design D4) ───────────────────────────────────────────────────
 // Deterministic lane assignment so flags near each other never collide: sort by
 // x then label, greedily take the lowest lane whose previous flag is at least
-// minGap away. Lanes are CAPPED — a flag that would need a fourth lane is
-// dropped rather than drawn into the card head; the data it marks stays
-// reachable in the hover card and the records feed.
-export function placeAnnotations(anns, xScale, width, minGap = 60, maxLanes = 3) {
+// its own EXTENT away. Lanes are CAPPED — but a flag that would need a fourth
+// lane is no longer dropped: flags that cannot be separated are GROUPED into
+// one ("3 records"), so the marks the data carries are never silently lost.
+//
+// The gap is the label's own projected width, not a constant: "race" and
+// "half PB · Sonthofen" need very different room, and both are measured in
+// RENDERED CSS pixels (k), because that is where they either fit or collide.
+// 5.6 px/char is the measured mean advance of .chart-flag's 9px Archivo.
+const FLAG_CHAR_PX = 5.6;
+const FLAG_PAD_PX = 10;
+export function annotationExtent(label) {
+  return String(label == null ? "" : label).length * FLAG_CHAR_PX + FLAG_PAD_PX;
+}
+
+export function placeAnnotations(anns, xScale, width, minGap = 0, maxLanes = 3, k = 1) {
   const placed = (anns || [])
     .map((a) => ({ label: a.label, x: +(+xScale(a.at)).toFixed(1) }))
     .filter((a) => Number.isFinite(a.x) && a.x >= -1 && a.x <= width + 1)
     .sort((p, q) => p.x - q.x || (p.label < q.label ? -1 : p.label > q.label ? 1 : 0));
+  // extent in FRAME units = extent in CSS px × k
+  const gapOf = (a) => Math.max(minGap, annotationExtent(a.label)) * k;
   const laneEnds = [];
   const out = [];
+  const crowded = [];
   for (const a of placed) {
     let lane = 0;
-    while (lane < maxLanes && lane < laneEnds.length && a.x - laneEnds[lane] < minGap) lane++;
-    if (lane >= maxLanes) continue; // crowded out — dropped, not stacked off-frame
+    while (lane < maxLanes && lane < laneEnds.length && a.x - laneEnds[lane] < gapOf(a)) lane++;
+    if (lane >= maxLanes) { crowded.push(a); continue; }
     laneEnds[lane] = a.x;
     out.push({ x: a.x, label: a.label, lane });
+  }
+  // whatever could not be separated becomes one honest mark rather than none
+  if (crowded.length) {
+    const x = +(crowded.reduce((s, a) => s + a.x, 0) / crowded.length).toFixed(1);
+    out.push({ x, label: crowded.length + " more", lane: maxLanes - 1, grouped: crowded.map((a) => a.label) });
   }
   return out;
 }
@@ -282,6 +316,7 @@ export function buildSpec(desc) {
   const frame = desc.frame || {};
   const w = frame.w != null ? frame.w : 600;
   const h = frame.h != null ? frame.h : 150;
+  const k = frameScale(w, frame.cssW);
   const series = desc.series || [];
   const anns0 = desc.annotations || [];
   const basePad = frame.pad || (spark
@@ -291,7 +326,17 @@ export function buildSpec(desc) {
   // reserve headroom so neither collides with the top tick
   const laneCap = anns0.length ? Math.min(3, anns0.length) : 0;
   const yLabelPad = !spark && ((desc.y && desc.y.label) || ((desc.y && desc.y.policy) || {}).dirLabel) ? 10 : 0;
-  const pad = { ...basePad, t: basePad.t + laneCap * 10 + yLabelPad };
+  // The y gutter is a CONSTANT CSS-PIXEL column, not a share of the drawing
+  // frame: it was 44 of 600 units, which renders as 78 CSS px at 1440 and
+  // 22.5 CSS px at 360 — against a tick label that is 11px tall and reads
+  // "5:42". Scaling the horizontal pads by k keeps the chrome the same
+  // physical size and lets the PLOT take the difference. Vertical pads are
+  // left alone: preserveAspectRatio="none" scales the axes independently, so
+  // the horizontal k says nothing about the vertical one.
+  const pad = { ...basePad,
+    l: +(basePad.l * k).toFixed(2),
+    r: +(basePad.r * k).toFixed(2),
+    t: basePad.t + laneCap * 10 + yLabelPad };
   const plot = { x: pad.l, y: pad.t, w: w - pad.l - pad.r, h: h - pad.t - pad.b };
 
   // ── y: one policy-resolved domain across every series ──
@@ -313,7 +358,7 @@ export function buildSpec(desc) {
     xAt = (i) => ls(xk.values[i]);
     if (!spark && !xk.noTicks) {
       const xf = xk.fmt || fmt.int;
-      xTicks = ls.ticks(Math.min(7, Math.max(2, Math.floor(plot.w / 70))))
+      xTicks = ls.ticks(Math.min(7, Math.max(2, Math.floor(plot.w / k / 70))))
         .map((v) => ({ x: +ls(v).toFixed(1), label: xf(v) }));
     }
     xScaleForAnns = ls;
@@ -321,22 +366,22 @@ export function buildSpec(desc) {
     const bs = scaleBand().domain(Array.from({ length: n }, (_, i) => i)).range([plot.x, plot.x + plot.w]).paddingInner(0.35).paddingOuter(0.15);
     band = { x: (i) => bs(i), w: bs.bandwidth() };
     xAt = (i) => bs(i) + bs.bandwidth() / 2;
-    if (xk.labels && !spark) xTicks = thinLabels(xk.labels, xAt, plot.w);
-    else if (dates && !spark) xTicks = monthChangeTicks(dates, xAt);
+    if (xk.labels && !spark) xTicks = thinLabels(xk.labels, xAt, plot.w / k);
+    else if (dates && !spark) xTicks = monthChangeTicks(dates, xAt, k);
     if (dates) xScaleForAnns = (d) => xAt(nearestIndex(dates, d));
   } else if (xk.kind === "time" && dates && dates.length > 1) {
     const ts = scaleUtc().domain(extent(dates)).range([plot.x, plot.x + plot.w]);
     xAt = (i) => ts(dates[i]);
     if (!spark) {
-      const tks = ts.ticks(Math.min(6, Math.max(2, Math.floor(plot.w / 80))));
+      const tks = ts.ticks(Math.min(6, Math.max(2, Math.floor(plot.w / k / 80))));
       xTicks = tks.map((d, ti) => ({ x: +ts(d).toFixed(1), label: timeTickLabel(d, ti === 0) }));
     }
     xScaleForAnns = ts;
   } else {
     const ps = scalePoint().domain(Array.from({ length: n }, (_, i) => i)).range([plot.x, plot.x + plot.w]);
     xAt = (i) => ps(i);
-    if (xk.labels && !spark) xTicks = thinLabels(xk.labels, xAt, plot.w);
-    else if (dates && !spark) xTicks = monthChangeTicks(dates, xAt);
+    if (xk.labels && !spark) xTicks = thinLabels(xk.labels, xAt, plot.w / k);
+    else if (dates && !spark) xTicks = monthChangeTicks(dates, xAt, k);
     if (dates) xScaleForAnns = (d) => xAt(nearestIndex(dates, d));
   }
 
@@ -469,7 +514,7 @@ export function buildSpec(desc) {
 
   // ── annotations (race day, records) ──
   if (anns0.length && xScaleForAnns) {
-    const flags = placeAnnotations(anns0, xScaleForAnns, w).map((f) => ({
+    const flags = placeAnnotations(anns0, xScaleForAnns, w, 0, 3, k).map((f) => ({
       ...f,
       labelY: +(pad.t - 4 - f.lane * 10).toFixed(1),
       y0: pad.t, y1: plot.y + plot.h,
@@ -538,7 +583,10 @@ export function buildSpec(desc) {
     x: { ticks: xTicks, label: (desc.x && desc.x.label) || null },
     y: { ticks: yTicks, label: (desc.y && desc.y.label) || policy.dirLabel || null, domain: [dom.min, dom.max] },
     layers,
-    legend: !spark && series.length >= 2
+    // desc.noLegend: a track inside a stack that shares its series with every
+    // other track. Four tracks × the same two runs meant the same legend four
+    // times down the page; the stack states it once, above its first track.
+    legend: !spark && !desc.noLegend && series.length >= 2
       ? series.map((s) => ({ name: s.name, color: s.color, mark: (s.marks || ["line"]).includes("bars") ? "square" : "line" }))
       : null,
     hover: {
@@ -568,7 +616,7 @@ function thinLabels(labels, xAt, plotW) {
 }
 
 // ticks where the month changes (band/point x-scales), thinned to a readable count
-function monthChangeTicks(dates, xAt) {
+function monthChangeTicks(dates, xAt, k = 1) {
   const out = [];
   let lastMonth = -1, lastYear = -1, lastX = -Infinity;
   dates.forEach((d, i) => {
@@ -577,7 +625,7 @@ function monthChangeTicks(dates, xAt) {
     if (m === lastMonth && y === lastYear) return;
     const x = +xAt(i).toFixed(1);
     lastMonth = m; lastYear = y;
-    if (x - lastX < 44) return; // don't crowd
+    if ((x - lastX) / k < 44) return; // don't crowd
     lastX = x;
     out.push({ x, label: timeTickLabel(d, out.length === 0) });
   });
@@ -672,10 +720,14 @@ export function tileLayout(map) {
 
 // The x scale multiTrackSpec builds each track with — exported so the page's
 // pointer handler bisects against EXACTLY the geometry the tracks rendered.
-export function sharedXScale(values, w = 600, padL = 46, padR = 10) {
+// cssW must be the SAME value handed to multiTrackSpec, or the page's
+// bisection would be measuring a plot the tracks did not draw: buildSpec
+// widens the horizontal pads by k, so this range has to widen with them.
+export function sharedXScale(values, w = 600, padL = 46, padR = 10, cssW) {
+  const k = frameScale(w, cssW);
   return scaleLinear()
     .domain(extent((values || []).filter((v) => v != null)))
-    .range([padL, w - padR]);
+    .range([padL * k, w - padR * k]);
 }
 
 // ── multi-track stack (run-detail D4) ────────────────────────────────────────
@@ -686,12 +738,27 @@ export function sharedXScale(values, w = 600, padL = 46, padR = 10) {
 // track; the last track carries the x tick labels for the whole stack.
 export function multiTrackSpec(tracks, sharedX) {
   const nT = tracks.length;
+  // A shared legend is stated ONCE. "Shared" is decided by the series names,
+  // not by position: a track whose cast is a subset of one already named above
+  // it says nothing new, so it stays silent — but a track carrying a genuinely
+  // different set still introduces it. On /compare that means the four tracks
+  // over the same two runs name them once instead of four times, while the
+  // cadence track (one run, because the other carries no cadence) is unchanged.
+  let stated = null;
+  const suppress = tracks.map((tr) => {
+    const names = (tr.series || []).map((s) => s && s.name).filter(Boolean);
+    if (names.length < 2) return false;               // no legend is emitted anyway
+    if (!stated) { stated = new Set(names); return false; }
+    return names.every((n) => stated.has(n));
+  });
   return tracks.map((tr, ti) => buildSpec({
     id: tr.id,
     ariaLabel: tr.ariaLabel,
     height: tr.height,
+    noLegend: suppress[ti],
     frame: {
       w: sharedX.w != null ? sharedX.w : 600,
+      cssW: sharedX.cssW,
       h: tr.h != null ? tr.h : 90,
       pad: { l: 46, r: 10, t: 6, b: ti === nT - 1 ? 18 : 6 },
     },

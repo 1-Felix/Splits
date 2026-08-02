@@ -301,6 +301,11 @@ class Component extends DCLogic {
 
   tb() { return window.SplitsTopbar; }
 
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name, hover: null }); };
 
   // ---- sync pill (machine in topbar.js — one implementation, every page) ----
@@ -959,7 +964,16 @@ class Component extends DCLogic {
   scopeCut(id, n, defs) {
     const avail = defs.filter(d => d.keep == null || d.keep < n);
     const cur = this.state.scope[id];
-    const sel = avail.find(d => d.key === cur) || avail[avail.length - 1];
+    // progress-views: "a chart offering scope controls opens at a scope whose
+    // point spacing is usable at the current width". 30 monthly points across
+    // a 324px plot is 9.3px apart — under any touch minimum and under the
+    // engine's own label-thinning floor. On a phone the DEFAULT is therefore
+    // the narrowest offered range; the full history stays one tap away, and an
+    // explicit choice by the viewer always wins over this default.
+    const narrowFirst = !cur && this.tb() && typeof window !== 'undefined'
+      && window.innerWidth <= this.tb().PHONE_MAX && avail.length >= 2;
+    const sel = avail.find(d => d.key === cur)
+      || (narrowFirst ? avail[0] : avail[avail.length - 1]);
     return {
       keep: sel.keep == null ? n : Math.min(n, sel.keep),
       scopes: avail.length >= 2 ? avail.map(d => ({
@@ -969,6 +983,7 @@ class Component extends DCLogic {
   }
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // chart engine: pure geometry (chart-core, which consumes chart-hover) +
     // renderer (chart-view) — neutral placeholders render until they resolve
     import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
@@ -1101,7 +1116,7 @@ class Component extends DCLogic {
       scopes: volCut.scopes,
       chart: this.engineChart('vol', {
         ariaLabel: 'Weekly volume, ' + volN + ' weeks, zero-anchored with a four-week rolling mean. Arrow keys to inspect.',
-        height: '140px', frame: { w: 600, h: 150 },
+        height: '140px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'band', dates: volDates },
         y: { policy: cc ? cc.POLICIES.weeklyVolume : {}, label: 'km' },
         series: [{ key: 'km', name: 'Weekly km', color: 'var(--series1)', marks: ['bars'], values: volVals }],
@@ -1127,7 +1142,7 @@ class Component extends DCLogic {
       scopes: vo2Cut.scopes,
       chart: this.engineChart('vo2', {
         ariaLabel: 'VO2 max, ' + vo2Vals.length + ' months, against a 12-month rolling median band. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: vo2Dates },
         y: { policy: cc ? cc.POLICIES.vo2 : {} },
         series: [{ key: 'vo2', name: 'VO₂ max', color: 'var(--series1)', values: vo2Vals }],
@@ -1157,7 +1172,7 @@ class Component extends DCLogic {
       scopes: paceCut.scopes,
       chart: this.engineChart('pace', {
         ariaLabel: 'Average run pace, ' + paceVals.length + ' months, against the goal pace rule. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: paceDates },
         y: { policy: cc ? cc.POLICIES.pace : {} },
         series: [{ key: 'pace', name: 'Avg pace', color: 'var(--series2)', values: paceVals }],
@@ -1185,7 +1200,7 @@ class Component extends DCLogic {
       scopes: fitCut.scopes,
       chart: this.engineChart('fit', {
         ariaLabel: 'Fitness and fatigue, ' + fitN + ' weeks on one zero-anchored scale. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: fitDates },
         y: { policy: cc ? cc.POLICIES.fitnessFatigue : {} },
         series: [
@@ -1213,7 +1228,7 @@ class Component extends DCLogic {
       scopes: cadCut.scopes,
       chart: this.engineChart('cad', {
         ariaLabel: 'Cadence, ' + cadVals.length + ' months, against a 12-month rolling median band. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: cadDates },
         y: { policy: cc ? cc.POLICIES.cadence : {}, label: 'spm' },
         series: [{ key: 'cad', name: 'Cadence', color: 'var(--series1)', values: cadVals }],
@@ -1265,7 +1280,7 @@ class Component extends DCLogic {
           last: valid.length ? fmtVal(valid[valid.length - 1]) : '—',
           chart: this.engineChart(chartId, {
             ariaLabel: name + ', monthly, dot size showing minutes of in-band evidence; gaps are months without enough. Arrow keys to inspect, Enter on a pinned month to view its evidence.',
-            height: '130px', frame: { w: 600, h: 150 },
+            height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
             x: { kind: 'time', dates },
             y: { policy },
             series: [{ key: 'v', name, color, values: vals, marks: ['line', 'dots'], weights }],
@@ -1382,7 +1397,7 @@ class Component extends DCLogic {
         yoy = {
           chart: this.engineChart('yoy', {
             ariaLabel: 'Year over year monthly volume, ' + years.join(' vs ') + ', on one zero-anchored scale. Arrow keys to inspect months, Enter on a pinned month to view its runs.',
-            height: '150px', frame: { w: 600, h: 150 },
+            height: '150px', frame: { w: 600, h: 150, cssW: this.chartW() },
             x: { kind: 'band', labels: M },
             y: { policy: cc ? cc.POLICIES.yoy : {}, label: 'km' },
             series: yoySeries,

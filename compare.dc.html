@@ -136,12 +136,12 @@
       </div>
     </div>
     <sc-for list="{{ pg.readout }}" as="ro" hint-placeholder-count="0">
-      <div style="display:flex;flex-direction:column;gap:var(--sp-1);font-family:'JetBrains Mono';font-size:var(--fs-xs);font-weight:600;margin-bottom:var(--sp-2);padding:var(--sp-2) var(--sp-3);background:var(--panel2);border-radius:var(--r-md)">
-        <div style="color:var(--sub)">{{ ro.at }}</div>
+      <div class="{{ ro.cls }}">
+        <div class="ro-k">{{ ro.at }}</div>
         <sc-for list="{{ ro.runs }}" as="rr" hint-placeholder-count="2">
-          <div style="display:flex;align-items:center;gap:var(--sp-2)">
-            <span style="width:8px;height:8px;border-radius:50%;background:{{ rr.dot }};flex:none"></span>
-            <span style="color:var(--sub)">{{ rr.name }}</span>
+          <div class="ro-run">
+            <span class="ro-dot" style="background:{{ rr.dot }}"></span>
+            <span class="ro-k">{{ rr.name }}</span>
             <span>{{ rr.vals }}</span>
           </div>
         </sc-for>
@@ -201,6 +201,11 @@ class Component extends DCLogic {
             slots: [], cross: null, now: new Date() };
 
   tb() { return window.SplitsTopbar; }
+
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
 
   ids() {
@@ -215,6 +220,7 @@ class Component extends DCLogic {
   }
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // import() inside the dc-runtime's compiled script can resolve against a
     // STALE base URL after a same-site navigation (Chromium quirk with
     // dynamically-compiled code) — resolving explicitly against document.baseURI
@@ -374,7 +380,7 @@ class Component extends DCLogic {
         const grid = [];
         for (let x = 0; x <= maxD; x += step) grid.push(x);
         this._grid = grid;
-        this._xScale = cc.sharedXScale(grid);
+        this._xScale = cc.sharedXScale(grid, 600, 46, 10, this.chartW());
         const rs = new Map(streamed.map((s) => [s.id, this.resample(s.streams, grid, tol)]));
         const ends = new Map(streamed.map((s) => [s.id, maxOf(s.streams)]));
 
@@ -408,7 +414,7 @@ class Component extends DCLogic {
         const ci = this.state.cross;
         const specs = cc.multiTrackSpec(
           defs.map((t) => ({ ...t, hover: { onMove: this.moveCross, onLeave: this.leaveCross, onKey: this.crossKey } })),
-          { values: grid, fmt: xFmt, cross: ci != null ? { i: ci } : null });
+          { values: grid, fmt: xFmt, cssW: this.chartW(), cross: ci != null ? { i: ci } : null });
         pg.tracks = specs.map((spec, i) => ({ label: defs[i].label, chart: cv.renderChart(spec, R) }));
 
         // the readout: every run at ONE distance; a run already finished at
@@ -430,11 +436,12 @@ class Component extends DCLogic {
             if (r.elev && r.elev[ci] != null) parts.push(Math.round(r.elev[ci]) + ' m');
             return { dot: color.get(s.id), name: label(s), vals: parts.join(' · ') || '—' };
           });
-          pg.readout = [{ at: 'at ' + at, runs }];
+          pg.readout = [{ at: 'at ' + at, runs, cls: 'chart-readout chart-readout--stack chart-readout--live' }];
           liveText = 'at ' + at + ': ' + runs.map((r) => r.name + ' ' + r.vals).join('; ');
         } else {
           pg.readout = [{ at: 'touch, point or focus a track — ←/→ moves the crosshair',
-            runs: streamed.map((s) => ({ dot: color.get(s.id), name: label(s), vals: '—' })) }];
+            runs: streamed.map((s) => ({ dot: color.get(s.id), name: label(s), vals: '—' })),
+            cls: 'chart-readout chart-readout--stack chart-readout--idle' }];
         }
       }
       // per-run stream notes (summary-only runs stay in the comparison)

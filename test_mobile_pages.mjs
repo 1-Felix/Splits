@@ -262,6 +262,135 @@ try {
     await ctx.close();
   }
 
+  // ── charts respond to a finger (chart-engine D6) ─────────────────────────
+  // Before this, a tap worked only because the browser synthesises a mouse
+  // event afterwards, a drag produced no events at all, and the chart-drill's
+  // second activation was provably dead on touch. These drive real
+  // PointerEvents with pointerType "touch", which is the path a finger takes.
+  {
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true });
+    const page = await ctx.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (e) => pageErrors.push(String(e)));
+
+    // dispatch a press / scrub / release across a fraction of an element
+    const touch = (sel, from, to) => page.evaluate(([s, f0, f1]) => {
+      const el = document.querySelector(s);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const at = (f) => ({
+        bubbles: true, cancelable: true, pointerType: "touch", pointerId: 1,
+        isPrimary: true, clientX: r.left + r.width * f, clientY: r.top + r.height / 2,
+      });
+      el.dispatchEvent(new PointerEvent("pointerdown", { ...at(f0), buttons: 1, pressure: 0.5 }));
+      if (f1 != null) el.dispatchEvent(new PointerEvent("pointermove", { ...at(f1), buttons: 1, pressure: 0.5 }));
+      el.dispatchEvent(new PointerEvent("pointerup", { ...at(f1 == null ? f0 : f1), buttons: 0, pressure: 0 }));
+      return true;
+    }, [sel, from, to]);
+
+    // ── a stream stack: press places a reading, drag scrubs it ────────────
+    step = "chart touch: run stack";
+    await page.goto(B + "/run/" + RUN_ID, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("svg[data-chart='trend']", { timeout: 20000 });
+    await page.waitForSelector(".chart-readout", { state: "attached", timeout: 20000 });
+
+    const idle = await page.evaluate(() => {
+      const ro = document.querySelector(".chart-readout");
+      const svg = document.querySelectorAll("svg[data-chart='trend']")[0];
+      return { cls: ro.className, visible: ro.getBoundingClientRect().height > 0,
+               chartTop: Math.round(svg.getBoundingClientRect().top + window.scrollY) };
+    });
+    assert.ok(idle.cls.includes("chart-readout--idle"), "the readout is reserved but idle before any reading");
+    assert.strictEqual(idle.visible, false, "and takes no phone screen while it has nothing to say");
+
+    assert.ok(await touch("svg[data-chart='trend']", 0.3), "the first track exists to be touched");
+    await page.waitForFunction(() => {
+      const ro = document.querySelector(".chart-readout");
+      return ro && ro.className.includes("--live");
+    }, null, { timeout: 5000 });
+    const placed = await page.evaluate(() => {
+      const ro = document.querySelector(".chart-readout");
+      const svg = document.querySelectorAll("svg[data-chart='trend']")[0];
+      const bar = ro.getBoundingClientRect();
+      return { text: ro.innerText.replace(/\s+/g, " ").trim(),
+               chartTop: Math.round(svg.getBoundingClientRect().top + window.scrollY),
+               barBottom: Math.round(bar.bottom), vh: window.innerHeight,
+               crosshairs: document.querySelectorAll("svg[data-chart='trend'] line[stroke-dasharray='3 3']").length };
+    });
+    assert.ok(/\d/.test(placed.text), "the reading names values: " + placed.text);
+    // chart-engine: "a stack of tracks shows its shared axis" — the x tick
+    // labels live on the stack's LAST track, which is off-screen while an
+    // upper track is being scrubbed, so the reading states the shared-axis
+    // position itself and stays on the viewport floor while it does
+    assert.ok(/^at\b/.test(placed.text) && /km|\d+:\d\d/.test(placed.text),
+      "the reading states where on the shared axis it is: " + placed.text);
+    assert.ok(placed.crosshairs > 0, "a crosshair is drawn where the finger pressed");
+    // "placing a reading does not move the chart"
+    assert.strictEqual(placed.chartTop, idle.chartTop,
+      `the chart stays where it was (${idle.chartTop} → ${placed.chartTop})`);
+    // "the reading is visible where it is placed" — a bar on the viewport
+    // floor, above the tab bar, not 186px below the end of the stack
+    assert.ok(placed.barBottom <= placed.vh + 1 && placed.barBottom > placed.vh - 120,
+      `the reading sits on the viewport floor (bottom=${placed.barBottom}, vh=${placed.vh})`);
+
+    // a drag scrubs it continuously
+    const first = placed.text;
+    await touch("svg[data-chart='trend']", 0.3, 0.75);
+    await page.waitForFunction((prev) => {
+      const ro = document.querySelector(".chart-readout");
+      return ro && ro.innerText.replace(/\s+/g, " ").trim() !== prev;
+    }, first, { timeout: 5000 });
+    const scrubbed = await page.evaluate(() =>
+      document.querySelector(".chart-readout").innerText.replace(/\s+/g, " ").trim());
+    assert.notStrictEqual(scrubbed, first, "the reading follows the finger: " + first + " → " + scrubbed);
+
+    // ── a dense band chart: the nearest point is read, not a 9px target ────
+    step = "chart touch: dense band chart";
+    await page.goto(B + "/progress", { waitUntil: "domcontentloaded" });
+    const eff = 'svg[aria-label^="Pace at reference HR"]';
+    await page.waitForSelector(eff, { timeout: 20000 });
+    const beforeTap = await page.evaluate((s) =>
+      Math.round(document.querySelector(s).getBoundingClientRect().top + window.scrollY), eff);
+    await touch(eff, 0.42);
+    await page.waitForFunction(() => document.querySelector('[data-card]') !== null, null, { timeout: 5000 });
+    const afterTap = await page.evaluate((s) => ({
+      top: Math.round(document.querySelector(s).getBoundingClientRect().top + window.scrollY),
+      card: document.querySelector("[data-card]").innerText.replace(/\s+/g, " ").trim(),
+      drill: document.querySelectorAll(".pop-drill").length,
+      drillBox: [...document.querySelectorAll(".pop-drill")].map((b) => {
+        const r = b.getBoundingClientRect();
+        return [Math.round(r.width), Math.round(r.height)];
+      }),
+    }), eff);
+    assert.ok(/\d/.test(afterTap.card), "pressing anywhere reads the nearest point: " + afterTap.card);
+    assert.strictEqual(afterTap.top, beforeTap, "and the chart did not move under the finger");
+
+    // ── the drill is reachable by touch (chart-drill) ─────────────────────
+    step = "chart touch: drill";
+    assert.strictEqual(afterTap.drill, 1, "a pinned reading offers its drill as a control");
+    assert.ok(afterTap.drillBox[0][1] >= 44,
+      `the drill affordance meets the touch floor (${afterTap.drillBox[0].join("×")})`);
+    await page.click(".pop-drill");
+    await page.waitForFunction(() => {
+      const p = document.querySelector("#drill-panel");
+      return p && (p.querySelectorAll("a.drill-run").length > 0 || p.innerText.includes("No run put time"));
+    }, null, { timeout: 15000 });
+    const panel = await page.evaluate(() => {
+      const p = document.querySelector("#drill-panel");
+      const r = p.getBoundingClientRect();
+      return { top: Math.round(r.top), vh: window.innerHeight, w: Math.round(r.width),
+               position: getComputedStyle(p).position,
+               scrollW: document.documentElement.scrollWidth };
+    });
+    assert.strictEqual(panel.position, "fixed", "the evidence view is a bottom sheet on a phone");
+    assert.ok(panel.top >= 0 && panel.top < panel.vh,
+      `its heading is in the viewport (top=${panel.top}, vh=${panel.vh})`);
+    assert.ok(panel.scrollW <= PHONE.width + 1, "and it does not widen the document");
+
+    assert.deepStrictEqual(pageErrors, [], "no page errors on the touch path: " + JSON.stringify(pageErrors));
+    await ctx.close();
+  }
+
   // ── the cockpit's content contract (live-dashboard) ──────────────────────
   {
     const ctx = await browser.newContext({ viewport: PHONE });

@@ -176,6 +176,20 @@ try {
     page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto(`http://localhost:${port}${path}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(readyFn, null, { timeout: 15000 });
+    // The ready markers ("Avg run pace", the heatmap cells) are satisfied by
+    // the pages' BUILT-IN placeholder dataset too, which carries every metric —
+    // so a machine under load could settle on the placeholder render and read
+    // its text instead of this instance's. Wait for the dynamic import of
+    // running-data.js to have finished before reading anything, or the
+    // absence assertions below are racing the module graph.
+    // Settle on two identical reads rather than on the network: an ingest-fed
+    // instance keeps a status poll open, so "networkidle" never arrives.
+    await page.waitForFunction(() => {
+      const t = document.body.innerText;
+      if (window.__settleText === t) return true;
+      window.__settleText = t;
+      return false;
+    }, null, { timeout: 15000, polling: 300 });
     const text = await page.evaluate(() => document.body.innerText);
     const cardReady = await page.evaluate(() => !!document.querySelector("#card-ready"));
     const heatCells = await page.evaluate(() => document.querySelectorAll('rect[data-hb="heat"]').length);

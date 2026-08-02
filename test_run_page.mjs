@@ -680,6 +680,16 @@ try {
   assert.ok(repCardBox.x >= 0 && repCardBox.x + repCardBox.width <= 391,
     `the rep card fits the phone viewport: x=${repCardBox.x} w=${repCardBox.width}`);
   await page.setViewportSize({ width: 1280, height: 720 });
+  // make-mobile-native (chart-engine D5): charts decide their density and
+  // their gutter against the width they are actually RENDERED at, so the page
+  // re-renders its tracks after a viewport change (debounced). Wait for the
+  // phone geometry to be gone before pinning a coordinate to the desktop one —
+  // this waits for "not the narrow render", so the pin below still asserts.
+  await page.waitForFunction(() => {
+    const svg = document.querySelectorAll("svg[data-chart='trend']")[0];
+    const b = svg && svg.querySelector(".rep-band");
+    return b && +b.getAttribute("x") < 180;
+  }, null, { timeout: 5000 });
 
   // ── add-interval-lens: the stream tracks shade the detected reps behind
   // their lines, so the crosshair tells you which rep you're looking at.

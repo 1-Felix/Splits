@@ -485,6 +485,11 @@ class Component extends DCLogic {
 
   tb() { return window.SplitsTopbar; }
 
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
+
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name, hover: null }); };
   toggleRun = (id) => { this.setState({ expandedRun: this.state.expandedRun === id ? null : id, hover: null }); };
   // planned-workout detail (THIS WEEK) — mirrors toggleRun; id = weekIndex + ':' + day
@@ -733,6 +738,7 @@ class Component extends DCLogic {
   };
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // chart engine: pure geometry (chart-core, which consumes chart-hover) +
     // renderer (chart-view) — neutral placeholders render until they resolve
     import('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
@@ -1054,7 +1060,7 @@ class Component extends DCLogic {
       sub: sN + ' nights · target band 7–9 h',
       chart: this.engineChart('sleep', {
         ariaLabel: 'Sleep hours, ' + sN + ' nights, against the 7 to 9 hour target band. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'band', dates: nightDates },
         y: { policy: cc ? cc.POLICIES.sleepHours : {}, label: 'h' },
         series: [{ key: 'h', name: 'Sleep', color: 'var(--series2)', marks: ['bars'], values: sl.map(d => d.hours) }],
@@ -1072,7 +1078,7 @@ class Component extends DCLogic {
       sub: sN + ' nights · personal baseline band',
       chart: this.engineChart('hrv', {
         ariaLabel: 'Overnight HRV, ' + sN + ' nights, against your personal baseline band. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: nightDates },
         y: { policy: cc ? cc.POLICIES.hrv : {}, label: 'ms' },
         series: [{ key: 'hrv', name: 'HRV', color: 'var(--series1)', values: sl.map(d => d.hrv) }],
@@ -1094,7 +1100,7 @@ class Component extends DCLogic {
       sub: rh.length + ' days · personal median band · lower is fitter',
       chart: this.engineChart('rhr', {
         ariaLabel: 'Resting heart rate, ' + rh.length + ' days, against your personal baseline band. Arrow keys to inspect.',
-        height: '130px', frame: { w: 600, h: 150 },
+        height: '130px', frame: { w: 600, h: 150, cssW: this.chartW() },
         x: { kind: 'time', dates: rh.map(d => new Date(d.date + 'T00:00:00Z')) },
         y: { policy: cc ? cc.POLICIES.restingHr : {}, label: 'bpm' },
         series: [{ key: 'rhr', name: 'Resting HR', color: 'var(--series1)', values: rh.map(d => d.bpm) }],
@@ -1254,7 +1260,7 @@ class Component extends DCLogic {
           const spec = cc.buildSpec({
             id: 'traj',
             ariaLabel: 'Race trajectory: demonstrated and model-predicted half-marathon time by week against the ' + this.fmtHMS(T.goalSec) + ' goal. Arrow keys to inspect, Enter on a pinned week to open its anchoring run.',
-            height: '170px', frame: { w: 600, h: 170 },
+            height: '170px', frame: { w: 600, h: 170, cssW: this.chartW() },
             x: { kind: 'time', dates },
             y: { policy: cc.POLICIES.trajectory, include: [T.goalSec] },
             series: [

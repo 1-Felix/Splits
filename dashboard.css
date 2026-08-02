@@ -159,6 +159,20 @@
 
 /* floating data-point card (hover/tap). position/left/top/transform stay inline (dynamic). */
 .pop { background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2); font-size: var(--fs-xs); line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-pop); pointer-events: none; }
+/* the drill affordance on a pinned reading — a real control, not a caption */
+.pop-drill { display: block; width: 100%; text-align: left; color: var(--accent); font-weight: var(--fw-extrabold); font-family: 'JetBrains Mono', monospace; font-size: inherit; margin-top: var(--sp-1); padding-top: var(--sp-1); border: none; border-top: 1px solid var(--line); background: none; white-space: nowrap; cursor: pointer; }
+.pop-drill:active { filter: brightness(1.3); }
+
+/* ---- the crosshair readout (chart-engine: "placing a reading does not move
+   the chart") — reserved whether or not a reading is placed, so the chart
+   cannot shift out from under the finger that placed it (measured: a 104px
+   jump on the run page). ---- */
+.chart-readout { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-sm); font-weight: var(--fw-semibold); margin-bottom: var(--sp-2); padding: var(--sp-2) var(--sp-3); background: var(--panel2); border-radius: var(--r-md); min-height: 34px; align-items: center; }
+.chart-readout--idle { color: var(--sub); }
+.ro-k { color: var(--sub); }
+.chart-readout--stack { flex-direction: column; align-items: flex-start; gap: var(--sp-1); font-size: var(--fs-xs); }
+.ro-run { display: flex; align-items: center; gap: var(--sp-2); }
+.ro-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
 /* ---- card header pattern ---- */
 .card-head  { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -605,6 +619,18 @@
     box-shadow: var(--shadow-pop);
   }
   .drill-close { width: 44px !important; height: 44px !important; }
+
+  /* the reading becomes a bar on the viewport floor, above the tab bar, and
+     appears only while a reading is placed — so it never occupies a phone
+     screen it has nothing to say on, and never pushes the chart down */
+  .chart-readout {
+    position: fixed; left: 0; right: 0; bottom: var(--tabbar-h); z-index: 55;
+    margin: 0; border-radius: 0; border-top: 1px solid var(--line);
+    background: var(--panel); box-shadow: var(--shadow-pop);
+    padding: var(--sp-2) clamp(16px, 4vw, 40px);
+  }
+  .chart-readout--idle { display: none; }
+  .pop-drill { min-height: 44px; display: flex; align-items: center; }
 
   /* a section heading whose meta is a sentence: the rule collapses to nothing
      and the meta takes its own line, instead of squeezing the heading */

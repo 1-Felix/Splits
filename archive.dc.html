@@ -227,10 +227,16 @@ class Component extends DCLogic {
   })();
 
   tb() { return window.SplitsTopbar; }
+
+  // The CSS width a chart card is actually rendered at (chart-engine D5).
+  // null above the phone tier, where the frame is already narrower than
+  // the render and the engine leaves the geometry alone.
+  chartW() { const t = this.tb(); return t && t.chartCssWidth ? t.chartCssWidth() : null; }
   setTheme = (name) => { this.tb() && this.tb().persistTheme(name); this.setState({ theme: name }); };
   syncNow = () => { this.tb() && this.tb().syncNow(this); };
 
   componentDidMount() {
+    if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // explicit base-URL resolution — see the note in compare.dc.html
     import(new URL('./running-data.js', document.baseURI).href)
       .then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});

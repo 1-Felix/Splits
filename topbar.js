@@ -234,6 +234,43 @@ export function initSyncStatus(host) {
 // dashboard.css's phone media query.
 export const PHONE_MAX = 700;
 
+// ── the width a chart is actually rendered at (chart-engine D5) ──────────────
+// Every chart is drawn in a 600-unit frame and stretched to its card. Passing
+// the rendered CSS width lets the engine make density decisions on screen
+// instead of in frame units. It is DERIVED from the layout contract, not
+// measured: .app-root's padding is clamp(16px, 4vw, 40px), a .card adds 16px of
+// padding and a 1px border on each side, and below the phone tier every chart
+// grid is a single column. That is exactly the 324px the audit measured a
+// cockpit chart at on a 390px viewport.
+//
+// Above the phone tier it returns null, and the engine then leaves the frame
+// alone: a chart rendered wider than 600 CSS px keeps today's geometry, so
+// there is nothing to correct and nothing to risk.
+export function chartCssWidth(vw) {
+  const w = vw != null ? vw : (typeof window !== "undefined" ? window.innerWidth : null);
+  if (!w || w > PHONE_MAX) return null;
+  const pad = Math.min(40, Math.max(16, w * 0.04));
+  const card = 17;   // .card padding (16) + border (1)
+  return Math.max(200, Math.round(w - 2 * pad - 2 * card));
+}
+
+// Re-render a page when the viewport width actually changes (a rotation, a
+// desktop window drag), so charts re-decide their density against the width
+// they are now rendered at. Height changes are ignored: a mobile browser's
+// collapsing toolbar fires resize constantly and nothing here depends on it.
+export function watchWidth(host) {
+  if (typeof window === "undefined" || !host || typeof host.setState !== "function") return () => {};
+  let last = window.innerWidth, timer = null;
+  const onResize = () => {
+    if (window.innerWidth === last) return;
+    last = window.innerWidth;
+    clearTimeout(timer);
+    timer = setTimeout(() => host.setState({ vw: last }), 150);
+  };
+  window.addEventListener("resize", onResize);
+  return () => { clearTimeout(timer); window.removeEventListener("resize", onResize); };
+}
+
 const TAB_ICON = { cockpit: "home", progress: "chart", archive: "archive", course: "route" };
 const tabKey = (label) => String(label || "").trim().toLowerCase().replace(/[^a-z]/g, "");
 
@@ -623,6 +660,7 @@ if (typeof window !== "undefined") {
     navModel, dayBucket, greetingText,
     syncPillModel, syncNow, waitForSync, initSyncStatus,
     tabModel, mountTabBar, mountHeaderMore, openSheet, closeSheet, sheetIsOpen,
+    chartCssWidth, watchWidth,
     armSwipe, swipeRefused,
   };
   // Theme the document root before first paint: the body background, the tab

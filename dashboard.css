@@ -61,7 +61,42 @@
   --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 99px;
   /* shadow */
   --shadow-pop: 0 6px 18px rgba(0,0,0,.30);
+
+  /* ---- chrome contract (mobile-chrome: "the chrome declares its own height")
+     Every fixed or sticky surface reads --tabbar-h instead of hardcoding the
+     bottom bar's height. It resolves to 0 above the phone tier, so one rule is
+     correct at every width. --safe-b/--safe-t are the device's own insets,
+     defaulted to 0 for browsers that report none. */
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --tabbar-h: 0px;
+  --tabbar-ink: 56px;      /* the bar's own height, before the safe area */
+  --topbar-h: 56px;        /* the sticky header's phone-tier height */
 }
+@media (max-width: 700px) {
+  :root { --tabbar-h: calc(var(--tabbar-ink) + var(--safe-b)); }
+}
+
+/* ---- the page frame ----
+   .app-root is the themed root div every page's render() returns; .page-shell
+   is the one content container they all share, so the chrome does not change
+   width as the viewer navigates between pages. Both were inline styles (and
+   two different max-widths) before make-mobile-native; CSS could not reach
+   them at all. 100dvh with a 100vh fallback: dvh follows the mobile browser's
+   collapsing toolbar, vh does not. */
+.app-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 22px clamp(16px, 4vw, 40px) calc(64px + var(--tabbar-h));
+}
+.page-shell { width: 100%; max-width: 1340px; margin: 0 auto; }
+
+/* ---- focus and press feedback (responsive-layout: "activation is visibly
+   acknowledged") — themed, because the user agent's ring is invisible against
+   the dark surfaces. The two authored rules further down keep their tighter
+   offsets; this is the floor everything else inherits. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 
 /* ---- surfaces ---- */
 .card        { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-4); }
@@ -97,11 +132,18 @@
 /* ---- top bar ---- */
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-6); }
 .topbar-actions { display: flex; align-items: center; gap: var(--sp-4); }  /* nav · sync pill · themes · avatar */
+/* the page's single <h1> — it was a styled div, so no page named itself to a
+   screen reader or a browser tab */
+.topbar-title { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -.01em; white-space: nowrap; }
 
 /* ---- hero layout ---- */
 .hero-grid   { display: grid; grid-template-columns: 1.55fr 1fr 1.4fr; gap: var(--sp-4); margin-bottom: var(--sp-4); }
 .stats-grid  { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
-.chart-grid  { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-4); }
+/* minmax(min(340px,100%),…): the bare 340px floor made every chart card 340px
+   wide inside a narrower grid, so charts alone hung past the page at 320/360/372.
+   min() lets the track shrink to the container while keeping the 340px
+   two-up threshold everywhere it fits. */
+.chart-grid  { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-4); }
 
 /* ---- section headings ---- */
 .section-head        { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-3); }
@@ -150,6 +192,42 @@
 .wk-ph-km    { font-family: 'JetBrains Mono', monospace; color: var(--ink); font-weight: var(--fw-bold); }
 .wk-ph-note  { font-size: var(--fs-xs); color: var(--sub); font-weight: var(--fw-medium); line-height: 1.4; margin-top: var(--sp-2); }
 
+/* ---- training block week rows (/progress) ----
+   The row's layout lives here, not inline, so the phone tier can re-compose it
+   into two lines without fighting inline styles with !important. Only the
+   current-week accent stays a modifier class; the per-day glyph colours stay
+   inline because they are data. */
+.block-week {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  padding: var(--sp-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: transparent; color: var(--ink); font-family: inherit;
+  font-size: var(--fs-sm); cursor: pointer; margin-bottom: var(--sp-1);
+  text-align: left; overflow: hidden;   /* guard: no child may escape the button */
+}
+.block-week--cur { border-color: var(--accent); background: var(--panel2); }
+.blk-wk    { min-width: 48px; font-weight: var(--fw-extrabold); }
+.blk-ph    { min-width: 56px; font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .06em; }
+.blk-tag   { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .06em; padding: 2px 8px; border-radius: var(--r-pill); background: var(--accentFade); color: var(--accent); white-space: nowrap; }
+.blk-glyphs { display: flex; gap: 7px; flex: 1; min-width: 0; }
+.blk-day   { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.blk-dow   { display: none; font-size: var(--fs-2xs); color: var(--sub); font-weight: var(--fw-bold); }
+.blk-mark  { font-weight: var(--fw-extrabold); font-family: 'JetBrains Mono', monospace; }
+.blk-none  { color: var(--warn); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+.blk-km    { font-family: 'JetBrains Mono', monospace; color: var(--sub); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap; }
+.blk-chev  { color: var(--sub); }
+
+/* the expanded week's per-day rows — same story: the layout moves out of the
+   inline styles so the phone tier can re-compose rather than squeeze. The six
+   fixed columns summed past a 390px viewport (517px of document, measured with
+   a week open) and only the collapsed row had ever been checked. */
+.block-day { display: flex; align-items: baseline; gap: var(--sp-3); padding: var(--sp-1) 0; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.bd-date   { min-width: 58px; color: var(--sub); font-weight: var(--fw-semibold); }
+.bd-title  { flex: 1 1 120px; font-weight: var(--fw-bold); }
+.bd-plan   { min-width: 96px; color: var(--sub); font-weight: var(--fw-medium); }
+.bd-status { min-width: 120px; font-weight: var(--fw-bold); }
+.bd-actual { font-family: 'JetBrains Mono', monospace; color: var(--sub); font-size: var(--fs-xs); }
+.block-run-link { color: var(--accent); font-weight: var(--fw-bold); text-decoration: none; white-space: nowrap; }
+
 /* THIS WEEK header: active-week label + back-to-current control */
 .wk-active { font-size: var(--fs-sm); color: var(--accent); font-weight: var(--fw-bold); letter-spacing: .02em; }
 .wk-back   { font-size: var(--fs-xs); font-weight: var(--fw-bold); color: var(--sub); background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px; cursor: pointer; }
@@ -197,17 +275,41 @@
 .arch-filters { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
 .arch-search  { font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); min-width: 180px; }
 .arch-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.arch-head, .arch-row { display: grid; grid-template-columns: 30px .9fr 1.9fr .9fr .65fr .75fr .75fr .6fr; gap: var(--sp-2); }
+/* An archived activity is ONE record: the whole row (minus a reserved leading
+   column) opens the run, and selecting for comparison is a separate control
+   inside that reserved column. Before this the 18px toggle sat on top of the
+   run name on 15 of 18 rows, and missing it by 14px navigated away and threw
+   the selection out. --arch-lead is the width the row link does NOT claim. */
+:root { --arch-lead: 56px; }
+.arch-head, .arch-row { display: grid; grid-template-columns: var(--arch-lead) .9fr 1.9fr 1fr 2.1fr; gap: var(--sp-2); }
 .arch-head { font-size: var(--fs-2xs); letter-spacing: .06em; color: var(--sub); font-weight: var(--fw-bold); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); }
-.arch-row  { font-size: var(--fs-sm); padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); align-items: center; }
+.arch-row  { font-size: var(--fs-sm); padding: var(--sp-3) 0; border-bottom: 1px solid var(--line); align-items: center; position: relative; }
+.arch-cmp  { display: flex; align-items: center; }
+.arch-date { color: var(--sub); font-weight: var(--fw-semibold); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); }
+.arch-name { min-width: 0; }
+.arch-type { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .04em; color: var(--sub); }
+.arch-plain { color: var(--sub); font-weight: var(--fw-semibold); }
+.arch-shape { font-size: var(--fs-2xs); font-weight: var(--fw-extrabold); letter-spacing: .04em; padding: 2px 7px; border-radius: var(--r-pill); background: var(--accentFade); color: var(--accent); white-space: nowrap; }
+.arch-measures { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.arch-head .arch-measures > span,
 .arch-row [data-label] { text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: var(--fw-semibold); }
+.arch-head .arch-measures > span { font-family: inherit; }
 .arch-link { color: var(--ink); font-weight: var(--fw-bold); text-decoration: none; }
 .arch-link:hover { color: var(--accent); }
-.cmp-toggle { width: 18px; height: 18px; border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; cursor: pointer; padding: 0; font-size: 11px; line-height: 1; color: var(--bg); font-family: inherit; }
+/* the row IS the link — everywhere except the reserved leading column, so a
+   missed tap at the toggle can never navigate */
+.arch-link::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--arch-lead); right: 0; border-radius: var(--r-md); }
+.cmp-toggle { width: 18px; height: 18px; border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; cursor: pointer; padding: 0; font-size: 11px; line-height: 1; color: var(--bg); font-family: inherit; position: relative; z-index: 1; }
 .cmp-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
-.cmp-tray { position: sticky; bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); background: var(--panel2); border: 1px solid var(--accent); border-radius: var(--r-pill); padding: var(--sp-2) var(--sp-4); box-shadow: var(--shadow-pop); margin-top: var(--sp-3); z-index: 5; }
+/* the tray reads the chrome contract rather than hardcoding the bar's height,
+   so the same declaration is correct at every width (--tabbar-h is 0 above the
+   phone tier) */
+.cmp-tray { position: sticky; bottom: calc(var(--sp-3) + var(--tabbar-h)); display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; background: var(--panel2); border: 1px solid var(--accent); border-radius: var(--r-lg); padding: var(--sp-2) var(--sp-4); box-shadow: var(--shadow-pop); margin-top: var(--sp-3); z-index: 5; }
 .cmp-go { font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-extrabold); color: var(--bg); background: var(--accent); border: none; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); cursor: pointer; }
 .cmp-go:disabled { opacity: .45; cursor: default; }
+.cmp-count  { font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+.cmp-hint   { font-size: var(--fs-xs); color: var(--warn); font-weight: var(--fw-semibold); }
+.cmp-spacer { flex: 1; }
 
 /* ---- run comparison (/compare): summary + aligned splits ---- */
 .cmp-summary { display: grid; gap: var(--sp-2) var(--sp-3); align-items: baseline; }
@@ -216,27 +318,313 @@
 .timeline { display: flex; flex-direction: column; gap: 0; }
 .timeline-item { display: flex; gap: var(--sp-3); padding-bottom: var(--sp-4); }
 
+/* ============================================================================
+   THE PERSISTENT CHROME (mobile-chrome)
+
+   Both surfaces are injected by topbar.js into document.body — outside React's
+   mounted subtree by construction, so they survive every re-render and are
+   authored once instead of six times. They are toggled with `display`, never
+   with transform/opacity/off-screen positioning: measured in Chromium, only
+   display:none / visibility:hidden / [hidden] / content-visibility:hidden are
+   excluded from innerText, and several desktop tests assert the ABSENCE of the
+   words "Archive"/"Progress" that a parked-off-canvas bar would reintroduce.
+   ========================================================================= */
+
+/* tab icons: CSS masks, not inline <svg> — test_course_page.mjs asserts
+   document.querySelectorAll("svg").length === 0 on a course-less /course, and
+   test_offline.mjs asserts no request leaves the origin. A mask-image creates
+   no element and contacts no origin, and takes its colour from currentColor. */
+:root {
+  --ico-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 11l9-8 9 8'/%3E%3Cpath d='M5 10v10h5v-6h4v6h5V10'/%3E%3C/svg%3E");
+  --ico-chart: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 21h18'/%3E%3Cpath d='M6 17V11'/%3E%3Cpath d='M11 17V5'/%3E%3Cpath d='M16 17v-8'/%3E%3Cpath d='M21 17v-4'/%3E%3C/svg%3E");
+  --ico-archive: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='4' rx='1'/%3E%3Cpath d='M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8'/%3E%3Cpath d='M10 12h4'/%3E%3C/svg%3E");
+  --ico-route: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Ccircle cx='18' cy='6' r='3'/%3E%3Cpath d='M9 18h5a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h5'/%3E%3C/svg%3E");
+  --ico-dot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23000'%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3C/svg%3E");
+  --ico-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23000'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
+}
+
+.tabbar, .hdr-more { display: none; }
+
+/* ---- the bottom sheet (every width: it is also the desktop drill container's
+   phone form, and the coach note's "read the full note" destination) ---- */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(0, 0, 0, .48);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet {
+  width: 100%; max-width: 720px; max-height: 88dvh;
+  display: flex; flex-direction: column;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-bottom: none;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  box-shadow: var(--shadow-pop);
+  padding-bottom: var(--safe-b);
+  font-family: 'Archivo', system-ui, sans-serif;
+}
+.sheet-grip { width: 38px; height: 4px; border-radius: 2px; background: var(--line); margin: var(--sp-2) auto var(--sp-1); flex: none; }
+.sheet-head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4) var(--sp-3); border-bottom: 1px solid var(--line); flex: none; }
+.sheet-title { font-size: var(--fs-md); font-weight: var(--fw-extrabold); flex: 1; min-width: 0; }
+.sheet-close { width: 44px; height: 44px; flex: none; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--panel2); color: var(--ink); font-family: inherit; font-size: var(--fs-base); cursor: pointer; }
+.sheet-close:active { background: var(--accentFade); }
+.sheet-body { padding: var(--sp-4); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sheet-p { font-size: var(--fs-base); line-height: 1.55; color: var(--ink); font-weight: var(--fw-normal); }
+.sheet-p + .sheet-p { margin-top: var(--sp-3); }
+.sheet-section { font-size: var(--fs-xs); letter-spacing: .1em; font-weight: var(--fw-bold); color: var(--sub); margin: var(--sp-4) 0 var(--sp-2); }
+.sheet-section:first-child { margin-top: 0; }
+.sheet-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.sheet-btn { min-height: 44px; padding: var(--sp-2) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--panel2); color: var(--ink); font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-bold); cursor: pointer; }
+.sheet-btn:active { background: var(--accentFade); }
+.sheet-swatch { width: 44px; height: 44px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.sheet-swatch[aria-pressed="true"] { border-color: var(--ink); }
+
+/* ---- view transitions: NOT enabled, and the reason is measured ----
+   The design expected `@view-transition { navigation: auto }` to be free
+   polish, because these are full document navigations. It is not. With it
+   enabled, a navigation that INTERRUPTS a still-loading document leaves the
+   incoming document permanently render-blocked in Chromium: measured on the
+   cockpit after a click-navigation to /run/:id was interrupted by a second
+   navigation, the DOM was complete (365 heatmap rects, the trajectory svg
+   present) and requestAnimationFrame never fired again — 18 s later, still
+   nothing. That is not a headless-only inconvenience: interrupting one's own
+   navigation is exactly what a swipe followed by a tap produces, and the
+   failure mode is a frozen page. The cross-fade is not worth that, so page
+   navigation stays instant. Revisit if Chromium bounds the block. */
+
+/* ============================================================================
+   RESPONSIVE TIERS (responsive-layout: the layout declares named width tiers)
+
+     wide     ≥ 1600px   — the display is used for content, not for margin
+     desktop  ≥  901px   — the authored composition
+     tablet    701–900px — grid collapses, wrapped topbar
+     phone    ≤  700px   — the phone COMPOSITION: persistent chrome, dense
+                           surfaces re-composed, touch/type floors
+     (narrow) ≤  560px   — inside the phone tier: the last grid collapses
+
+   700, not 560, because the audit measured a BACKWARDS CLIFF: 561–700px
+   rendered measurably worse than 560px, since the re-composition rules stopped
+   applying while the desktop grids still did not fit. Everything that IS a
+   phone composition therefore lives at ≤700; only pure column collapses that
+   need a genuinely narrow viewport stay at ≤560. 700 is also the largest value
+   that leaves style-audit's LAYOUT map intact (#sec-hero is 2 columns at 768).
+   ========================================================================= */
+
+/* ============ wide ============
+   The container was capped at 1340px (1100px on four pages), leaving 580px of
+   dead gutter at 1920 and 1220px at 2560. Above 1600 the cap tracks the
+   display instead, so the extra width becomes content — more chart columns,
+   more archive row breathing space — rather than margin. */
+@media (min-width: 1600px) {
+  .page-shell { max-width: clamp(1340px, 92vw, 1760px); }
+}
+
 /* ============ tablet ============ */
 @media (max-width: 900px) {
   /* three nav entries + pill + themes no longer fit on one 768px line —
      the bar wraps here instead of overflowing the body */
   .topbar         { flex-wrap: wrap; gap: var(--sp-3); }
   .topbar-actions { flex-wrap: wrap; gap: var(--sp-2); }
-  .hero-grid   { grid-template-columns: 1fr 1fr; }
+  .hero-grid   { grid-template-columns: 1fr 1fr; align-items: start; }
   #card-hero   { grid-column: 1 / -1; }
   .stats-grid  { grid-template-columns: repeat(2, 1fr); }
   .week-grid   { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .split-grid  { grid-template-columns: 1fr; }
   .run-lower   { grid-template-columns: 1fr; }
 }
+
 /* ============ phone ============ */
+@media (max-width: 700px) {
+  /* ---- the phone token tier (responsive-layout) ----
+     One place decides the two floors. --fs-2xs was 10px and is used by ~40
+     surfaces (eyebrows, block stats, chart legends, filter chips), so raising
+     it here fixes them all at once rather than chasing each site; the chart
+     ticks are named explicitly because they carry their own literal sizes. */
+  :root { --fs-2xs: 11px; }
+  .chart-ytick, .chart-xtick, .chart-flag { font-size: 11px; }
+
+  /* ---- the 44px touch floor ----
+     Where the visible ink is legitimately small, the HIT AREA grows to the
+     floor rather than the type: a filter chip stays a chip, it just becomes
+     one a thumb can hit. */
+  .scope-chip, .wk-back, .cmp-go, .sheet-btn {
+    min-height: 44px; min-width: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding-left: var(--sp-3); padding-right: var(--sp-3);
+  }
+  .cmp-toggle { width: 44px; height: 44px; }
+  .arch-search { font-size: 16px; min-height: 44px; }   /* 16px: below it, focus zooms the page */
+  .block-week { min-height: 44px; }
+
+  /* ---- a press is acknowledged ---- */
+  a, button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+  button:active, [role="button"]:active, a:active { filter: brightness(1.35); }
+  .card [role="button"]:active, .day[role="button"]:active { background: var(--accentFade); filter: none; }
+
+  /* ---- the bottom tab bar: navigation in thumb reach, always ---- */
+  .tabbar {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    background: var(--panel); border-top: 1px solid var(--line);
+    padding-bottom: var(--safe-b);
+    font-family: 'Archivo', system-ui, sans-serif;
+  }
+  .tabbar .tab {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; height: var(--tabbar-ink); min-height: 44px;
+    text-decoration: none; color: var(--sub);
+    font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .04em;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tabbar .tab--current { color: var(--accent); }
+  .tabbar .tab:active   { background: var(--accentFade); }
+  .tabbar .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .tab-ico {
+    width: 22px; height: 22px; background: currentColor; flex: none;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-size: contain; mask-size: contain;
+  }
+  .tab-ico--home    { -webkit-mask-image: var(--ico-home);    mask-image: var(--ico-home); }
+  .tab-ico--chart   { -webkit-mask-image: var(--ico-chart);   mask-image: var(--ico-chart); }
+  .tab-ico--archive { -webkit-mask-image: var(--ico-archive); mask-image: var(--ico-archive); }
+  .tab-ico--route   { -webkit-mask-image: var(--ico-route);   mask-image: var(--ico-route); }
+  .tab-ico--dot     { -webkit-mask-image: var(--ico-dot);     mask-image: var(--ico-dot); }
+
+  /* ---- the header becomes a slim sticky bar: identity, and one control ----
+     Full-bleed via a negative inline margin matching .app-root's padding, so
+     the bar's background reaches the screen edges while its content stays on
+     the same rhythm as the page. */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    flex-wrap: nowrap; gap: var(--sp-2);
+    min-height: var(--topbar-h);
+    margin: calc(-1 * 22px) calc(-1 * clamp(16px, 4vw, 40px)) var(--sp-4);
+    padding: var(--sp-2) calc(clamp(16px, 4vw, 40px) + 44px) var(--sp-2) clamp(16px, 4vw, 40px);
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  /* The tab bar owns navigation now, and one header control owns the rest.
+     !important because every one of these carries an inline `display:flex`
+     from its page's markup, and the six copies are deliberately not being
+     rewritten by this change (design D10). */
+  .topbar nav[aria-label="Pages"] { display: none !important; }
+  .topbar-actions > *             { display: none !important; }
+  .topbar-title, .topbar > div:first-child > div:last-child {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* one ≥44px control replaces the 22px theme circles and the sync pill; it
+     opens them in the sheet, where each has a real label and a real target */
+  .hdr-more {
+    display: block; position: fixed; z-index: 55;
+    top: calc(var(--safe-t) + 6px); right: clamp(16px, 4vw, 40px);
+    width: 44px; height: 44px; padding: 0;
+    border: 1px solid var(--line); border-radius: var(--r-pill);
+    background: var(--panel2); cursor: pointer;
+  }
+  .hdr-more::before {
+    content: ""; display: block; width: 22px; height: 22px; margin: 0 auto;
+    background: var(--ink);
+    -webkit-mask-image: var(--ico-more); mask-image: var(--ico-more);
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-size: contain; mask-size: contain;
+  }
+  .hdr-more:active { background: var(--accentFade); }
+
+  /* a section heading whose meta is a sentence: the rule collapses to nothing
+     and the meta takes its own line, instead of squeezing the heading */
+  .section-head      { flex-wrap: wrap; row-gap: var(--sp-1); }
+  .section-head .rule { min-width: var(--sp-4); }
+  .section-head .meta { flex: 1 1 100%; }
+
+  /* runs table → stacked labeled cards */
+  .runs-head { display: none; }
+  .runs-row  { display: block; padding: var(--sp-3) 0; }
+  .runs-row [data-label] { text-align: left; display: inline-block; margin-right: var(--sp-4); }
+  .runs-row [data-label]::before { content: attr(data-label) " "; color: var(--sub); font-weight: var(--fw-semibold); }
+
+  /* archive list → bounded record cards. The whole card opens the run; the
+     compare toggle owns a reserved 44px leading column that the card's link
+     never covers. */
+  .arch-head { display: none; }
+  .arch-row {
+    grid-template-columns: 44px auto 1fr;
+    align-items: baseline;
+    gap: var(--sp-1) var(--sp-3);
+    min-height: 56px;
+    padding: var(--sp-3);
+    margin-bottom: var(--sp-2);
+    border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--panel2);
+  }
+  .arch-cmp      { grid-row: 1 / span 3; grid-column: 1; align-self: center; }
+  .arch-name     { grid-row: 1; grid-column: 2 / -1; font-size: var(--fs-base); }
+  .arch-date     { grid-row: 2; grid-column: 2; }
+  .arch-type     { grid-row: 2; grid-column: 3; justify-self: start; }
+  .arch-measures { grid-row: 3; grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4); margin-top: var(--sp-1); }
+  .arch-row [data-label] { text-align: left; }
+  .arch-row [data-label]::before { content: attr(data-label) " "; color: var(--sub); font-weight: var(--fw-semibold); font-family: 'Archivo', system-ui, sans-serif; }
+  .arch-row [data-label=""] { display: none; }      /* an absent measure is absent, not a dash */
+  .arch-row .arch-date::before { content: none; }   /* the date is its own label */
+  .arch-link::after { left: calc(var(--sp-3) + 44px + var(--sp-2)); }
+  .arch-row:active { background: var(--accentFade); }
+
+  /* the tray becomes two honest lines instead of one that overflowed */
+  .cmp-tray   { border-radius: var(--r-lg); }
+  .cmp-count, .cmp-hint { flex: 1 1 100%; }
+  .cmp-spacer { display: none; }
+  .cmp-tray .wk-back, .cmp-tray .cmp-go { flex: 1 1 0; }
+
+  /* training-block week row → two lines: identity + chevron above, the seven
+     day glyphs and the km against plan below. The desktop single line put
+     48+56+tag+7 glyphs+km+chevron+6 gaps on one row, which measured 457px of
+     document at a 390px viewport. */
+  .block-week {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-areas: "wk ph tag chev"
+                         "glyphs glyphs glyphs km";
+    gap: var(--sp-1) var(--sp-2);
+    align-items: center;
+  }
+  .blk-wk     { grid-area: wk;  min-width: 0; }
+  .blk-ph     { grid-area: ph;  min-width: 0; }
+  .blk-tag    { grid-area: tag; justify-self: start; }
+  .blk-chev   { grid-area: chev; justify-self: end; }
+  .blk-km     { grid-area: km;  justify-self: end; }
+  .blk-glyphs { grid-area: glyphs; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; justify-items: center; min-width: 0; }
+  .blk-glyphs.blk-glyphs--none { display: block; }   /* "undetailed" is prose, not seven marks */
+  .blk-dow    { display: block; }                    /* no hover here — name the day in ink */
+
+  /* an expanded day becomes a small stacked card: identity and its run link on
+     line 1, plan against result on line 2, the compliance verdict on line 3 */
+  .block-day {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "date  title  link"
+                         "plan  plan   actual"
+                         "status status status";
+    gap: 2px var(--sp-2);
+    padding: var(--sp-2) 0;
+    min-width: 0;
+  }
+  .bd-date   { grid-area: date;   min-width: 0; }
+  .bd-title  { grid-area: title;  min-width: 0; }
+  .bd-plan   { grid-area: plan;   min-width: 0; }
+  .bd-actual { grid-area: actual; min-width: 0; justify-self: end; text-align: right; }
+  .bd-status { grid-area: status; min-width: 0; }
+  .block-run-link { grid-area: link; }
+}
+
+/* ============ narrow phone ============ */
 @media (max-width: 560px) {
   .hero-grid   { grid-template-columns: 1fr; }
   .stats-grid  { grid-template-columns: repeat(2, 1fr); }
   .week-grid   { grid-template-columns: 1fr; }
   .drill-grid  { grid-template-columns: 1fr; }
-  .topbar         { flex-wrap: wrap; gap: var(--sp-3); }
-  .topbar-actions { flex-wrap: wrap; gap: var(--sp-2); }
+  /* (the topbar's wrap rules used to be repeated here; the phone tier above
+     now makes the bar a single sticky line, and a `wrap` declared after it
+     would have won the cascade and put it back on three) */
 
   /* week strip → compact full-width agenda cards (Task 9 already stacks them 1-per-row) */
   .day { min-height: 0; }
@@ -252,17 +640,4 @@
   .day--wk .wk-pace   { order: 1; flex: 1 1 100%; margin-top: 0; }           /* pace chip → own line */
   .day--wk .wk-detail { order: 2; flex: 1 1 100%; margin-top: 0; }           /* detail → own line */
   .day--wk .wk-expand { order: 3; flex: 1 1 100%; }                          /* expanded plan → full width */
-
-  /* runs table → stacked labeled cards */
-  .runs-head { display: none; }
-  .runs-row  { display: block; padding: var(--sp-3) 0; }
-  .runs-row [data-label] { text-align: left; display: inline-block; margin-right: var(--sp-4); }
-  .runs-row [data-label]::before { content: attr(data-label) " "; color: var(--sub); font-weight: var(--fw-semibold); }
-
-  /* archive list → the same stacked labeled cards */
-  .arch-head { display: none; }
-  .arch-row  { display: block; padding: var(--sp-3) 0; position: relative; }
-  .arch-row .cmp-toggle { position: absolute; top: var(--sp-3); right: 0; }
-  .arch-row [data-label] { text-align: left; display: inline-block; margin-right: var(--sp-4); }
-  .arch-row [data-label]::before { content: attr(data-label) " "; color: var(--sub); font-weight: var(--fw-semibold); font-family: 'Archivo', system-ui, sans-serif; }
 }

@@ -101,6 +101,9 @@ const MIME = {
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
   ".map": "application/json; charset=utf-8",
+  // the installable shell (mobile-chrome): served with its own media type, or
+  // the browser declines to parse it
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
   ".py": "text/plain; charset=utf-8",
 };
@@ -131,7 +134,8 @@ function isCompressible(contentType) {
   if (!contentType) return false;
   return /^text\//i.test(contentType)
     || /^application\/javascript\b/i.test(contentType)
-    || /^application\/json\b/i.test(contentType);
+    || /^application\/json\b/i.test(contentType)
+    || /^application\/[\w.-]+\+json\b/i.test(contentType);  // e.g. manifest+json
 }
 
 // Send a fully-buffered response, negotiating gzip. `headers` MUST NOT carry a

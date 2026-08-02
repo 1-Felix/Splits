@@ -10,7 +10,42 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The suite and the responsive gate run BEFORE anything is built. Until
+  # make-mobile-native there was no `pnpm test` at all and CI published an
+  # image without running a single test; a red suite must now block the push,
+  # not be discovered on the NUC.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # the suite and the gate both drive headless chromium
+      - name: Install chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test suite
+        run: pnpm test
+
+      # runs against the committed fixture (fixtures/layout/), so the result
+      # does not depend on telemetry that CI does not have
+      - name: Responsive layout gate
+        run: pnpm run test:layout
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

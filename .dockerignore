@@ -36,6 +36,10 @@ fixtures
 Thumbs.db
 splits-*.png
 
-# NB: vendor/ (React UMD builds + self-hosted woff2 fonts) is deliberately NOT
-# ignored — it is application code and MUST ship in the image so the cockpit
-# renders with outbound network access removed. Do not add vendor/ here.
+# NB: vendor/ (React UMD builds, self-hosted woff2 fonts, the PWA icons) is
+# deliberately NOT ignored — it is application code and MUST ship in the image
+# so the cockpit renders with outbound network access removed. Do not add
+# vendor/ here. manifest.webmanifest is likewise application code: the app is
+# not installable without it, and `splits-*.png` above is root-relative on
+# purpose, so vendor/icons/*.png ships (they are named icon-*.png regardless,
+# because .gitignore's splits-*.png DOES match at any depth).

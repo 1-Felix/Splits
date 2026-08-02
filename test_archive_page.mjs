@@ -108,8 +108,11 @@ try {
   await page.waitForFunction(() => document.querySelectorAll(".arch-row").length > 0, null, { timeout: 15000 });
   assert.strictEqual(await rows(), 50, "the default page holds 50 rows");
   assert.ok((await bodyText()).includes("Showing 50 of 60"), "the count states shown-of-total");
+  // by data-label, not by position: the row's child ORDER is a composition
+  // detail (make-mobile-native re-composes it as a card on a phone), while the
+  // date cell's identity is the contract this assertion is about
   const dates = await page.evaluate(() =>
-    [...document.querySelectorAll(".arch-row > span:nth-child(2)")].map((e) => e.textContent));
+    [...document.querySelectorAll('.arch-row [data-label="date"]')].map((e) => e.textContent));
   const sorted = [...dates].sort().reverse();
   assert.deepStrictEqual(dates, sorted, "rows are newest-first");
 

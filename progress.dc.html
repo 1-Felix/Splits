@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
      ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
      already present and never reaches for its unpkg CDN fallback. This pin is
@@ -15,6 +15,15 @@
      before support.js mounts on DOMContentLoaded, so the persisted theme is
      readable at component init — no default-theme flash -->
 <script type="module" src="./topbar.js"></script>
+<title>Progress — SPLITS</title>
+<!-- installable shell (mobile-chrome): manifest + icons are served from our own
+     origin; theme-color is kept in step with the active theme by topbar.js. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./vendor/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./vendor/icons/apple-touch-180.png">
+<meta name="theme-color" content="#0E0F12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 <x-dc>
@@ -25,7 +34,7 @@
 <link rel="stylesheet" href="./dashboard.css">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0E0F12}
+  body{background:var(--bg,#0E0F12)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   ::-webkit-scrollbar{height:9px;width:9px}
@@ -33,9 +42,9 @@
 </style>
 </helmet>
 
-<div style="{{ rootStyle }}" onClick="{{ onDismiss }}">
+<div class="app-root" style="{{ rootStyle }}" onClick="{{ onDismiss }}">
 <div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
-<div style="max-width:1340px;margin:0 auto">
+<div class="page-shell">
 
   <!-- ===== TOP BAR ===== -->
   <header class="topbar">
@@ -48,7 +57,7 @@
         <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
       </div>
       <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
-      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">{{ greeting }}</div>
+      <h1 class="topbar-title">{{ greeting }}</h1>
     </div>
     <div class="topbar-actions">
       <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
@@ -64,7 +73,7 @@
       </sc-for>
       <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
         <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
-          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" aria-label="{{ t.aria }}" aria-pressed="{{ t.on }}" class="theme-swatch" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
         </sc-for>
       </div>
       <div style="width:36px;height:36px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:var(--fs-md)">{{ initial }}</div>
@@ -228,7 +237,7 @@
     <div class="card-head" style="margin-bottom:var(--sp-3)">
       <div>
         <div class="card-title">Records wall</div>
-        <div class="card-sub">All-time · last 90 days · by year — click a time to open that run's page</div>
+        <div class="card-sub">All-time · last 90 days · by year — select a time to open that run's page</div>
       </div>
     </div>
     <div style="overflow-x:auto;padding-bottom:var(--sp-1)">
@@ -270,7 +279,7 @@
     <div class="card-head" style="margin-bottom:var(--sp-2)">
       <div>
         <div class="card-title">Monthly distance by year</div>
-        <div class="card-sub">One zero-anchored scale across every year · hover a month for distance, runs and pace</div>
+        <div class="card-sub">One zero-anchored scale across every year · select a month for distance, runs and pace</div>
       </div>
     </div>
     {{ yoy.chart }}
@@ -551,6 +560,15 @@ class Component extends DCLogic {
 
   fmtGap(sec) { const s = Math.abs(Math.round(sec)); return (sec < 0 ? '−' : sec > 0 ? '+' : '±') + this.fmtHMS(s); }
 
+  // Weekday of a YYYY-MM-DD block day. Parsed as UTC (the string form Date
+  // treats as UTC) and read with getUTCDay, so the label never slips a day for
+  // a viewer west of Greenwich.
+  DOW_NAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  DOW_INITIAL = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  dowIndex(date) { const d = new Date(String(date)); return Number.isNaN(d.getTime()) ? null : d.getUTCDay(); }
+  dowName(date) { const i = this.dowIndex(date); return i == null ? String(date) : this.DOW_NAME[i]; }
+  dowInitial(date) { const i = this.dowIndex(date); return i == null ? '·' : this.DOW_INITIAL[i]; }
+
   // a headline stat: value + label, or the explicit insufficient-data mark —
   // never a zero or a dash presented as a value (null-metric honesty)
   blockStat(h, label, value, color, reason) {
@@ -574,15 +592,15 @@ class Component extends DCLogic {
         const actual = d.actualKm != null
           ? d.actualKm + ' km' + (d.actualPaceS ? ' @ ' + this.fmtPace(d.actualPaceS) + '/km' : '') + (d.actualHr ? ' · HR ' + d.actualHr : '')
           : '';
-        return h('div', { key: d.date + ':' + (d.activityId || d.status), className: 'block-day', style: { display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)', padding: 'var(--sp-1) 0', borderBottom: '1px solid var(--line)', fontSize: 'var(--fs-sm)' } },
-          h('span', { key: 'd', style: { minWidth: '58px', color: 'var(--sub)', fontWeight: 600 } }, this.mDate(d.date)),
-          h('span', { key: 't', style: { flex: '1 1 120px', fontWeight: 700 } }, d.title || (d.plannedKind || 'Unplanned run')),
-          h('span', { key: 'p', style: { minWidth: '96px', color: 'var(--sub)', fontWeight: 500 } }, planned),
-          h('span', { key: 's', style: { minWidth: '120px', color: g.fg, fontWeight: 700 } },
+        return h('div', { key: d.date + ':' + (d.activityId || d.status), className: 'block-day' },
+          h('span', { key: 'd', className: 'bd-date' }, this.mDate(d.date)),
+          h('span', { key: 't', className: 'bd-title' }, d.title || (d.plannedKind || 'Unplanned run')),
+          h('span', { key: 'p', className: 'bd-plan' }, planned),
+          h('span', { key: 's', className: 'bd-status', style: { color: g.fg } },
             g.t + ' ' + g.word + (d.reason ? ' — ' + (this.BLOCK_DAY_REASON[d.reason] || d.reason) : '')),
-          h('span', { key: 'a', style: { fontFamily: mono, color: 'var(--sub)', fontSize: 'var(--fs-xs)' } }, actual),
+          h('span', { key: 'a', className: 'bd-actual' }, actual),
           d.activityId != null
-            ? h('a', { key: 'l', className: 'block-run-link', href: './run/' + d.activityId, style: { color: 'var(--accent)', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' } }, 'run →')
+            ? h('a', { key: 'l', className: 'block-run-link', href: './run/' + d.activityId }, 'run →')
             : null);
       }) : h('div', { style: { color: 'var(--warn)', fontSize: 'var(--fs-sm)', fontWeight: 600, padding: 'var(--sp-2) 0' } },
         '⚠ this week has no days planned yet — the plan must stay detailed to race day'));
@@ -646,24 +664,33 @@ class Component extends DCLogic {
       const key = doc.raceDate + ':' + w.mon;
       const open = this.state.blockWeek === key;
       const cur = live && i === wkNow;
+      // Each mark carries its weekday initial (visible on phones, where there is
+      // no hover to reveal a title) and the same day-by-day reading is folded
+      // into the row's accessible name below — so the marks are decoration for
+      // both a pointer-less viewer and a screen reader, never the only carrier.
       const glyphs = (w.days || []).map((d, j) => {
         const g = this.BLOCK_GLYPH[d.status] || this.BLOCK_GLYPH.pending;
-        return h('span', { key: j, title: d.date + ' · ' + g.word, 'aria-hidden': 'true', style: { color: g.fg, fontWeight: 800, fontFamily: mono } }, g.t);
+        return h('span', { key: j, className: 'blk-day', 'aria-hidden': 'true' },
+          h('span', { key: 'dow', className: 'blk-dow' }, this.dowInitial(d.date)),
+          h('span', { key: 'm', className: 'blk-mark', style: { color: g.fg } }, g.t));
       });
+      const dayNarration = (w.days || []).length
+        ? (w.days || []).map((d) => this.dowName(d.date) + ' ' + (this.BLOCK_GLYPH[d.status] || this.BLOCK_GLYPH.pending).word).join(', ') + '.'
+        : 'No days detailed yet.';
       const km = w.scored
         ? (w.actualKm != null ? w.actualKm : 0) + ' / ' + (w.plannedKm != null ? w.plannedKm : '—') + ' km'
         : (w.plannedKm != null ? w.plannedKm + ' km planned' : 'no km planned');
       return h('div', { key: w.mon },
-        h('button', { className: 'block-week', 'aria-expanded': String(open),
-          'aria-label': (w.wk || w.mon) + (cur ? ', this week' : '') + ', ' + km + '. Show its days.',
-          onClick: () => this.toggleBlockWeek(key),
-          style: { display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', width: '100%', padding: 'var(--sp-2)', border: '1px solid ' + (cur ? 'var(--accent)' : 'var(--line)'), borderRadius: 'var(--r-md)', background: cur ? 'var(--panel2)' : 'transparent', color: 'var(--ink)', fontFamily: 'inherit', fontSize: 'var(--fs-sm)', cursor: 'pointer', marginBottom: 'var(--sp-1)', textAlign: 'left' } },
-          h('span', { key: 'wk', style: { minWidth: '48px', fontWeight: 800 } }, w.wk || this.mDate(w.mon)),
-          h('span', { key: 'ph', style: { minWidth: '56px', fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.retired ? 'retired' : w.phase || '').toUpperCase()),
-          cur ? h('span', { key: 'tag', style: { fontSize: 'var(--fs-2xs)', fontWeight: 800, letterSpacing: '.06em', padding: '2px 8px', borderRadius: 'var(--r-pill)', background: 'var(--accentFade)', color: 'var(--accent)' } }, 'THIS WK') : null,
-          h('span', { key: 'g', style: { display: 'flex', gap: '7px', flex: 1 } }, glyphs.length ? glyphs : h('span', { style: { color: 'var(--warn)', fontSize: 'var(--fs-xs)', fontWeight: 700 } }, 'undetailed')),
-          h('span', { key: 'km', style: { fontFamily: mono, color: 'var(--sub)', fontSize: 'var(--fs-xs)', fontWeight: 600, whiteSpace: 'nowrap' } }, km),
-          h('span', { key: 'c', 'aria-hidden': 'true', style: { color: 'var(--sub)' } }, open ? '▾' : '▸')),
+        h('button', { className: 'block-week' + (cur ? ' block-week--cur' : ''), 'aria-expanded': String(open),
+          'aria-label': (w.wk || w.mon) + (cur ? ', this week' : '') + ', ' + km + '. ' + dayNarration + ' Show its days.',
+          onClick: () => this.toggleBlockWeek(key) },
+          h('span', { key: 'wk', className: 'blk-wk' }, w.wk || this.mDate(w.mon)),
+          h('span', { key: 'ph', className: 'blk-ph', style: { color: this.BLOCK_PHASE_COLOR[w.phase] || 'var(--sub)' } }, (w.retired ? 'retired' : w.phase || '').toUpperCase()),
+          cur ? h('span', { key: 'tag', className: 'blk-tag' }, 'THIS WK') : null,
+          h('span', { key: 'g', className: 'blk-glyphs' + (glyphs.length ? '' : ' blk-glyphs--none') },
+            glyphs.length ? glyphs : h('span', { className: 'blk-none' }, 'undetailed')),
+          h('span', { key: 'km', className: 'blk-km' }, km),
+          h('span', { key: 'c', 'aria-hidden': 'true', className: 'blk-chev' }, open ? '▾' : '▸')),
         open ? this.renderBlockWeekDrill(w) : null);
     });
 
@@ -943,7 +970,7 @@ class Component extends DCLogic {
     this._specs = {};   // ChartSpecs built this render, keyed by chart id (aria-live)
     const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
-    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    Object.assign(rootStyle, { background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif" });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
     const nav = this.tb() ? this.tb().navModel('progress', { archive: this.state.archiveAvail !== false,
       course: !!(this.state.data && this.state.data.courseLens) }) : [];

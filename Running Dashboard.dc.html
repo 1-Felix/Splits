@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
      ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
      already present and never reaches for its unpkg CDN fallback. This pin is
@@ -15,6 +15,15 @@
      before support.js mounts on DOMContentLoaded, so the persisted theme is
      readable at component init — no default-theme flash -->
 <script type="module" src="./topbar.js"></script>
+<title>Cockpit — SPLITS</title>
+<!-- installable shell (mobile-chrome): manifest + icons are served from our own
+     origin; theme-color is kept in step with the active theme by topbar.js. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./vendor/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./vendor/icons/apple-touch-180.png">
+<meta name="theme-color" content="#0E0F12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 <x-dc>
@@ -25,7 +34,7 @@
 <link rel="stylesheet" href="./dashboard.css">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0E0F12}
+  body{background:var(--bg,#0E0F12)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   ::-webkit-scrollbar{height:9px;width:9px}
@@ -33,9 +42,9 @@
 </style>
 </helmet>
 
-<div style="{{ rootStyle }}" onClick="{{ onDismiss }}">
+<div class="app-root" style="{{ rootStyle }}" onClick="{{ onDismiss }}">
 <div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
-<div style="max-width:1340px;margin:0 auto">
+<div class="page-shell">
 
   <!-- ===== TOP BAR ===== -->
   <header class="topbar">
@@ -48,7 +57,7 @@
         <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
       </div>
       <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
-      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">{{ greeting }}</div>
+      <h1 class="topbar-title">{{ greeting }}</h1>
     </div>
     <div class="topbar-actions">
       <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
@@ -64,7 +73,7 @@
       </sc-for>
       <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
         <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
-          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" aria-label="{{ t.aria }}" aria-pressed="{{ t.on }}" class="theme-swatch" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
         </sc-for>
       </div>
       <div style="width:36px;height:36px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:var(--fs-md)">{{ initial }}</div>
@@ -743,7 +752,7 @@ class Component extends DCLogic {
     const cc = this._cc, cv = this._cv;
     const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
-    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    Object.assign(rootStyle, { background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif" });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
     const nav = this.tb() ? this.tb().navModel('cockpit', { archive: this.state.archiveAvail !== false,
       // the Course tab is opt-IN: offer it only when this instance has a course

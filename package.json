@@ -10,6 +10,9 @@
   "scripts": {
     "dev": "node serve.mjs",
     "start": "node serve.mjs",
+    "test": "node tools/run-tests.mjs",
+    "test:layout": "node tools/style-audit.mjs layout",
+    "icons": "node tools/make-icons.mjs",
     "plan:pull": "node tools/plan-pull.mjs",
     "plan:push": "node tools/plan-push.mjs"
   },

@@ -5,6 +5,7 @@ import {
   THEME_KEY, DEFAULT_THEME, THEMES,
   initialTheme, persistTheme, themePicker,
   navModel, dayBucket, greetingText, syncPillModel,
+  PHONE_MAX, tabModel, applyThemeVars,
 } from "./topbar.js";
 
 function fakeStorage(entries = {}) {
@@ -143,5 +144,71 @@ const base = { syncState: "idle", syncError: null, lastSync: "2026-07-05T04:00:0
   assert.ok(p.dotStyle.includes("var(--warn)"));
 }
 assert.strictEqual(syncPillModel(base).dateLabel, "Jul 5", "date label feeds the history caption");
+
+// ── the bottom tab bar's model (make-mobile-native 3.1) ──────────────────────
+// tabModel is the pure half of the injected chrome: nav entries in, tabs out.
+// The bar is built by MIRRORING the page's own rendered nav, so it must be
+// correct for every shape navModel yields — 2 entries (an ingest-fed instance
+// with no archive db and no course), 3 (the common case), and 4 (a race with a
+// course). It must also cope with what the DOM mirror actually hands it:
+// { label, href, current } with no `key`, and text nodes carrying whitespace.
+assert.strictEqual(PHONE_MAX, 700, "the phone tier boundary is published for the swipe/tab logic");
+
+{
+  const two = tabModel(navModel("cockpit", { archive: false }));
+  assert.deepStrictEqual(two.map((t) => t.key), ["cockpit", "progress"],
+    "no archive db and no course → two tabs");
+  assert.deepStrictEqual(two.map((t) => t.icon), ["home", "chart"], "each tab names its own icon");
+  assert.deepStrictEqual(two.map((t) => t.current), [true, false], "the current page is marked");
+}
+{
+  const three = tabModel(navModel("archive"));
+  assert.deepStrictEqual(three.map((t) => t.key), ["cockpit", "progress", "archive"],
+    "course is opt-in → three tabs");
+  assert.strictEqual(three.filter((t) => t.current).length, 1, "exactly one tab is current");
+  assert.strictEqual(three.find((t) => t.current).key, "archive");
+}
+{
+  const four = tabModel(navModel("course", { course: true }));
+  assert.deepStrictEqual(four.map((t) => t.key), ["cockpit", "progress", "archive", "course"],
+    "a race with a course → four tabs");
+  assert.deepStrictEqual(four.map((t) => t.icon), ["home", "chart", "archive", "route"]);
+  assert.deepStrictEqual(four.map((t) => t.href), ["./", "./progress", "./archive", "./course"],
+    "hrefs come from the nav model, so swipe order and tab order cannot disagree");
+}
+{
+  // the DOM mirror's shape: absolute hrefs, whitespace-padded labels, no key,
+  // aria-current rather than a boolean, and an un-mounted template entry that
+  // must be dropped rather than rendered as a tab to "{{ n.href }}"
+  const mirrored = tabModel([
+    { label: "\n  Cockpit ", href: "http://x/", current: false },
+    { label: "Progress", href: "http://x/progress", aria: "page" },
+    { label: "", href: "http://x/archive" },
+    { label: "Course", href: "" },
+  ]);
+  assert.deepStrictEqual(mirrored.map((t) => t.label), ["Cockpit", "Progress"],
+    "entries without a label or an href are not tabs");
+  assert.deepStrictEqual(mirrored.map((t) => t.current), [false, true],
+    'aria-current="page" is read as current');
+  assert.strictEqual(mirrored[0].key, "cockpit", "the key is derived from the label when absent");
+}
+assert.deepStrictEqual(tabModel(undefined), [], "no nav at all yields no bar");
+assert.deepStrictEqual(tabModel([]), [], "an empty nav yields no bar");
+
+// ── theme variables (make-mobile-native 2.1) ─────────────────────────────────
+// applyThemeVars writes onto whatever element it is handed, so the module's
+// contract is testable without a document.
+{
+  const el = { style: { _m: new Map(), setProperty(k, v) { this._m.set(k, v); } } };
+  applyThemeVars("track", el);
+  assert.strictEqual(el.style._m.get("--accent"), THEMES.track.accent, "the accent lands on the target");
+  assert.strictEqual(el.style._m.get("--bg"), THEMES.track.bg, "so does the surface colour");
+  applyThemeVars("sunset", el);
+  assert.strictEqual(el.style._m.get("--accent"), THEMES.sunset.accent,
+    "a second switch overwrites — the hoisted values never go stale");
+  applyThemeVars("nonesuch", el);
+  assert.strictEqual(el.style._m.get("--accent"), THEMES[DEFAULT_THEME].accent,
+    "an unknown theme falls back to the default rather than leaving the root unthemed");
+}
 
 console.log("ALL PASS");

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- React is vendored (served from our own origin) and pinned to 18.3.1, loaded
      ahead of support.js so the dc-runtime sees window.React / window.ReactDOM
      already present and never reaches for its unpkg CDN fallback. This pin is
@@ -15,6 +15,15 @@
      before support.js mounts on DOMContentLoaded, so the persisted theme is
      readable at component init — no default-theme flash -->
 <script type="module" src="./topbar.js"></script>
+<title>Archive — SPLITS</title>
+<!-- installable shell (mobile-chrome): manifest + icons are served from our own
+     origin; theme-color is kept in step with the active theme by topbar.js. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./vendor/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="./vendor/icons/apple-touch-180.png">
+<meta name="theme-color" content="#0E0F12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 <x-dc>
@@ -25,16 +34,16 @@
 <link rel="stylesheet" href="./dashboard.css">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0E0F12}
+  body{background:var(--bg,#0E0F12)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   ::-webkit-scrollbar{height:9px;width:9px}
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-md)}
 </style>
 </helmet>
 
-<div style="{{ rootStyle }}">
+<div class="app-root" style="{{ rootStyle }}">
 <div aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap">{{ liveText }}</div>
-<div style="max-width:1100px;margin:0 auto">
+<div class="page-shell">
 
   <!-- ===== TOP BAR ===== -->
   <header class="topbar">
@@ -47,7 +56,7 @@
         <div style="font-size:var(--fs-2xs);letter-spacing:.22em;color:var(--sub);font-weight:600;margin-top:var(--sp-0)">TRAINING OS</div>
       </div>
       <div style="width:1px;height:26px;background:var(--line);margin:0 var(--sp-1)"></div>
-      <div style="font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em;white-space:nowrap">Archive</div>
+      <h1 class="topbar-title">Archive</h1>
     </div>
     <div class="topbar-actions">
       <nav aria-label="Pages" style="display:flex;gap:var(--sp-1);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
@@ -63,7 +72,7 @@
       </sc-for>
       <div style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1);border:1px solid var(--line);border-radius:var(--r-pill)">
         <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
-          <button onClick="{{ t.pick }}" title="{{ t.name }}" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
+          <button onClick="{{ t.pick }}" title="{{ t.name }}" aria-label="{{ t.aria }}" aria-pressed="{{ t.on }}" class="theme-swatch" style="width:22px;height:22px;border-radius:50%;border:2px solid {{ t.ring }};background:{{ t.swatch }};cursor:pointer;padding:0"></button>
         </sc-for>
       </div>
     </div>
@@ -112,35 +121,38 @@
       <div>
         <div class="arch-head" style="margin-top:var(--sp-2)">
           <span></span><span>DATE</span><span>ACTIVITY</span><span>TYPE</span>
-          <span style="text-align:right">KM</span><span style="text-align:right">TIME</span>
-          <span style="text-align:right">PACE</span><span style="text-align:right">HR</span>
+          <span class="arch-measures"><span>KM</span><span>TIME</span><span>PACE</span><span>HR</span></span>
         </div>
         <sc-for list="{{ lw.rows }}" as="r" hint-placeholder-count="8">
-          <div class="arch-row">
-            <span>
+          <!-- data-target-host: the ROW is this link's activation area (the
+               .arch-link::after stretches over it), so the touch-target floor
+               is measured against the row, not the text run -->
+          <div class="arch-row" data-target-host>
+            <span class="arch-cmp">
               <sc-for list="{{ r.cmp }}" as="c" hint-placeholder-count="0">
                 <button class="cmp-toggle" aria-pressed="{{ c.on }}" aria-label="{{ c.title }}" title="{{ c.title }}" onClick="{{ c.toggle }}">{{ c.mark }}</button>
               </sc-for>
             </span>
-            <span style="color:var(--sub);font-weight:600;font-family:'JetBrains Mono',monospace;font-size:var(--fs-xs)">{{ r.date }}</span>
-            <span>
+            <span class="arch-date" data-label="date">{{ r.date }}</span>
+            <span class="arch-name">
               <sc-for list="{{ r.link }}" as="ln" hint-placeholder-count="0">
-                <a class="arch-link" href="{{ ln.href }}">{{ ln.name }}</a>
+                <a class="arch-link" href="{{ ln.href }}" aria-label="{{ ln.aria }}">{{ ln.name }}</a>
               </sc-for>
               <sc-for list="{{ r.plain }}" as="pl" hint-placeholder-count="0">
-                <span style="color:var(--sub);font-weight:600">{{ pl.name }}</span>
+                <span class="arch-plain">{{ pl.name }}</span>
               </sc-for>
             </span>
-            <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;color:var(--sub)">
+            <span class="arch-type">
               {{ r.typeLabel }}
               <sc-for list="{{ r.shape }}" as="sh" hint-placeholder-count="0">
-                <span class="arch-shape" style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:var(--r-pill);background:var(--accentFade);color:var(--accent)">{{ sh.t }}</span>
+                <span class="arch-shape">{{ sh.t }}</span>
               </sc-for>
             </span>
-            <span data-label="km">{{ r.km }}</span>
-            <span data-label="time">{{ r.time }}</span>
-            <span data-label="pace">{{ r.pace }}</span>
-            <span data-label="hr">{{ r.hr }}</span>
+            <span class="arch-measures">
+              <sc-for list="{{ r.measures }}" as="m" hint-placeholder-count="4">
+                <span data-label="{{ m.k }}">{{ m.v }}</span>
+              </sc-for>
+            </span>
           </div>
         </sc-for>
 
@@ -163,13 +175,13 @@
   <!-- ===== COMPARE TRAY (selection → /compare?ids=…) ===== -->
   <sc-for list="{{ tray }}" as="ty" hint-placeholder-count="0">
     <div class="cmp-tray">
-      <span style="font-size:var(--fs-sm);font-weight:700">{{ ty.count }} selected for comparison</span>
+      <span class="cmp-count">{{ ty.count }} selected for comparison</span>
       <sc-for list="{{ ty.hint }}" as="h" hint-placeholder-count="0">
-        <span style="font-size:var(--fs-xs);color:var(--warn);font-weight:600">{{ h.t }}</span>
+        <span class="cmp-hint">{{ h.t }}</span>
       </sc-for>
-      <span style="flex:1"></span>
+      <span class="cmp-spacer"></span>
       <button class="wk-back" onClick="{{ ty.clear }}">Clear</button>
-      <button class="cmp-go" style="{{ ty.goStyle }}" title="{{ ty.goTitle }}" onClick="{{ ty.go }}">Compare</button>
+      <button class="cmp-go" disabled="{{ ty.goDisabled }}" title="{{ ty.goTitle }}" aria-label="{{ ty.goTitle }}" onClick="{{ ty.go }}">Compare</button>
     </div>
   </sc-for>
 
@@ -181,15 +193,34 @@ class Component extends DCLogic {
   // theme + nav + sync machine come from topbar.js (shared, design D8);
   // filters are read from the URL at init and mirrored back on every change,
   // so a filtered view survives reload and back navigation (archive-browser D3)
+  // ---- browsing place, kept across a visit to a run (archive-browser:
+  //      "returning from a run restores the browser's state") --------------
+  // Opening a run is a full document navigation, so the pages already loaded,
+  // the scroll position and the comparison selection are all gone on the way
+  // back. They are saved under the CURRENT filter URL — change the filters and
+  // the key changes with them, which is the honest behaviour: a different
+  // query is a different browse.
+  static PLACE_KEY = 'splits.archive.place';
+  static placeKey() { return window.location.pathname + window.location.search; }
+  static readPlace() {
+    try {
+      const raw = window.sessionStorage.getItem(Component.PLACE_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      return p && p.key === Component.placeKey() ? p : null;
+    } catch { return null; }        // privacy modes / quota can throw
+  }
+
   state = (() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('q') || '';
+    const place = Component.readPlace();
     return {
       theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
       type: p.get('type') || '', year: p.get('year') || '', q, qInput: q,
       rows: [], total: null, nextOffset: null,
       status: 'loading', moreStatus: null,
-      sel: [], selHint: '',
+      sel: (place && Array.isArray(place.sel)) ? place.sel : [], selHint: '',
       data: null, now: new Date(),
       syncState: 'idle', syncError: null, lastSync: null, lastResult: null, statusReady: false,
     };
@@ -205,6 +236,21 @@ class Component extends DCLogic {
       .then((m) => { if (m && m.athleteData) this.setState({ data: m.athleteData }); }).catch(() => {});
     if (this.tb()) this.tb().initSyncStatus(this);
     this._seq = 0;
+    // restore the place BEFORE the first fetch, so the loader knows how many
+    // pages to re-load rather than dropping the viewer back on page one
+    this._place = Component.readPlace();
+    this._savePlace = () => {
+      try {
+        window.sessionStorage.setItem(Component.PLACE_KEY, JSON.stringify({
+          key: Component.placeKey(), loaded: this.state.rows.length,
+          sel: this.state.sel, y: Math.round(window.scrollY),
+        }));
+      } catch { /* storage blocked or full — losing the place is not an error */ }
+    };
+    // pagehide covers both a normal navigation and a bfcache freeze; the
+    // click handler covers browsers that fire neither in time
+    window.addEventListener('pagehide', this._savePlace);
+    window.addEventListener('beforeunload', this._savePlace);
     this.fetchList(true);
   }
 
@@ -222,13 +268,18 @@ class Component extends DCLogic {
   // one fetch path for first load, filter changes (reset) and load-more.
   // A failure NEVER clears rows already shown: with nothing shown it's the
   // offline state, with rows shown it's an inline report + retry (spec 3.6).
-  fetchList(reset, f = this.filters()) {
+  // `atOffset` overrides the state's nextOffset: the place-restore loop calls
+  // straight back into fetchList from inside a .then, where setState has not
+  // necessarily landed yet and this.state.nextOffset would still be the
+  // previous page's.
+  fetchList(reset, f = this.filters(), atOffset) {
     const seq = ++this._seq;
     const p = new URLSearchParams();
     if (f.type) p.set('type', f.type);
     if (f.year) p.set('year', f.year);
     if (f.q) p.set('q', f.q);
-    if (!reset && this.state.nextOffset != null) p.set('offset', String(this.state.nextOffset));
+    const offset = atOffset != null ? atOffset : this.state.nextOffset;
+    if (!reset && offset != null) p.set('offset', String(offset));
     if (!reset) this.setState({ moreStatus: 'loading' });
     else if (!this.state.rows.length) this.setState({ status: 'loading' });
     this._retryReset = reset;
@@ -236,11 +287,17 @@ class Component extends DCLogic {
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
       .then((j) => {
         if (seq !== this._seq) return; // a newer request superseded this one
-        this.setState({
-          rows: reset ? j.activities : this.state.rows.concat(j.activities),
-          total: j.total, nextOffset: j.nextOffset,
-          status: 'ready', moreStatus: null,
-        });
+        const rows = reset ? j.activities : this.state.rows.concat(j.activities);
+        this.setState({ rows, total: j.total, nextOffset: j.nextOffset,
+                        status: 'ready', moreStatus: null });
+        // keep pulling pages until the viewer's place is re-loaded, then put
+        // them back where they were looking
+        if (this._place) {
+          if (rows.length < this._place.loaded && j.nextOffset != null) { this.fetchList(false, f, j.nextOffset); return; }
+          const y = this._place.y || 0;
+          this._place = null;
+          if (y > 0) requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
+        }
       })
       .catch((e) => {
         if (seq !== this._seq) return;
@@ -288,7 +345,7 @@ class Component extends DCLogic {
   renderVals() {
     const tv = (this.tb() ? this.tb().THEMES : {})[this.state.theme] || {}; const rootStyle = {};
     for (const k in tv) rootStyle['--' + k] = tv[k];
-    Object.assign(rootStyle, { minHeight:'100vh', background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif", padding:'22px clamp(16px,4vw,40px) 64px' });
+    Object.assign(rootStyle, { background:'var(--bg)', color:'var(--ink)', fontFamily:"'Archivo', system-ui, sans-serif" });
     const themes = this.tb() ? this.tb().themePicker(this.state.theme, this.setTheme) : [];
     const nav = this.tb() ? this.tb().navModel('archive', { archive: this.state.archiveAvail !== false,
       course: !!(this.state.data && this.state.data.courseLens) }) : [];
@@ -336,17 +393,30 @@ class Component extends DCLogic {
         const run = a.type === 'running';
         const km = a.distanceM ? a.distanceM / 1000 : null;
         const on = sel.indexOf(a.activityId) >= 0;
+        const date = (a.startTimeLocal || '').slice(0, 10);
+        const name = a.name || (run ? 'Run' : String(a.type || '').replace(/_/g, ' '));
+        // A measure the activity does not carry is OMITTED, not rendered as a
+        // placeholder mark: a strength session has no pace, and a column of
+        // em-dashes was four pieces of noise per row on a phone. The four
+        // slots are always emitted so the desktop table still lines up with
+        // its header; an absent one carries no label and no value, so the
+        // phone composition (which draws the label from data-label) shows
+        // nothing at all for it.
+        const measure = (k, v) => (v == null ? { k: '', v: '' } : { k, v });
         return {
-          date: (a.startTimeLocal || '').slice(0, 10),
+          date,
           typeLabel: run ? 'RUN' : String(a.type || '—').replace(/_/g, ' ').replace(' training', '').toUpperCase(),
-          km: km != null ? km.toFixed(1) : '—',
-          time: this.fmtHMS(a.durationS),
-          pace: run && km > 0 && a.durationS ? this.fmtPace(Math.round(a.durationS / km)) : '—',
-          hr: a.avgHr != null ? String(a.avgHr) : '—',
+          measures: [
+            measure('km', km != null ? km.toFixed(1) : null),
+            measure('time', a.durationS != null ? this.fmtHMS(a.durationS) : null),
+            measure('pace', run && km > 0 && a.durationS ? this.fmtPace(Math.round(a.durationS / km)) : null),
+            measure('hr', a.avgHr != null ? String(a.avgHr) : null),
+          ],
           // only run rows carry a link and a compare toggle; other activities
           // render as plain rows — no focusable no-op controls (spec 4.x)
-          link: run ? [{ href: './run/' + a.activityId, name: a.name || 'Run' }] : [],
-          plain: run ? [] : [{ name: a.name || String(a.type || '').replace(/_/g, ' ') }],
+          link: run ? [{ href: './run/' + a.activityId, name,
+                         aria: name + ', ' + date + (km != null ? ', ' + km.toFixed(1) + ' km' : '') + '. Open the run.' }] : [],
+          plain: run ? [] : [{ name }],
           // add-interval-lens: the label is the friendlier read when present
           // (e.g. "5×1 km"); otherwise the bare shape word is still worth a
           // chip, but "steady" carries no news — the type badge already says RUN
@@ -373,13 +443,18 @@ class Component extends DCLogic {
       ? 'Showing ' + this.state.rows.length + ' of ' + this.state.total + ' archived activities — newest first'
       : 'Browse and filter everything the archive holds';
 
+    // The Compare control states honestly whether it can act: a real
+    // `disabled`, not an opacity that still takes the tap and does nothing.
+    // compileAttr passes a whole-mustache value through unchanged, so this is
+    // a genuine boolean prop, not the string "false".
+    const canCompare = this.state.sel.length >= 2;
     const tray = this.state.sel.length ? [{
       count: this.state.sel.length,
       hint: this.state.selHint ? [{ t: this.state.selHint }] : [],
       clear: this.clearSel,
       go: this.compareNow,
-      goStyle: this.state.sel.length >= 2 ? '' : 'opacity:.45;cursor:default',
-      goTitle: this.state.sel.length >= 2 ? 'Compare the selected runs side by side' : 'Select at least two runs to compare',
+      goDisabled: !canCompare,
+      goTitle: canCompare ? 'Compare the selected runs side by side' : 'Select at least two runs to compare',
     }] : [];
 
     return { rootStyle, themes, nav, syncWrap, typeChips, yearChips, qInput: this.state.qInput, onQ: this.onQ, countLine, notReady, empty, listWrap, tray, liveText };

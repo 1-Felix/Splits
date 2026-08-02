@@ -254,9 +254,52 @@ try {
   assert.strictEqual(significant.length, 0,
     "no console errors beyond documented template/data noise; got: " + JSON.stringify(significant));
 
+  // ── the installable shell is served from OUR origin (mobile-chrome) ──────────
+  // Headless chromium never fetches a manifest or an icon lazily, so the
+  // browser-side origin block above can only prove a NEGATIVE about them. This
+  // asks for them explicitly: same-origin, 200, correct media type, and every
+  // icon the manifest names resolves. Run inside the page, so the request goes
+  // through the very route interceptor that aborts foreign origins.
+  const shell = await page.evaluate(async () => {
+    const r = await fetch("./manifest.webmanifest");
+    const out = { status: r.status, type: r.headers.get("content-type") || "", icons: [] };
+    if (!r.ok) return out;
+    const m = await r.json();
+    out.startUrl = m.start_url;
+    out.display = m.display;
+    for (const ic of m.icons || []) {
+      // against the document BASE, not location: /run/:id carries <base href="/">
+      const ir = await fetch(new URL(ic.src, document.baseURI));
+      out.icons.push({ src: ic.src, status: ir.status, purpose: ic.purpose || "" });
+    }
+    return out;
+  });
+  assert.strictEqual(shell.status, 200, "the manifest is served: " + JSON.stringify(shell));
+  assert.match(shell.type, /application\/manifest\+json/,
+    "the manifest carries its own media type; got: " + shell.type);
+  assert.strictEqual(shell.display, "standalone", "the manifest declares standalone display");
+  assert.ok(String(shell.startUrl).startsWith("./") || String(shell.startUrl).startsWith("/"),
+    "the manifest's start_url is relative to the app: " + shell.startUrl);
+  assert.ok(shell.icons.length >= 2, "the manifest names at least the 192 and 512 icons");
+  for (const ic of shell.icons) {
+    assert.strictEqual(ic.status, 200, "icon " + ic.src + " resolves; got " + ic.status);
+    assert.match(ic.purpose, /maskable/, "icon " + ic.src + " is maskable");
+  }
+
   // ── task 4.4 guard: the invariant fails at the source, not only in a browser ──
-  for (const f of ["Running Dashboard.dc.html", "progress.dc.html", "run.dc.html", "dashboard.css"]) {
-    const src = await readFile(join(ROOT, f), "utf8");
+  // Every page, the shared behaviour module and the manifest — the scan used to
+  // cover three pages and the stylesheet, which is exactly how /archive,
+  // /compare and /course could have grown a CDN reference unnoticed.
+  //
+  // XML namespace declarations are stripped before the scan: `xmlns=
+  // "http://www.w3.org/2000/svg"` inside the tab-bar icons' data: URIs is an
+  // identifier the parser compares, never a URL anything fetches. Everything
+  // else — including any other absolute URL inside a data: URI — still fails.
+  const XMLNS = /\sxmlns(:\w+)?=(['"])https?:\/\/[^'"]*\2|%20xmlns(:\w+)?='https?:\/\/[^']*'/g;
+  for (const f of ["Running Dashboard.dc.html", "progress.dc.html", "archive.dc.html",
+                   "compare.dc.html", "course.dc.html", "run.dc.html",
+                   "dashboard.css", "topbar.js", "manifest.webmanifest"]) {
+    const src = (await readFile(join(ROOT, f), "utf8")).replace(XMLNS, "");
     const m = src.match(/https?:\/\/[^\s"')]+/);
     assert.ok(!m, `${f} must contain no absolute http(s) subresource URL; found: ${m && m[0]}`);
   }

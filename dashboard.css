@@ -778,6 +778,9 @@
      lanes, the legend and the readout use. */
   .cmp-splits-row { grid-template-columns: 1fr; gap: var(--sp-1); padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
   .cmp-split-dot  { display: block; }
+  /* a run that did not reach this kilometre says nothing here, rather than an
+     empty track and an em-dash — that was a row of placeholder marks */
+  .cmp-split-cell--absent { display: none; }
 
   /* the records feed row is a target, not a line of text */
   .rec-feed-row { min-height: 44px; flex-wrap: wrap; }

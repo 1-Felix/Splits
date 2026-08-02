@@ -192,7 +192,7 @@
           <div class="cmp-splits-row" style="{{ sp.rowGrid }}">
             <span style="color:var(--sub);font-weight:700;font-size:var(--fs-xs)">{{ r.km }}</span>
             <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="2">
-              <div class="cmp-split-cell">
+              <div class="{{ c.cls }}">
                 <span class="cmp-split-dot" style="background:{{ c.color }}"></span>
                 <div class="cmp-split-track">
                   <div class="cmp-split-fill" style="width:{{ c.w }}%;background:{{ c.color }}"></div>
@@ -510,9 +510,14 @@ class Component extends DCLogic {
             km: 'km ' + k,
             cells: ready.map((s) => {
               const sp = byKm.get(s.id).get(k);
+              // A run that did not reach this kilometre carries no split. On a
+              // phone, where the cells STACK, an empty track and an em-dash per
+              // absent run is a row of placeholder marks — so the cell is
+              // marked absent and the phone tier drops it. The wide grid keeps
+              // it, because there the column IS the run's identity.
               return sp && sp.pace
-                ? { w: +(minPace / sp.pace * 100).toFixed(1), color: color.get(s.id), pace: this.fmtPace(sp.pace) }
-                : { w: 0, color: 'transparent', pace: '—' };
+                ? { w: +(minPace / sp.pace * 100).toFixed(1), color: color.get(s.id), pace: this.fmtPace(sp.pace), cls: 'cmp-split-cell' }
+                : { w: 0, color: 'transparent', pace: '—', cls: 'cmp-split-cell cmp-split-cell--absent' };
             }),
           });
         }

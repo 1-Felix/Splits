@@ -629,6 +629,27 @@ try {
         `${what} is on the first screen (bottom=${bottom}, viewport=${first.vh})`);
     }
 
+    // a planned day's detail opens in the sheet, not as an accordion whose
+    // own first line can land below the fold
+    const dayCard = page.locator("#sec-week1 .day--wk").first();
+    if (await dayCard.count()) {
+      const beforeH = await page.evaluate(() => document.documentElement.scrollHeight);
+      await dayCard.click();
+      await page.waitForSelector(".sheet-backdrop .sheet", { timeout: 5000 });
+      const day = await page.evaluate(() => ({
+        title: document.querySelector(".sheet-title").innerText.trim(),
+        body: document.querySelector(".sheet-body").innerText.trim().length,
+        top: Math.round(document.querySelector(".sheet").getBoundingClientRect().top),
+        vh: window.innerHeight,
+        docH: document.documentElement.scrollHeight,
+      }));
+      assert.ok(day.body > 0, "the day's detail is in the sheet: " + day.title);
+      assert.ok(day.top < day.vh, "and the sheet's head is in the viewport");
+      assert.strictEqual(day.docH, beforeH, "the week below it did not move");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector(".sheet-backdrop"), null, { timeout: 5000 });
+    }
+
     // the block's weeks stay comparable — a rail, not seven screens
     const rail = await page.evaluate(() => {
       const el = document.getElementById("sec-week2");

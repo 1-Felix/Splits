@@ -50,7 +50,7 @@
 - [x] 5.1 Implement `armSwipe()` in `topbar.js`: three `{ passive: true }` listeners, active only under `PHONE_MAX`, targets from `navModel(...).map(n => n.href)`.
 - [x] 5.2 Implement the refusal guard — multi-touch, active selection, or an ancestor that is an `svg` / inside an `svg` / a form field / `data-no-swipe` / non-`auto` `touch-action` / horizontally scrollable.
 - [x] 5.3 Implement the thresholds: disarm at `|dy| > 8 && |dy| > |dx|`; lock at `|dx| > 12 && |dx| > 2*|dy|`; navigate at 25% of viewport width or 0.5 px/ms.
-- [ ] 5.4 Add `@view-transition { navigation: auto }`.
+- [~] 5.4 ~~Add `@view-transition { navigation: auto }`~~ — **deliberately not shipped.** With it enabled, a navigation that interrupts a still-loading document leaves the incoming document permanently render-blocked in Chromium (DOM complete, rAF never fires again 18 s later). See notes.md and the comment in dashboard.css.
 - [x] 5.5 Test the guard against real elements on every page: charts, hit-bands, the readiness ring, the heatmap and block scrollers, and the search field must all refuse; plain card content must arm. Re-assert `scrollWidth <= width + 1` on all five asserted pages.
 
 ## 6. The sheet layer and containment (Move 3)
@@ -88,14 +88,14 @@
 - [x] 8.2 Re-compose archive rows as bounded two-line cards with the whole row as one ≥56px target; move the compare toggle to a dedicated ≥44px leading control that cannot overlap the run name; omit absent measures instead of rendering em-dashes.
 - [x] 8.3 Preserve pagination, scroll position and selection across back-navigation from a run; make the Compare button honestly disabled; raise the search field to 16px; fix the tray's multi-line state.
 - [x] 8.4 Add the phone token tier: 44px target floor (`.scope-chip`, `.wk-back`, `.cmp-go`, `.cmp-toggle`, `.block-week`, archive rows), 11px type floor, `:active` feedback, device-neutral copy. **Flip `test_mobile_pages.mjs`'s pending block to enforcing.**
-- [ ] 8.5 Re-compose `/compare` as one lane per run for the summary and per-kilometre rows for splits, keeping every measure and the best-per-measure marks; add navigation so a shared link is not a dead end.
-- [ ] 8.6 Re-compose the records wall as one unit per distance with by-year detail behind a disclosure; make the records feed rows navigable like the wall cells.
+- [x] 8.5 Re-compose `/compare` as one lane per run for the summary and per-kilometre rows for splits, keeping every measure and the best-per-measure marks; add navigation so a shared link is not a dead end.
+- [x] 8.6 Re-compose the records wall as one unit per distance with by-year detail behind a disclosure; make the records feed rows navigable like the wall cells.
 - [x] 8.7 Re-compose `.block-day` as a stacked card and fix `.section-head` wrapping at phone widths.
-- [ ] 8.8 Give `.run-lower` explicit mobile `order:` so the interval lens precedes the route and best-efforts. Measured on the real 5×1 km lap-backed run `23543309396` at 390px: the rep card sits **5th at y=1765 of a 2393px document (74% depth)**, below the 410px route card and best-efforts. Target order: reps → splits → route → bests.
-- [ ] 8.9 Re-compose the rep row so the deviation bar survives phone width. Measured on the same real run, the bar's track is **6.0px at 360px** (fills 0.0–3.0px), 36px at 390, 73.6px at 430, 275px at 1440 — the interval lens's whole point is invisible on a phone. The existing `@media (max-width:430px)` override in `run.dc.html`'s helmet already compresses the five fixed columns (34+48+40+44+44+30 = 240px + 5 gaps) and still leaves only 6px; the columns must wrap or the bar must move to its own line.
-- [ ] 8.10 Re-compose the course pace table with persistent column meaning, and make the decisive-segment chips real controls.
-- [ ] 8.11 Compose the cockpit for a phone: merged *today* card, the block strip as a horizontal snap rail acting as the week switcher, KPIs 2-up, recent activities with sheets. Build the rail first, then judge whether the chart carousel follows (design open question).
-- [ ] 8.12 Give every horizontal scroller an edge affordance that paints only while it overflows, plus `scroll-snap` and `overscroll-behavior-x: contain`; open the heatmap on today rather than the oldest half of the year.
+- [x] 8.8 Give `.run-lower` explicit mobile `order:` so the interval lens precedes the route and best-efforts. Measured on the real 5×1 km lap-backed run `23543309396` at 390px: the rep card sits **5th at y=1765 of a 2393px document (74% depth)**, below the 410px route card and best-efforts. Target order: reps → splits → route → bests.
+- [x] 8.9 Re-compose the rep row so the deviation bar survives phone width. Measured on the same real run, the bar's track is **6.0px at 360px** (fills 0.0–3.0px), 36px at 390, 73.6px at 430, 275px at 1440 — the interval lens's whole point is invisible on a phone. The existing `@media (max-width:430px)` override in `run.dc.html`'s helmet already compresses the five fixed columns (34+48+40+44+44+30 = 240px + 5 gaps) and still leaves only 6px; the columns must wrap or the bar must move to its own line.
+- [x] 8.10 Re-compose the course pace table with persistent column meaning, and make the decisive-segment chips real controls.
+- [x] 8.11 Compose the cockpit for a phone: merged *today* card, the block strip as a horizontal snap rail acting as the week switcher, KPIs 2-up, recent activities with sheets. Build the rail first, then judge whether the chart carousel follows (design open question).
+- [x] 8.12 Give every horizontal scroller an edge affordance that paints only while it overflows, plus `scroll-snap` and `overscroll-behavior-x: contain`; open the heatmap on today rather than the oldest half of the year.
 
 ## 9. Wide screens (Move 7)
 
@@ -104,11 +104,11 @@
 
 ## 10. Verification and deploy
 
-- [ ] 10.1 `pnpm test` — all suites green, including the updated `test_topbar.mjs`, `test_offline.mjs`, `test_archive_page.mjs` and the new `test_mobile_pages.mjs`.
-- [ ] 10.2 `pnpm test:layout` green at all six widths on all six pages.
-- [ ] 10.3 `style-audit diff` — no unintended desktop computed-style change.
-- [ ] 10.4 Capture the visual slice harness at 360/390/768/1440/1920 for all six pages and review against the pre-change captures.
-- [ ] 10.5 Record the measured before/after: cockpit screens, sub-44px target counts, sub-12px text counts, `/progress` overflow.
+- [x] 10.1 `pnpm test` — all suites green, including the updated `test_topbar.mjs`, `test_offline.mjs`, `test_archive_page.mjs` and the new `test_mobile_pages.mjs`.
+- [x] 10.2 `pnpm test:layout` green at all six widths on all six pages.
+- [x] 10.3 `style-audit diff` — no unintended desktop computed-style change.
+- [x] 10.4 Capture the visual slice harness at 360/390/768/1440/1920 for all six pages and review against the pre-change captures.
+- [x] 10.5 Record the measured before/after: cockpit screens, sub-44px target counts, sub-12px text counts, `/progress` overflow.
 - [ ] 10.6 Push `main`, let CI build, then `docker compose pull && up -d` on the NUC.
 - [ ] 10.7 Verify on a real phone against both `splits` and `splits-max`: install to home screen, safe-area clearance, tab bar, sheets, chart scrubbing, swipe, themes — and confirm the course basemap tiles render on the NUC (schema 14, 208 tiles) where they cannot locally.
-- [ ] 10.8 Write `notes.md` with the deployed result, anything deferred, and any test left legitimately updated.
+- [x] 10.8 Write `notes.md` with the deployed result, anything deferred, and any test left legitimately updated.

@@ -748,6 +748,55 @@ class Component extends DCLogic {
     };
   };
 
+  // A planned day's detail opens in the sheet below the phone tier
+  // (mobile-chrome: "long-form and secondary content opens in a sheet"). An
+  // accordion inside a compact agenda row pushed the rest of the week down and
+  // could put its own first line below the fold; the sheet opens where it can
+  // be read and leaves the week exactly where it was.
+  openDaySheet = (d, compRow) => {
+    const tb = this.tb(); if (!tb || !tb.openSheet) return false;
+    const detail = Object.assign(this.dayDetail(d), { compRow: compRow || [] });
+    const doc = document, wrap = doc.createElement('div');
+    const line = (label, text, cls) => {
+      const row = doc.createElement('div');
+      row.className = cls || 'wk-extra';
+      if (label) {
+        const l = doc.createElement('span');
+        l.className = 'wk-lbl';
+        l.textContent = label + ' ';
+        row.appendChild(l);
+      }
+      row.appendChild(doc.createTextNode(text));
+      wrap.appendChild(row);
+    };
+    for (const s of detail.segments) {
+      const row = doc.createElement('div');
+      row.className = 'wk-seg';
+      for (const [cls, t] of [['wk-seg-l', s.label], ['wk-seg-v', s.val], ['wk-seg-r', s.rest]]) {
+        const el = doc.createElement('span');
+        el.className = cls;
+        el.textContent = t || '';
+        row.appendChild(el);
+      }
+      wrap.appendChild(row);
+    }
+    for (const c of detail.compRow || []) line('Status', c.t);
+    for (const x of detail.extraRow) line('Also', x.t);
+    for (const f of detail.fuelRow) line('Fuel', f.t);
+    for (const n of detail.noteRow) line('', n.t, 'wk-note');
+    if (!wrap.childNodes.length) line('', 'No further detail was written for this day.', 'wk-note');
+    tb.openSheet({ title: d.day + ' · ' + (d.title || 'Planned'), node: wrap,
+                   onDismiss: () => this.dismissHover() });
+    return true;
+  };
+
+  activateDay = (dayId, d, compRow) => {
+    const tb = this.tb();
+    const phone = tb && typeof window !== 'undefined' && window.innerWidth <= tb.PHONE_MAX;
+    if (phone && this.openDaySheet(d, compRow)) return;
+    this.toggleDay(dayId);
+  };
+
   componentDidMount() {
     if (this.tb() && this.tb().watchWidth) this._unwatchW = this.tb().watchWidth(this);
     // chart engine: pure geometry (chart-core, which consumes chart-hover) +
@@ -1034,8 +1083,8 @@ class Component extends DCLogic {
         paceChip: paceText ? [{ t: paceText }] : [],
         comp: (cd && compGlyph[cd.status]) ? [compGlyph[cd.status]] : [],
         chevron: expanded ? '▾' : '▸', ariaExpanded: String(expanded),
-        toggle: () => this.toggleDay(dayId),
-        onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.toggleDay(dayId); } },
+        toggle: () => this.activateDay(dayId, d, compRowFor(cd)),
+        onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.activateDay(dayId, d, compRowFor(cd)); } },
         detailRows: expanded ? [ Object.assign(this.dayDetail(d), { compRow: compRowFor(cd) }) ] : [] }; });
 
     // active-week meta + header controls. Detailed weeks show derived counts; un-detailed

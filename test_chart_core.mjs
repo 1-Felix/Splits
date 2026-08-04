@@ -714,6 +714,25 @@ const baseDescriptor = {
   ], { values: t, fmt: String });
   assert.strictEqual(mixed.filter((s) => s.legend).length, 2,
     "a different set of series is news, and says so");
+
+  // once a legend is shown its names JOIN the stated roster: a third run that
+  // streams only hr and cadence widens the cast on hr — and cadence, repeating
+  // exactly that widened cast, stays silent instead of stating it again
+  const three = [
+    { key: "a", name: "Run A", color: "var(--series1)", values: t.map(() => 1) },
+    { key: "b", name: "Run B", color: "var(--series2)", values: t.map(() => 2) },
+    { key: "c", name: "Run C", color: "var(--series3)", values: t.map(() => 3) },
+  ];
+  const grown = multiTrackSpec([
+    { id: "pace", ariaLabel: "pace", series: two(), policy: {} },     // A, B
+    { id: "hr", ariaLabel: "hr", series: three, policy: {} },         // A, B, C — news
+    { id: "cad", ariaLabel: "cad", series: three, policy: {} },       // repeat of hr's cast
+    { id: "elev", ariaLabel: "elev", series: two(), policy: {} },     // subset again
+  ], { values: t, fmt: String });
+  assert.strictEqual(grown.filter((s) => s.legend).length, 2,
+    "the widened cast is stated once, not once per track that carries it");
+  assert.strictEqual(grown[2].legend, null, "cadence repeats hr's cast silently");
+  assert.strictEqual(grown[3].legend, null, "a subset of the roster stays silent");
 }
 
 console.log("ALL PASS");

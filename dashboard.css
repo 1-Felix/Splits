@@ -366,6 +366,13 @@
 .arch-filters { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
 .arch-search  { font-family: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); min-width: 180px; }
 .arch-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 16px on ANY touch device, not just under the phone tier: an 844px-wide
+   landscape phone gets the desktop width but still auto-zooms on a smaller
+   input — and iOS keeps that zoom after rotating back, unpinning the fixed
+   chrome. The floor keys on the input device, not the viewport. */
+@media (pointer: coarse) {
+  .arch-search { font-size: 16px; }
+}
 /* An archived activity is ONE record: the whole row (minus a reserved leading
    column) opens the run, and selecting for comparison is a separate control
    inside that reserved column. Before this the 18px toggle sat on top of the
@@ -597,7 +604,31 @@
      it here fixes them all at once rather than chasing each site; the chart
      ticks are named explicitly because they carry their own literal sizes. */
   :root { --fs-2xs: 11px; }
+  /* 11px mirrored by chart-core.js's FLAG_FONT_PHONE_PX — the annotation
+     packer measures label extents against the type actually on screen */
   .chart-ytick, .chart-xtick, .chart-flag { font-size: 11px; }
+
+  /* ---- the app shell owns the scroll ----
+     position:fixed pins to the LAYOUT viewport, and on a real phone that
+     viewport's bottom edge travels whenever the browser's own toolbar
+     collapses or re-expands mid-scroll — the tab bar visibly rides it, and
+     env(safe-area-inset-bottom) pulses the chrome's height while it does. So
+     below the phone tier the document does not scroll at all: .app-root is
+     the scroller, the toolbar never moves, and fixed chrome is genuinely
+     fixed. html/body/#dc-root/.sc-host are already one viewport tall
+     (support.js). Anything reading the scroll position goes through
+     topbar.js's pageScroller(), which returns whichever container scrolls. */
+  html, body { overflow: hidden; }
+  .app-root {
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    /* no top padding on the scroller: a sticky child's view rectangle is
+       inset by it, which would pin the header 22px below the top edge. The
+       header sits flush instead (its -22px margin is gone with it). */
+    padding-top: 0;
+  }
 
   /* ---- the 44px touch floor ----
      Where the visible ink is legitimately small, the HIT AREA grows to the
@@ -663,8 +694,11 @@
     position: sticky; top: 0; z-index: 50;
     flex-wrap: nowrap; gap: var(--sp-2);
     min-height: var(--topbar-h);
-    margin: calc(-1 * 22px) calc(-1 * clamp(16px, 4vw, 40px)) var(--sp-4);
-    padding: var(--sp-2) calc(clamp(16px, 4vw, 40px) + 44px) var(--sp-2) clamp(16px, 4vw, 40px);
+    margin: 0 calc(-1 * clamp(16px, 4vw, 40px)) var(--sp-4);
+    /* --safe-t on top: installed standalone with viewport-fit=cover renders
+       under the status bar, and the band must start below the notch — the
+       same offset .hdr-more already carries. In a browser it resolves to 0. */
+    padding: calc(var(--sp-2) + var(--safe-t)) calc(clamp(16px, 4vw, 40px) + 44px) var(--sp-2) clamp(16px, 4vw, 40px);
     background: var(--bg); border-bottom: 1px solid var(--line);
   }
   /* The tab bar owns navigation now, and one header control owns the rest.

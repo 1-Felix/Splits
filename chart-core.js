@@ -226,20 +226,26 @@ export function isConfident(weight, policy = {}) {
 // The gap is the label's own projected width, not a constant: "race" and
 // "half PB · Sonthofen" need very different room, and both are measured in
 // RENDERED CSS pixels (k), because that is where they either fit or collide.
-// 5.6 px/char is the measured mean advance of .chart-flag's 9px Archivo.
+// 5.6 px/char is the measured mean advance of .chart-flag's 9px Archivo; the
+// phone tier renders flags at 11px (dashboard.css raises them with the tick
+// floor), so extents scale by fontPx/9 — the packer must measure the type
+// actually on screen, or the no-collision guarantee fails on exactly the
+// tier that exercises it.
 const FLAG_CHAR_PX = 5.6;
 const FLAG_PAD_PX = 10;
-export function annotationExtent(label) {
-  return String(label == null ? "" : label).length * FLAG_CHAR_PX + FLAG_PAD_PX;
+const FLAG_FONT_PX = 9;          // the base tier's .chart-flag size
+const FLAG_FONT_PHONE_PX = 11;   // dashboard.css's phone-tier override
+export function annotationExtent(label, fontPx = FLAG_FONT_PX) {
+  return String(label == null ? "" : label).length * FLAG_CHAR_PX * (fontPx / FLAG_FONT_PX) + FLAG_PAD_PX;
 }
 
-export function placeAnnotations(anns, xScale, width, minGap = 0, maxLanes = 3, k = 1) {
+export function placeAnnotations(anns, xScale, width, minGap = 0, maxLanes = 3, k = 1, fontPx = FLAG_FONT_PX) {
   const placed = (anns || [])
     .map((a) => ({ label: a.label, x: +(+xScale(a.at)).toFixed(1) }))
     .filter((a) => Number.isFinite(a.x) && a.x >= -1 && a.x <= width + 1)
     .sort((p, q) => p.x - q.x || (p.label < q.label ? -1 : p.label > q.label ? 1 : 0));
   // extent in FRAME units = extent in CSS px × k
-  const gapOf = (a) => Math.max(minGap, annotationExtent(a.label)) * k;
+  const gapOf = (a) => Math.max(minGap, annotationExtent(a.label, fontPx)) * k;
   const laneEnds = [];
   const out = [];
   const crowded = [];
@@ -514,7 +520,8 @@ export function buildSpec(desc) {
 
   // ── annotations (race day, records) ──
   if (anns0.length && xScaleForAnns) {
-    const flags = placeAnnotations(anns0, xScaleForAnns, w, 0, 3, k).map((f) => ({
+    const flags = placeAnnotations(anns0, xScaleForAnns, w, 0, 3, k,
+      frame.cssW != null ? FLAG_FONT_PHONE_PX : FLAG_FONT_PX).map((f) => ({
       ...f,
       labelY: +(pad.t - 4 - f.lane * 10).toFixed(1),
       y0: pad.t, y1: plot.y + plot.h,
@@ -739,17 +746,21 @@ export function sharedXScale(values, w = 600, padL = 46, padR = 10, cssW) {
 export function multiTrackSpec(tracks, sharedX) {
   const nT = tracks.length;
   // A shared legend is stated ONCE. "Shared" is decided by the series names,
-  // not by position: a track whose cast is a subset of one already named above
-  // it says nothing new, so it stays silent — but a track carrying a genuinely
-  // different set still introduces it. On /compare that means the four tracks
-  // over the same two runs name them once instead of four times, while the
-  // cadence track (one run, because the other carries no cadence) is unchanged.
+  // not by position: a track whose cast is a subset of the names already
+  // stated above it says nothing new, so it stays silent — but a track
+  // carrying a genuinely new name still introduces it, and once shown its
+  // names JOIN the roster, so a later track repeating that same cast is a
+  // repeat too. On /compare that means the four tracks over the same two runs
+  // name them once instead of four times — and when a third run streams only
+  // hr and cadence, those two tracks share one legend rather than two.
   let stated = null;
   const suppress = tracks.map((tr) => {
     const names = (tr.series || []).map((s) => s && s.name).filter(Boolean);
     if (names.length < 2) return false;               // no legend is emitted anyway
-    if (!stated) { stated = new Set(names); return false; }
-    return names.every((n) => stated.has(n));
+    if (stated && names.every((n) => stated.has(n))) return true;
+    if (!stated) stated = new Set();
+    for (const n of names) stated.add(n);
+    return false;
   });
   return tracks.map((tr, ti) => buildSpec({
     id: tr.id,

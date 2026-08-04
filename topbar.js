@@ -271,6 +271,21 @@ export function watchWidth(host) {
   return () => { clearTimeout(timer); window.removeEventListener("resize", onResize); };
 }
 
+// The page's real scroll container. Below the phone tier the document is
+// frozen (dashboard.css) so a real browser's collapsing toolbar can never drag
+// the fixed chrome with it, and .app-root scrolls instead; above the tier the
+// document scrolls as ever. Anything that reads or writes the page's scroll
+// position must go through this, or it silently no-ops on one of the tiers.
+export function pageScroller(doc) {
+  const d = doc || (typeof document !== "undefined" ? document : null);
+  if (!d) return null;
+  if (typeof window !== "undefined" && window.innerWidth <= PHONE_MAX) {
+    const root = d.querySelector(".app-root");
+    if (root) return root;
+  }
+  return d.scrollingElement || d.documentElement;
+}
+
 const TAB_ICON = { cockpit: "home", progress: "chart", archive: "archive", course: "route" };
 const tabKey = (label) => String(label || "").trim().toLowerCase().replace(/[^a-z]/g, "");
 
@@ -600,7 +615,13 @@ export function openSheet(opts) {
   // drag the sheet down to dismiss — the gesture a phone viewer reaches for
   let dragY = null, moved = 0;
   sheet.addEventListener("touchstart", (ev) => {
-    if (ev.touches.length !== 1 || body.scrollTop > 0) { dragY = null; return; }
+    if (ev.touches.length !== 1) { dragY = null; return; }
+    // From the grip or the header the dismiss drag is always available; from
+    // the BODY only while it sits at its top — a scrolled body owns the
+    // vertical axis, and dragging it should scroll it back, not dismiss.
+    const fromChrome = ev.target && ev.target.closest
+      && ev.target.closest(".sheet-head, .sheet-grip");
+    if (!fromChrome && body.scrollTop > 0) { dragY = null; return; }
     dragY = ev.touches[0].clientY; moved = 0;
   }, { passive: true });
   sheet.addEventListener("touchmove", (ev) => {
@@ -657,16 +678,16 @@ export function swipeRefused(el) {
 export function armSwipe(doc) {
   const d = doc || (typeof document !== "undefined" ? document : null);
   if (!d || !d.addEventListener) return;
-  let x0 = 0, y0 = 0, t0 = 0, live = false, locked = false;
+  let x0 = 0, y0 = 0, t0 = 0, live = false, locked = false, target0 = null;
 
   d.addEventListener("touchstart", (ev) => {
-    live = false; locked = false;
+    live = false; locked = false; target0 = null;
     if (window.innerWidth > PHONE_MAX) return;
     if (!ev.touches || ev.touches.length !== 1) return;
     if (sheetIsOpen()) return;
-    if (swipeRefused(ev.target)) return;
     const t = ev.touches[0];
     x0 = t.clientX; y0 = t.clientY; t0 = ev.timeStamp || Date.now();
+    target0 = ev.target;
     live = true;
   }, { passive: true });
 
@@ -675,7 +696,12 @@ export function armSwipe(doc) {
     const dx = ev.touches[0].clientX - x0, dy = ev.touches[0].clientY - y0;
     // vertical intent always wins
     if (Math.abs(dy) > SWIPE.dropDY && Math.abs(dy) > Math.abs(dx)) { live = false; return; }
-    if (Math.abs(dx) > SWIPE.armDX && Math.abs(dx) > SWIPE.ratio * Math.abs(dy)) locked = true;
+    if (!locked && Math.abs(dx) > SWIPE.armDX && Math.abs(dx) > SWIPE.ratio * Math.abs(dy)) {
+      // the refusal walk (getComputedStyle up the ancestor chain) is paid only
+      // by a gesture that actually went horizontal, not by every touch
+      if (swipeRefused(target0)) { live = false; return; }
+      locked = true;
+    }
   }, { passive: true });
 
   d.addEventListener("touchend", (ev) => {
@@ -710,7 +736,7 @@ if (typeof window !== "undefined") {
     navModel, dayBucket, greetingText,
     syncPillModel, syncNow, waitForSync, initSyncStatus,
     tabModel, mountTabBar, mountHeaderMore, openSheet, closeSheet, sheetIsOpen,
-    chartCssWidth, watchWidth, armScrollers, scrollerState,
+    chartCssWidth, watchWidth, armScrollers, scrollerState, pageScroller,
     armSwipe, swipeRefused,
   };
   // Theme the document root before first paint: the body background, the tab

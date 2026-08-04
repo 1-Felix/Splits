@@ -56,6 +56,11 @@ for (const width of WIDTHS) {
     await page.waitForSelector("header.topbar", { timeout: 20000 }).catch(() => {});
     await page.waitForSelector(ready, { timeout: 20000 }).catch(() => {});
     await page.waitForTimeout(500);   // charts finish mounting
+    // the phone tier freezes the document and scrolls .app-root (the
+    // app-shell contract) — a fullPage capture would clip to one screen, so
+    // unfreeze for the shot; injected last, these win the cascade unaided
+    await page.addStyleTag({ content:
+      "html, body { overflow: visible; } .app-root { height: auto; overflow-y: visible; }" });
     const file = join(outDir, `${name}-${width}.png`);
     await page.screenshot({ path: file, fullPage: true });
     const m = await page.evaluate((w) => ({

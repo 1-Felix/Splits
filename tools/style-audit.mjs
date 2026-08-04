@@ -224,7 +224,12 @@ function check(ok, line) {
 }
 
 async function assertNoOverflow(page, width, label) {
-  const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+  // the phone tier clips inside .app-root (the app-shell contract), so the
+  // document's own scrollWidth alone would be blind there
+  const sw = await page.evaluate(() => {
+    const root = document.querySelector(".app-root");
+    return Math.max(document.documentElement.scrollWidth, root ? root.scrollWidth : 0);
+  });
   const ok = sw <= width + 1;
   check(ok, `${width} ${label} no horizontal overflow (scrollWidth=${sw})`);
   if (!ok) {
@@ -379,7 +384,8 @@ try {
     await page.waitForSelector("header.topbar");
     const cockpitBar = {};
     for (const [sel, props] of Object.entries(TOPBAR_PARITY)) cockpitBar[sel] = await read(page, sel, props);
-    for (const [pgName, url] of [["progress", PROGRESS], ["archive", ARCHIVE], ["compare", COMPARE], ["course", COURSE]]) {
+    for (const [pgName, url] of [["progress", PROGRESS], ["archive", ARCHIVE], ["compare", COMPARE], ["course", COURSE],
+                                 ...(runId ? [["run", `http://localhost:${PORT}/run/${runId}`]] : [])]) {
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await page.waitForSelector("header.topbar", { timeout: 15000 });
       for (const [sel, props] of Object.entries(TOPBAR_PARITY)) {
@@ -500,7 +506,8 @@ try {
           panelW: p.getBoundingClientRect().width,
           gridW: g ? g.getBoundingClientRect().width : 0,
           top: p.getBoundingClientRect().top,
-          scrollW: document.documentElement.scrollWidth,
+          scrollW: Math.max(document.documentElement.scrollWidth,
+            document.querySelector(".app-root")?.scrollWidth || 0),
           focusInPanel: p.contains(document.activeElement),
         };
       });

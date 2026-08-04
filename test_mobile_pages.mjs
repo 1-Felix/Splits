@@ -179,17 +179,27 @@ try {
       assert.ok(m.h <= 62, `${name}: the header is ${m.h}px, over the 62px budget`);
       assert.ok(m.firstTop == null || m.firstTop <= 120,
         `${name}: first content starts at ${m.firstTop}px, too far down`);
-      await page.evaluate(() => window.scrollTo(0, 1200));
+      // Below the phone tier the DOCUMENT is frozen and .app-root is the
+      // scroller — that is what keeps the fixed chrome from riding a real
+      // phone browser's collapsing toolbar. The scroll goes to the scroller,
+      // and the document refusing to move is itself part of the contract.
+      await page.evaluate(() => {
+        window.scrollTo(0, 300);
+        window.SplitsTopbar.pageScroller(document).scrollTo(0, 1200);
+      });
       await page.waitForTimeout(120);
       const after = await page.evaluate(() => {
         const h = document.querySelector("header.topbar");
         const bar = document.querySelector("nav.tabbar");
         return { headerTop: Math.round(h.getBoundingClientRect().top),
-                 y: Math.round(window.scrollY),
+                 y: Math.round(window.SplitsTopbar.pageScroller(document).scrollTop),
+                 docY: Math.round(window.scrollY),
                  barBottom: bar ? Math.round(bar.getBoundingClientRect().bottom) : null,
                  vh: window.innerHeight };
       });
-      if (after.y > 400) {   // only meaningful where the document is long enough
+      assert.strictEqual(after.docY, 0,
+        `${name}: the document itself does not scroll on a phone (scrollY=${after.docY})`);
+      if (after.y > 400) {   // only meaningful where the content is long enough
         assert.ok(Math.abs(after.headerTop) <= 1,
           `${name}: the header is still pinned after scrolling to ${after.y} (top=${after.headerTop})`);
         assert.ok(after.barBottom != null && Math.abs(after.barBottom - after.vh) <= 1,
@@ -511,7 +521,9 @@ try {
       };
       return { reps: y(".rep-table"), splits: y(".run-card--splits"),
                trace: y(".run-card--trace"), bests: y(".run-card--bests"),
-               docH: document.documentElement.scrollHeight };
+               // the page's full height lives on the phone-tier scroller, not
+               // the (frozen, one-viewport) document
+               docH: window.SplitsTopbar.pageScroller(document).scrollHeight };
     });
     assert.ok(order.reps != null && order.trace != null,
       "the run carries both a rep table and a route: " + JSON.stringify(order));

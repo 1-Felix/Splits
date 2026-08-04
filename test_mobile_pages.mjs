@@ -578,6 +578,36 @@ try {
     assert.ok(ring.scoreBox[0] > 0 && ring.scoreBox[1] > 0, "the score has a non-zero box: " + JSON.stringify(ring.scoreBox));
     assert.ok(ring.statusBox[0] > 0 && ring.statusBox[1] > 0, "the status has a non-zero box: " + JSON.stringify(ring.statusBox));
 
+    // the block rail opens on the CURRENT week (data-scroller="active"), not
+    // on week 1 — the fixture's today sits weeks into the block, so an
+    // unplaced rail would greet every visit with its oldest card
+    await page.waitForFunction(() => {
+      const rail = document.querySelector("#sec-week2");
+      return rail && rail.dataset.scrollerPlaced === "1";
+    }, null, { timeout: 10000 });
+    const railOpen = await page.evaluate(() => {
+      const el = document.querySelector("#sec-week2");
+      const t = el.querySelector('[data-scroll-target="true"]');
+      const cards = [...el.querySelectorAll(".day")];
+      const rl = el.getBoundingClientRect().left;
+      const tr = t ? t.getBoundingClientRect() : null;
+      return { scrollLeft: Math.round(el.scrollLeft), idx: cards.indexOf(t),
+               restLeft: tr ? Math.round(tr.left - rl + el.scrollLeft) : null,
+               maxScroll: el.scrollWidth - el.clientWidth, clientW: el.clientWidth,
+               targetLeft: tr ? Math.round(tr.left - rl) : null,
+               targetRight: tr ? Math.round(tr.right - rl) : null };
+    });
+    assert.ok(railOpen.idx > 0, `the fixture's current week is not the first card (idx=${railOpen.idx})`);
+    assert.ok(railOpen.scrollLeft > 0, "the rail opened scrolled toward it, not at week 1");
+    // start-aligned when the block runs on, end-clamped when the current week
+    // is among the last cards (a race week has nothing after it to fill the
+    // viewport) — either way the rail got as close as scrolling allows
+    assert.ok(railOpen.restLeft != null
+      && Math.abs(railOpen.scrollLeft - Math.min(railOpen.restLeft, railOpen.maxScroll)) <= 8,
+      `the rail scrolled as close to the current week as it can ${JSON.stringify(railOpen)}`);
+    assert.ok(railOpen.targetLeft >= -1 && railOpen.targetRight <= railOpen.clientW + 1,
+      `the current week is fully in view (${railOpen.targetLeft}..${railOpen.targetRight} of ${railOpen.clientW})`);
+
     // coach prose is paragraphs, not one text node
     const paras = await page.evaluate(() => document.querySelectorAll("#card-coach .coach-p").length);
     assert.ok(paras >= 2, `the coach note renders as paragraphs (got ${paras})`);

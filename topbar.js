@@ -492,15 +492,35 @@ export function armScrollers(doc) {
     if (s) el.setAttribute("data-overflow", s);
     else el.removeAttribute("data-overflow");
   };
+  // "the scroller opens where it matters" — a year-long heatmap opens on
+  // today ("end", the newest edge), a block rail opens on the current week
+  // ("active", the descendant marked data-scroll-target="true"). Placement
+  // happens ONCE per element, and only when there is real overflow and a
+  // target to place: sc-for fills a rail after the scroller arms, so the
+  // sweep keeps trying until both exist — and then never fights the
+  // viewer's own scrolling.
+  const place = (el) => {
+    if (el.dataset.scrollerPlaced) return;
+    if (el.scrollWidth <= el.clientWidth + 1) return;
+    const mode = el.getAttribute("data-scroller");
+    if (mode === "end") {
+      el.scrollLeft = el.scrollWidth;
+    } else if (mode === "active") {
+      const t = el.querySelector('[data-scroll-target="true"]');
+      if (!t) return;
+      // the browser clamps at the rail's end, which leaves a trailing target
+      // (a race week is the LAST card) fully in view instead of start-aligned
+      el.scrollLeft += t.getBoundingClientRect().left - el.getBoundingClientRect().left;
+    } else return;
+    el.dataset.scrollerPlaced = "1";
+  };
   const sweep = () => {
     for (const el of d.querySelectorAll("[data-scroller]")) {
       if (!el.dataset.scrollerArmed) {
         el.dataset.scrollerArmed = "1";
         el.addEventListener("scroll", () => update(el), { passive: true });
-        // "the scroller opens where it matters" — a year-long heatmap opens on
-        // today, not on the oldest half of the year
-        if (el.getAttribute("data-scroller") === "end") el.scrollLeft = el.scrollWidth;
       }
+      place(el);
       update(el);
     }
   };

@@ -299,10 +299,12 @@
   <!-- Below the phone tier this becomes a horizontal snap RAIL rather than
        seven full-width cards: the weeks of a block are peers meant to be
        compared, and one card per week turned that comparison into seven
-       screens. data-scroller makes it say that it scrolls. -->
-  <section id="sec-week2" class="week-grid" data-scroller>
+       screens. data-scroller makes it say that it scrolls, and "active"
+       opens it on the current week (data-scroll-target) — a 40-week block
+       must not greet every visit with week 1. -->
+  <section id="sec-week2" class="week-grid" data-scroller="active">
     <sc-for list="{{ block }}" as="w" hint-placeholder-count="7">
-      <div class="day day--sel" style="background:{{ w.bg }};border:1px solid {{ w.border }};opacity:{{ w.opacity }};box-shadow:{{ w.ring }}" role="button" tabIndex="0" aria-pressed="{{ w.ariaPressed }}" aria-label="{{ w.ariaLabel }}" onClick="{{ w.onSelect }}" onKeyDown="{{ w.onKey }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:2px">
+      <div class="day day--sel" data-scroll-target="{{ w.isNow }}" style="background:{{ w.bg }};border:1px solid {{ w.border }};opacity:{{ w.opacity }};box-shadow:{{ w.ring }}" role="button" tabIndex="0" aria-pressed="{{ w.ariaPressed }}" aria-label="{{ w.ariaLabel }}" onClick="{{ w.onSelect }}" onKeyDown="{{ w.onKey }}" style-focus-visible="outline:2px solid var(--accent);outline-offset:2px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-size:var(--fs-sm);font-weight:800;letter-spacing:.04em">{{ w.wk }}</span>
           <span style="font-size:var(--fs-2xs);font-weight:800;letter-spacing:.07em;color:{{ w.phaseColor }}">{{ w.tag }}</span>
@@ -1059,6 +1061,7 @@ class Component extends DCLogic {
         ring: (active && !cur) ? '0 0 0 2px var(--accent)' : 'none',
         opacity: (past && !active)?'.5':'1',
         tag: cur ? 'THIS WK' : active ? 'VIEWING' : b.phase.toUpperCase(),
+        isNow: String(cur),   // the rail opens on this card (data-scroller="active")
         onSelect: () => this.selectWeek(i),
         onKey: (e) => { if (e.key === 'Enter' || e.key === ' ') { if (e.preventDefault) e.preventDefault(); this.selectWeek(i); } },
         ariaPressed: String(active), ariaLabel: 'Show ' + b.wk + ' (' + b.label + ') in This Week' }; });

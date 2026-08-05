@@ -328,6 +328,42 @@ def test_write_briefing_atomic_replace():
     assert leftovers == [], f"temp files must not survive: {leftovers}"
 
 
+# ── honest-compliance: name what this instance cannot see ────────────────────
+def _untracked_row(date, title, kind="strength"):
+    return {"date": date, "wk": "Wk 2", "planned_kind": kind,
+            "planned_km": 0.0, "planned_load": "Moderate",
+            "planned_title": title, "status": "untracked", "reason": None,
+            "actual_km": None, "actual_pace_s": None, "actual_hr": None,
+            "activity_id": None, "planned_s": None, "actual_s": None,
+            "quality_json": None}
+
+
+def test_briefing_names_untracked_work_as_unverifiable():
+    """The coach must never read silence as compliance. An untracked day is
+    not evidence of a skipped session and the briefing must say so in words.
+    Mutation: drop the note → red."""
+    rows = [_untracked_row("2026-07-29", "Calf & Core"),
+            _untracked_row("2026-08-02", "Mobility · Calves")]
+    note = cb._untracked_note(rows)
+    assert note, "an untracked day must be named"
+    text = " ".join(note)
+    assert "2 planned strength" in text
+    assert "not evidence of a skipped session" in text
+
+
+def test_no_untracked_days_means_no_note():
+    rows = [dict(_untracked_row("2026-07-29", "Calf"), status="done",
+                 activity_id=5)]
+    assert cb._untracked_note(rows) == []
+
+
+def test_status_cell_spells_out_the_new_verdicts():
+    base = {"reason": None, "quality_json": None}
+    assert cb._status_cell(dict(base, status="rest")) == "rest"
+    assert cb._status_cell(dict(base, status="untracked")) == \
+        "untracked (not recorded on this instance)"
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

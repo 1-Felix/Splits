@@ -240,6 +240,10 @@ def _actual_cell(r: dict, run_notes: dict) -> str:
 
 
 def _status_cell(r: dict) -> str:
+    if r["status"] == "untracked":
+        # Said in full every time: "untracked" alone could read as a data bug
+        # rather than a statement about what this instance can see.
+        return "untracked (not recorded on this instance)"
     out = f"{r['status']} ({r['reason']})" if r.get("reason") else r["status"]
     # add-plan-prescription D5: the rep-level verdict rides BESIDE the status
     # (annotate-only) — counts and bands, never a grade; judgment is /coach's.
@@ -261,6 +265,24 @@ def _week_table(rows: list[dict], run_notes: dict) -> list[str]:
         out.append(f"| {r['date']} | {_day_name(r['date'])} | {_planned_cell(r)} "
                    f"| {_actual_cell(r, run_notes)} | {_status_cell(r)} |")
     return out
+
+
+def _untracked_note(rows: list[dict]) -> list[str]:
+    """Name the work this instance cannot see (honest-compliance D7).
+
+    An untracked day is not evidence of a skipped session, and the coach must
+    never read the silence as compliance. Nothing is hidden here — it simply
+    stops being stated as a failure on the athlete's dashboard."""
+    untracked = [r for r in rows if r["status"] == "untracked"]
+    if not untracked:
+        return []
+    kinds = sorted({r["planned_kind"] for r in untracked if r["planned_kind"]})
+    n = len(untracked)
+    return ["",
+            f"**Not tracked on this instance:** {n} planned "
+            f"{'/'.join(kinds)} day{'' if n == 1 else 's'} could not be "
+            "verified — this athlete's device does not record that kind of "
+            "work. Absence here is not evidence of a skipped session."]
 
 
 def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
@@ -323,6 +345,7 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
         L.append("")
         L.append("No compliance rows yet — first sync after deploy, or the plan has no")
         L.append("scoreable weeks.")
+    L.extend(_untracked_note(all_rows))
 
     # ── block report (add-block-lens D7): the SAME lens document the
     # dashboard shows, passed in via data — never recomputed here. No lens,

@@ -246,7 +246,6 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
     if not days:
         return []  # undetailed week — the briefing's integrity warning covers it
     today_iso = today.isoformat()
-    closed = week["sun"] < today_iso
     unmatched = list(acts)
     rows, swap_candidates = [], []
 
@@ -300,31 +299,38 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
                                      or day["kind"] in tracked else "untracked")
         rows.append(row)
 
-    if closed:  # swap pass (design D3): rescue missed run slots at week close
-        # Pairs are assigned globally by date proximity (ties: earlier actual,
-        # then earlier planned day) so a far missed slot can never steal a run
-        # from a nearer one. A run under half the slot's km is no pairing.
-        leftover_runs = [a for a in unmatched if a["kind"] == "run"]
-        pairs = []
-        for day, row in swap_candidates:
-            planned_km = day.get("km") or 0
-            for a in leftover_runs:
-                if planned_km and a["km"] / planned_km < DIST_PARTIAL_RATIO:
-                    continue
-                pairs.append((abs(_days_apart(a["date"], day["date"])),
-                              a["date"], day["date"], day, row, a))
-        pairs.sort(key=lambda p: (p[0], p[1], p[2]))
-        used_slots, used_acts = set(), set()
-        for _, _, _, day, row, a in pairs:
-            if id(row) in used_slots or a["id"] in used_acts:
+    # Swap pass (design D3, widened by honest-compliance D4): rescue missed run
+    # slots wherever the athlete moved a session. It runs on the OPEN week too —
+    # `swap_candidates` only ever holds past-dated slots, so tomorrow can never
+    # be rescued, and every sync rescores the whole week from scratch, so a
+    # provisional pairing is never sticky. Waiting for week close meant a run
+    # done on Tuesday showed ✕ missed on Monday AND + unplanned on Tuesday for
+    # the rest of the week — twice punished for one completed session.
+    #
+    # Pairs are assigned globally by date proximity (ties: earlier actual,
+    # then earlier planned day) so a far missed slot can never steal a run
+    # from a nearer one. A run under half the slot's km is no pairing.
+    leftover_runs = [a for a in unmatched if a["kind"] == "run"]
+    pairs = []
+    for day, row in swap_candidates:
+        planned_km = day.get("km") or 0
+        for a in leftover_runs:
+            if planned_km and a["km"] / planned_km < DIST_PARTIAL_RATIO:
                 continue
-            used_slots.add(id(row))
-            used_acts.add(a["id"])
-            unmatched.remove(a)
-            _score_run(row, day, a, max_hr,
-                       plan_prescription.duration_for_day(day.get("segments")))
-            if row["status"] == "done":
-                row["status"] = "swapped"
+            pairs.append((abs(_days_apart(a["date"], day["date"])),
+                          a["date"], day["date"], day, row, a))
+    pairs.sort(key=lambda p: (p[0], p[1], p[2]))
+    used_slots, used_acts = set(), set()
+    for _, _, _, day, row, a in pairs:
+        if id(row) in used_slots or a["id"] in used_acts:
+            continue
+        used_slots.add(id(row))
+        used_acts.add(a["id"])
+        unmatched.remove(a)
+        _score_run(row, day, a, max_hr,
+                   plan_prescription.duration_for_day(day.get("segments")))
+        if row["status"] == "done":
+            row["status"] = "swapped"
 
     for a in unmatched:  # leftover RUNS are reported; extra rides/strength are life
         if a["kind"] != "run":

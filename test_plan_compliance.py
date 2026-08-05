@@ -139,18 +139,41 @@ def test_swap_at_week_close():
     assert all(r["status"] != "unplanned" for r in rows), "swap consumed the Saturday run"
 
 
-def test_open_week_no_swap_and_pending():
+def test_open_week_swaps_and_pends():
+    """A run done a day late used to show ✕ missed on the planned day AND
+    + unplanned on the day it happened — for up to six days, twice punished
+    for one completed session. The swap pass now runs over the open week's
+    PAST days too; future days stay pending.
+
+    Safe by construction: every sync rescores the whole week from scratch and
+    replaces its rows wholesale, so a provisional pairing is never sticky.
+    Mutation: restore the `if closed:` guard → red."""
     week = _closed_week()
     week.update(wk="Wk open", mon="2026-07-06", sun="2026-07-12")
     for i, d in enumerate(week["days"]):
         d["date"] = f"2026-07-{6 + i:02d}"
-    # today = Wed Jul 8: Mon's run slot missed, Tue had a stray run, Wed+ pending
+    # today = Wed Jul 8: Monday's 4 km slot was run on Tuesday instead
     rows = pc.score_week(week, [_a(1, "2026-07-07", "run", 4.0)],
                          dt.date(2026, 7, 8), MAX_HR, SNAP)
-    assert _by_date(rows, "2026-07-06")["status"] == "missed", "provisional inside open week"
-    assert any(r["status"] == "unplanned" and r["date"] == "2026-07-07" for r in rows)
+    assert _by_date(rows, "2026-07-06")["status"] == "swapped", \
+        "the run he actually did is credited without waiting for week close"
+    assert all(r["status"] != "unplanned" for r in rows), \
+        "…and is not ALSO reported as an extra run"
     for date in ("2026-07-08", "2026-07-10", "2026-07-12"):
-        assert _by_date(rows, date)["status"] == "pending"
+        assert _by_date(rows, date)["status"] == "pending", \
+            "the future is still the future"
+
+
+def test_a_future_day_is_never_swap_rescued():
+    """Only PAST days become swap candidates, so tomorrow's session can never
+    be marked done by today's run."""
+    week = _closed_week()
+    week.update(wk="Wk open", mon="2026-07-06", sun="2026-07-12")
+    for i, d in enumerate(week["days"]):
+        d["date"] = f"2026-07-{6 + i:02d}"
+    rows = pc.score_week(week, [_a(1, "2026-07-06", "run", 16.0)],
+                         dt.date(2026, 7, 6), MAX_HR, SNAP)
+    assert _by_date(rows, "2026-07-12")["status"] == "pending"
 
 
 def test_contested_slot_largest_wins():

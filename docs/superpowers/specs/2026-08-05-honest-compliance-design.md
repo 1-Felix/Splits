@@ -294,7 +294,8 @@ Sun  Mobility · Calves   —         — not tracked
 |---|---|
 | `plan_compliance.py` | `rest` + `untracked` statuses, tracked-kind parameter, duration scoring, mid-week swap, `calibrated`-aware quality verdict, `VERSION` 4 |
 | `plan_prescription.py` | minute/second duration reading with warm-up/cool-down exclusion |
-| `activity_archive.py` | `planned_s` / `actual_s` columns, tracked-kind query |
+| `activity_archive.py` | `planned_s` / `actual_s` columns (schema v15) |
+| `validate_data.py` | `_COMPLIANCE_STATUSES`, the `plannedKind` and `reason` whitelists, numeric `plannedS` / `actualS` — **widened first**, before any producer emits the new vocabulary, or the first sync after deploy fails validation on its own output |
 | `block_lens.py` | `_STATUSES`, `percentExecuted` denominator |
 | `coach_briefing.py` | status wording, unverifiable-days line |
 | 3 × `.dc.html` | glyph maps, reason words, duration in the actual column |

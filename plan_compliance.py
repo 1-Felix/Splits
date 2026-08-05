@@ -180,6 +180,7 @@ def _acts_for_range(conn, mon: str, sun: str) -> list[dict]:
             continue
         km = (dist_m or 0) / 1000.0
         acts.append({"id": aid, "date": date, "kind": kind, "km": km,
+                     "dur_s": dur_s,
                      "pace_s": (dur_s / km) if km and dur_s else None,
                      "hr": hr})
     return acts
@@ -194,20 +195,35 @@ def _is_run_slot(day: dict) -> bool:
     return day.get("kind") == "run" or (day.get("km") or 0) > 0
 
 
-def _score_run(row: dict, day: dict, act: dict, max_hr: int) -> None:
+def _score_run(row: dict, day: dict, act: dict, max_hr: int,
+               planned_s: int | None = None) -> None:
     """Coarse scoring per design D4. Intent (load) comes from the plan; Hard
-    sessions are scored on distance alone — rep quality is the coach's call."""
-    planned_km = day.get("km") or 0
-    ratio = (act["km"] / planned_km) if planned_km else 1.0
+    sessions are scored on distance alone — rep quality is the coach's call.
+
+    A day the coach wrote in MINUTES is judged in minutes (honest-compliance
+    D3). Its planned km is a byproduct of an assumed pace, so scoring against
+    it marks a slower athlete down for ground nobody asked him to cover — the
+    live failure that produced 'partial — shorter than planned' on sessions
+    Max completed in full."""
+    actual_s = act.get("dur_s")
+    if planned_s and actual_s:
+        ratio = actual_s / planned_s
+        short_reason = "duration"
+        row["planned_s"] = int(planned_s)
+        row["actual_s"] = int(actual_s)
+    else:
+        planned_km = day.get("km") or 0
+        ratio = (act["km"] / planned_km) if planned_km else 1.0
+        short_reason = "distance"
     intensity_ok = True
     if day.get("load") in EASY_LOADS and act.get("hr") and max_hr:
         intensity_ok = act["hr"] <= EASY_HR_CEILING * max_hr
     if ratio >= DIST_DONE_RATIO and intensity_ok:
         status, reason = "done", None
     elif ratio < DIST_PARTIAL_RATIO:
-        status, reason = "missed", "distance"
+        status, reason = "missed", short_reason
     elif ratio < DIST_DONE_RATIO:
-        status, reason = "partial", "distance"
+        status, reason = "partial", short_reason
     else:
         status, reason = "partial", "intensity"
     row.update(status=status, reason=reason,
@@ -251,13 +267,15 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
                "planned_kind": day.get("kind"), "planned_km": day.get("km"),
                "planned_load": day.get("load"), "planned_title": day.get("title"),
                "status": "pending", "reason": None, "actual_km": None,
-               "actual_pace_s": None, "actual_hr": None, "activity_id": None}
+               "actual_pace_s": None, "actual_hr": None, "activity_id": None,
+               "planned_s": None, "actual_s": None}
         if _is_run_slot(day):
+            planned_s = plan_prescription.duration_for_day(day.get("segments"))
             act = take(day["date"], "run")
             if day.get("kind") != "run":  # hybrid day: absorb its own-kind acts
                 take(day["date"], day["kind"], absorb=True)
             if act:
-                _score_run(row, day, act, max_hr)
+                _score_run(row, day, act, max_hr, planned_s)
             elif day["date"] < today_iso:
                 row["status"] = "missed"
                 swap_candidates.append((day, row))
@@ -303,7 +321,8 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
             used_slots.add(id(row))
             used_acts.add(a["id"])
             unmatched.remove(a)
-            _score_run(row, day, a, max_hr)
+            _score_run(row, day, a, max_hr,
+                       plan_prescription.duration_for_day(day.get("segments")))
             if row["status"] == "done":
                 row["status"] = "swapped"
 
@@ -318,7 +337,8 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
                      "status": "unplanned", "reason": None,
                      "actual_km": round(a["km"], 1),
                      "actual_pace_s": round(a["pace_s"]) if a["pace_s"] else None,
-                     "actual_hr": a["hr"], "activity_id": a["id"]})
+                     "actual_hr": a["hr"], "activity_id": a["id"],
+                     "planned_s": None, "actual_s": None})
     return rows
 
 
@@ -516,6 +536,9 @@ def assemble_compliance(conn, plan: dict, today: dt.date | None = None) -> dict:
             d["actualKm"] = r["actual_km"]
             d["actualPaceS"] = r["actual_pace_s"]
             d["actualHr"] = r["actual_hr"]
+        if r["planned_s"] is not None:
+            d["plannedS"] = r["planned_s"]
+            d["actualS"] = r["actual_s"]
         days.append(d)
         by_wk.setdefault(r["wk"], []).append(r)
 

@@ -354,6 +354,121 @@ def test_run_compliance_derives_capability_from_the_archive():
     conn.close()
 
 
+def _time_week():
+    """Max's real Wk 2 run days, with the segments the live plan carries."""
+    w = _hc_week()
+    for day in w["days"]:
+        if day["date"] == "2026-07-30":
+            day["segments"] = [
+                {"label": "Warm-up", "val": "5 min brisk walk"},
+                {"label": "Blocks", "val": "2×10/10 min jog",
+                 "rest": "2 min walk between"},
+                {"label": "Cool-down", "val": "3 min walk"}]
+        elif day["date"] == "2026-08-01":
+            day["segments"] = [
+                {"label": "Warm-up", "val": "5 min brisk walk"},
+                {"label": "Blocks", "val": "2×12/12 min jog",
+                 "rest": "2 min walk between"},
+                {"label": "Cool-down", "val": "3 min walk"}]
+    return w
+
+
+def _at(aid, date, kind, km, dur_s, hr=140):
+    """An activity carrying its duration, the way _acts_for_range builds it."""
+    return {"id": aid, "date": date, "kind": kind, "km": km, "dur_s": dur_s,
+            "pace_s": (dur_s / km) if km else None, "hr": hr}
+
+
+def test_a_time_prescribed_day_is_scored_on_time():
+    """Max's real Thursday: '2 × 10 min', 22 min of prescribed work, 23 min
+    recorded — a completed session. Scored on the plan's 3.4 km (which is
+    just 20 min × an assumed 8:00 pace he was never asked to hold) it read
+    71% and 'partial — shorter than planned'.
+    Mutation: keep scoring on km → red."""
+    rows = pc.score_week(_time_week(), [_at(1, "2026-07-30", "run", 2.4, 1387)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    r = _by_date(rows, "2026-07-30")
+    assert r["status"] == "done" and r["reason"] is None
+    assert r["planned_s"] == 22 * 60 and r["actual_s"] == 1387
+
+
+def test_the_second_real_partial_also_lands():
+    rows = pc.score_week(_time_week(), [_at(1, "2026-08-01", "run", 3.0, 1656)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    r = _by_date(rows, "2026-08-01")
+    assert r["status"] == "done"
+    assert r["planned_s"] == 26 * 60
+
+
+def test_a_genuinely_cut_short_time_session_is_still_partial():
+    """The thresholds still bite — this is a correction, not an amnesty.
+    12 of 22 min is 55%: past the 50% floor, short of the 85% bar."""
+    rows = pc.score_week(_time_week(), [_at(1, "2026-07-30", "run", 1.3, 720)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    r = _by_date(rows, "2026-07-30")
+    assert r["status"] == "partial" and r["reason"] == "duration"
+
+
+def test_an_abandoned_time_session_is_missed():
+    rows = pc.score_week(_time_week(), [_at(1, "2026-07-30", "run", 0.5, 300)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    assert _by_date(rows, "2026-07-30")["status"] == "missed"
+
+
+def test_a_km_shaped_day_keeps_distance_scoring():
+    """The km-based plan must not move at all. Mutation: score every day on
+    duration → red here."""
+    rows = pc.score_week(_closed_week(), [_a(1, "2026-07-01", "run", 3.0)],
+                         TODAY, MAX_HR, SNAP)
+    r = _by_date(rows, "2026-07-01")
+    assert r["status"] == "partial" and r["reason"] == "distance"
+    assert r["planned_s"] is None and r["actual_s"] is None
+
+
+def test_a_time_day_without_a_recorded_duration_falls_back_to_km():
+    """An activity with no duration cannot answer a time question. Falling
+    back to km is today's behaviour, which is the safe state."""
+    act = {"id": 1, "date": "2026-07-30", "kind": "run", "km": 2.4,
+           "dur_s": None, "pace_s": None, "hr": 140}
+    rows = pc.score_week(_time_week(), [act], HC_TODAY, MAX_HR, SNAP,
+                         tracked={"run"})
+    r = _by_date(rows, "2026-07-30")
+    assert r["reason"] == "distance" and r["planned_s"] is None
+
+
+def test_intensity_still_outranks_a_satisfied_duration():
+    """An Easy day run at 90% of max HR is still flagged, time or no time."""
+    hot = int(0.9 * MAX_HR)
+    rows = pc.score_week(_time_week(),
+                         [_at(1, "2026-07-30", "run", 2.4, 1387, hr=hot)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    r = _by_date(rows, "2026-07-30")
+    assert r["status"] == "partial" and r["reason"] == "intensity"
+
+
+def test_acts_for_range_carries_duration():
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [_garmin_act(1, "2026-07-30", 2.4, 1387)])
+    acts = pc._acts_for_range(conn, "2026-07-27", "2026-08-02")
+    assert acts[0]["dur_s"] == 1387
+    conn.close()
+
+
+def test_seconds_survive_the_round_trip_and_reach_the_contract():
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [_garmin_act(1, "2026-07-30", 2.4, 1387, hr=151)])
+    plan = {"race": {"date": "2027-04-25"}, "block": [_time_week()]}
+    pc.run_compliance(conn, "raw", plan, HC_TODAY, MAX_HR)
+    stored = _by_date(arch.compliance_rows(conn), "2026-07-30")
+    assert stored["planned_s"] == 1320 and stored["actual_s"] == 1387
+    block = pc.assemble_compliance(conn, plan, HC_TODAY)
+    day = next(dd for dd in block["days"] if dd["date"] == "2026-07-30")
+    assert day["plannedS"] == 1320 and day["actualS"] == 1387
+    conn.close()
+
+
 def test_undetailed_week_scores_nothing():
     week = _closed_week()
     week["days"] = None

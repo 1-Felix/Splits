@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 
 DB_NAME = "activity-archive.db"
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # Raw-first schema: summary_json / detail_json / raw_json carry everything
 # Garmin returned; the columns are just an index over them (design D2/D9).
@@ -395,6 +395,16 @@ def _apply_schema_v14(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE plan_compliance ADD COLUMN quality_json TEXT")
 
 
+def _apply_schema_v15(conn: sqlite3.Connection) -> None:
+    """v15 (honest-compliance): a time-prescribed day is scored on seconds,
+    so the row carries both sides of that comparison. Null on every day
+    scored on distance — which is every day of a km-based plan."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(plan_compliance)")}
+    for name in ("planned_s", "actual_s"):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE plan_compliance ADD COLUMN {name} INTEGER")
+
+
 def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -438,7 +448,8 @@ def _open(db: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA_V12_SQL)
         _apply_schema_v13(conn)
         _apply_schema_v14(conn)
-        # Forward-only migration: v1→…→v14 is purely additive (CREATE IF
+        _apply_schema_v15(conn)
+        # Forward-only migration: v1→…→v15 is purely additive (CREATE IF
         # NOT EXISTS / guarded ALTER above), so "migrating" is just stamping
         # the version. Never downgrade.
         current = get_meta(conn, "schema_version")
@@ -945,6 +956,7 @@ _COMPLIANCE_COLS = (
     "date", "wk", "snapshot_id", "compliance_version", "planned_kind",
     "planned_km", "planned_load", "planned_title", "status", "reason",
     "actual_km", "actual_pace_s", "actual_hr", "activity_id", "quality_json",
+    "planned_s", "actual_s",
 )
 
 

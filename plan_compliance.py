@@ -40,8 +40,12 @@ from pathlib import Path
 import activity_archive
 import plan_prescription
 
-COMPLIANCE_VERSION = 3   # 2: rep-level quality verdicts (add-plan-prescription);
-                         # 3: non-run slots carry none (the bike-intervals seam)
+COMPLIANCE_VERSION = 4   # 2: rep-level quality verdicts (add-plan-prescription);
+                         # 3: non-run slots carry none (the bike-intervals seam);
+                         # 4: honest compliance — rest is satisfied by resting,
+                         #    unrecordable kinds are untracked, time-prescribed
+                         #    days are scored on time, the swap pass runs
+                         #    mid-week, an uncalibrated lens makes no rep claim
 
 # Scoring constants (design D4) — coarse by design.
 DIST_DONE_RATIO = 0.85     # matched km ≥ 85% of planned → distance satisfied

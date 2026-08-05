@@ -106,3 +106,102 @@ def prescription_for_day(segments: list | None) -> dict | None:
         if steady:
             return steady
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# duration reading (honest-compliance D3)
+# ──────────────────────────────────────────────────────────────────────────────
+# A day the coach wrote in MINUTES must be judged in minutes. The km on such a
+# day is a byproduct of an assumed pace, and scoring against it marks a slower
+# athlete down for ground he was never asked to cover.
+#
+# Warm-up and cool-down are excluded on purpose: they are not the session, and
+# the watch is usually started when the running starts, so counting them
+# fabricates a shortfall out of nothing.
+
+# Segment labels whose duration is not part of the session.
+_SKIP_LABELS = {"warm-up", "warmup", "cool-down", "cooldown"}
+
+# A distance token: `km`, or `m` NOT continuing into a word (so `min` is safe).
+_DIST_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:km|m)(?![a-z])", re.IGNORECASE)
+
+# `2×15/10 min` — the leading number COUNTS the slash-separated blocks; it does
+# not multiply the first one. `2×15/10` is 15 then 10, never 2 × 15.
+_BLOCKS_RE = re.compile(r"(\d+)\s*[×x]\s*(\d+(?:/\d+)+)\s*(min|s)\b")
+
+# `8×1 min` / `4×20 s`
+_REP_DUR_RE = re.compile(r"(\d+)\s*[×x]\s*(\d+(?:\.\d+)?)\s*(min|s)\b")
+
+# `30–40 min` — the lower bound is what the day asks for.
+_RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)\s*(min|s)\b")
+
+# a single bare duration
+_ONE_DUR_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(min|s)\b")
+
+_UNIT_S = {"min": 60, "s": 1}
+
+
+def _rest_seconds(rest) -> int:
+    """A recovery's length, or 0 when it has none we can read (`walk back`).
+    Zero is the deliberate direction: a smaller target is easier to satisfy,
+    and this module exists to stop manufacturing shortfalls."""
+    if not isinstance(rest, str):
+        return 0
+    m = _RANGE_RE.search(rest)
+    if m:
+        return int(float(m.group(1)) * _UNIT_S[m.group(3)])
+    m = _ONE_DUR_RE.search(rest)
+    return int(float(m.group(1)) * _UNIT_S[m.group(2)]) if m else 0
+
+
+def _segment_seconds(seg: dict) -> int | None:
+    """One scoring segment's work seconds, or None if this grammar cannot read
+    it — in which case the whole day refuses."""
+    val = seg.get("val") or ""
+    if _DIST_RE.search(val):
+        return None            # a distance session: not a time question at all
+    rest_s = _rest_seconds(seg.get("rest"))
+
+    m = _BLOCKS_RE.search(val)
+    if m:
+        blocks = [float(b) for b in m.group(2).split("/")]
+        if int(m.group(1)) != len(blocks):
+            return None        # "3×10/10" announces three blocks and writes two
+        unit = _UNIT_S[m.group(3)]
+        return int(sum(blocks) * unit) + (len(blocks) - 1) * rest_s
+
+    m = _REP_DUR_RE.search(val)
+    if m:
+        count = int(m.group(1))
+        return int(count * float(m.group(2)) * _UNIT_S[m.group(3)]) + (count - 1) * rest_s
+
+    m = _RANGE_RE.search(val)
+    if m:
+        return int(float(m.group(1)) * _UNIT_S[m.group(3)])
+
+    m = _ONE_DUR_RE.search(val)
+    if m:
+        return int(float(m.group(1)) * _UNIT_S[m.group(2)])
+    return None
+
+
+def duration_for_day(segments: list | None) -> int | None:
+    """Total prescribed WORK seconds for a planned day, or None when the day
+    is not time-shaped (it names a distance, or carries a segment this grammar
+    cannot read). Warm-up and cool-down segments are excluded.
+
+    None is not a failure — it means "score this day on distance, as before"."""
+    if not segments:
+        return None
+    total, seen = 0, False
+    for seg in segments:
+        if not isinstance(seg, dict):
+            return None
+        if (seg.get("label") or "").strip().lower() in _SKIP_LABELS:
+            continue
+        secs = _segment_seconds(seg)
+        if secs is None:
+            return None        # one unreadable segment refuses the whole day
+        total += secs
+        seen = True
+    return total if seen else None

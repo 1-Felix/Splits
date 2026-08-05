@@ -1,31 +1,538 @@
 {
- "1 h level 2 · 19:00 — genuinely easy": null,
- "1 km easy": null,
- "1.5 km easy": null,
- "10 km @ ~6:10 · natural path / embankment": {"kind": "steady", "paceS": 370, "text": "10 km @ ~6:10 · natural path / embankment"},
- "10 min easy": null,
- "15 min (~2 km) very easy · flat ground": null,
- "16 km easy @ ~6:10": {"kind": "steady", "paceS": 370, "text": "16 km easy @ ~6:10"},
- "2 km easy — shin gate: pain-free before any rep": null,
- "3 km easy · 3×400 m @ 5:41 inside": {"kind": "reps", "count": 3, "repDistM": 400, "paceBandS": [336, 346], "zone": null, "text": "3 km easy · 3×400 m @ 5:41 inside"},
- "3 km very easy · flat": null,
- "3×1 km @ 5:41": {"kind": "reps", "count": 3, "repDistM": 1000, "paceBandS": [336, 346], "zone": null, "text": "3×1 km @ 5:41"},
- "4 km @ ~6:15 · a.m.": {"kind": "steady", "paceS": 375, "text": "4 km @ ~6:15 · a.m."},
- "4×1 km @ 5:25–5:35": {"kind": "reps", "count": 4, "repDistM": 1000, "paceBandS": [325, 335], "zone": null, "text": "4×1 km @ 5:25–5:35"},
- "4×20 s fast-relaxed · only if silent": {"kind": "reps", "count": 4, "repDurS": 20, "paceBandS": null, "zone": null, "text": "4×20 s fast-relaxed · only if silent"},
- "4×20 s fast-relaxed": {"kind": "reps", "count": 4, "repDurS": 20, "paceBandS": null, "zone": null, "text": "4×20 s fast-relaxed"},
- "5 km @ ~6:15 · a.m.": {"kind": "steady", "paceS": 375, "text": "5 km @ ~6:15 · a.m."},
- "5 km @ ~6:15": {"kind": "steady", "paceS": 375, "text": "5 km @ ~6:15"},
- "5 km @ conversation pace · HR ≤150": null,
- "5×1 km by effort · Z4": {"kind": "reps", "count": 5, "repDistM": 1000, "paceBandS": null, "zone": 4, "text": "5×1 km by effort · Z4"},
- "6 km @ ~6:20 · flat · a.m.": {"kind": "steady", "paceS": 380, "text": "6 km @ ~6:20 · flat · a.m."},
- "6×3 min hard (Z4 effort)": {"kind": "reps", "count": 6, "repDurS": 180, "paceBandS": null, "zone": 4, "text": "6×3 min hard (Z4 effort)"},
- "60–75 min steady @ HR ~140–150": null,
- "km 12→13: +82 m at 8.25% — by effort: ~6:40 at sub-2 effort, 7:30 on an honest day. Costs ~58 s. HR will spike.": null,
- "km 1–4 @ 5:50 — flat, and full of people. No faster.": null,
- "km 14–15: −102 m at −4% then −6% — SHORT STEPS. The shin's test.": null,
- "km 16–21.1 — gently downhill, everything left": null,
- "km 5–12 @ 5:41–5:45 · HR ≤ 165 — only +44 m in the first 12 km": null,
- "one sustained downhill, easy effort, SHORT STEPS — the only rehearsal you get": null,
- "swap 15–20 min for rower, steady": null
+  "1 h level 2 · 19:00 — genuinely easy": null,
+  "1 km": null,
+  "1 km easy": null,
+  "1.5 km easy": null,
+  "10 km @ conversational": null,
+  "10 km @ ~6:10 · natural path / embankment": {
+    "kind": "steady",
+    "paceS": 370,
+    "text": "10 km @ ~6:10 · natural path / embankment"
+  },
+  "10 km steady — comfortably strong, even effort": null,
+  "10 min easy": null,
+  "10 min very easy": null,
+  "10 min very easy jog": null,
+  "10.5 km @ conversational": null,
+  "10×1 min jog": {
+    "kind": "reps",
+    "count": 10,
+    "paceBandS": null,
+    "zone": null,
+    "text": "10×1 min jog",
+    "repDurS": 60
+  },
+  "11 km @ conversational": null,
+  "12 km @ conversational": null,
+  "12 min building easy → HR ~135 · last 2 min: 3×20 s @ 100+ rpm": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "12 min building easy → HR ~135 · last 2 min: 3×20 s @ 100+ rpm",
+    "repDurS": 20
+  },
+  "13 km @ conversational": null,
+  "13 km easy": null,
+  "14 km @ conversational": null,
+  "15 km @ conversational": null,
+  "15 min (~2 km) very easy · flat ground": null,
+  "15 min @ HR 160–165 · top of the band on purpose · 85–90 rpm": null,
+  "15 min @ ~6:50–7:05 (comfortably hard)": {
+    "kind": "steady",
+    "paceS": 410,
+    "text": "15 min @ ~6:50–7:05 (comfortably hard)"
+  },
+  "16 km @ conversational": null,
+  "16 km easy @ ~6:10": {
+    "kind": "steady",
+    "paceS": 370,
+    "text": "16 km easy @ ~6:10"
+  },
+  "18 min @ ~6:50–7:05 (comfortably hard)": {
+    "kind": "steady",
+    "paceS": 410,
+    "text": "18 min @ ~6:50–7:05 (comfortably hard)"
+  },
+  "2 km": null,
+  "2 km @ ~7:07": {
+    "kind": "steady",
+    "paceS": 427,
+    "text": "2 km @ ~7:07"
+  },
+  "2 km easy": null,
+  "2 km easy — shin gate: pain-free before any rep": null,
+  "20 heel walks · 20 toe walks · ankle circles": null,
+  "20 min @ HR 158–162 · CONSTANT resistance · 85–90 rpm — write down HR at min 2 and at min 20": null,
+  "20 min @ ~6:50–7:05 (comfortably hard)": {
+    "kind": "steady",
+    "paceS": 410,
+    "text": "20 min @ ~6:50–7:05 (comfortably hard)"
+  },
+  "20 min jog @ ~8:25": {
+    "kind": "steady",
+    "paceS": 505,
+    "text": "20 min jog @ ~8:25"
+  },
+  "20 min jog @ ~9:20": {
+    "kind": "steady",
+    "paceS": 560,
+    "text": "20 min jog @ ~9:20"
+  },
+  "22 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "22 min jog @ ~8:50"
+  },
+  "22 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "22 min jog @ ~9:05"
+  },
+  "22 min jog @ ~9:20": {
+    "kind": "steady",
+    "paceS": 560,
+    "text": "22 min jog @ ~9:20"
+  },
+  "25 min jog @ ~8:35": {
+    "kind": "steady",
+    "paceS": 515,
+    "text": "25 min jog @ ~8:35"
+  },
+  "25 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "25 min jog @ ~8:50"
+  },
+  "25 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "25 min jog @ ~9:05"
+  },
+  "25 min jog @ ~9:35": {
+    "kind": "steady",
+    "paceS": 575,
+    "text": "25 min jog @ ~9:35"
+  },
+  "27 min jog @ ~8:35": {
+    "kind": "steady",
+    "paceS": 515,
+    "text": "27 min jog @ ~8:35"
+  },
+  "27 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "27 min jog @ ~8:50"
+  },
+  "27 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "27 min jog @ ~9:05"
+  },
+  "28 min jog @ ~8:25": {
+    "kind": "steady",
+    "paceS": 505,
+    "text": "28 min jog @ ~8:25"
+  },
+  "28 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "28 min jog @ ~8:50"
+  },
+  "2×10 min @ ~6:50–7:05": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": null,
+    "zone": null,
+    "text": "2×10 min @ ~6:50–7:05",
+    "repDurS": 600
+  },
+  "2×10/10 min jog": null,
+  "2×12/12 min jog": null,
+  "2×15 s": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": null,
+    "zone": null,
+    "text": "2×15 s",
+    "repDurS": 15
+  },
+  "2×15/10 min jog": null,
+  "2×18/10 min jog": null,
+  "2×3.0 km @ ~7:07": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": null,
+    "zone": null,
+    "text": "2×3.0 km @ ~7:07",
+    "repDistM": 3000
+  },
+  "2×4.0 km @ ~7:07": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": null,
+    "zone": null,
+    "text": "2×4.0 km @ ~7:07",
+    "repDistM": 4000
+  },
+  "3 km easy · 3×400 m @ 5:41 inside": {
+    "kind": "reps",
+    "count": 3,
+    "repDistM": 400,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3 km easy · 3×400 m @ 5:41 inside"
+  },
+  "3 km easy · 3×400 m @ 5:41 inside · cadence ≥158": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3 km easy · 3×400 m @ 5:41 inside · cadence ≥158",
+    "repDistM": 400
+  },
+  "3 km very easy": null,
+  "3 km very easy · flat": null,
+  "3 min walk": null,
+  "30 min jog @ ~8:25": {
+    "kind": "steady",
+    "paceS": 505,
+    "text": "30 min jog @ ~8:25"
+  },
+  "30 min jog @ ~8:35": {
+    "kind": "steady",
+    "paceS": 515,
+    "text": "30 min jog @ ~8:35"
+  },
+  "30 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "30 min jog @ ~8:50"
+  },
+  "30 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "30 min jog @ ~9:05"
+  },
+  "30 min jog @ ~9:20": {
+    "kind": "steady",
+    "paceS": 560,
+    "text": "30 min jog @ ~9:20"
+  },
+  "30–40 min easy, HR 130–150": null,
+  "32 min jog @ ~8:25": {
+    "kind": "steady",
+    "paceS": 505,
+    "text": "32 min jog @ ~8:25"
+  },
+  "32 min jog @ ~8:35": {
+    "kind": "steady",
+    "paceS": 515,
+    "text": "32 min jog @ ~8:35"
+  },
+  "33 min jog @ ~9:20": {
+    "kind": "steady",
+    "paceS": 560,
+    "text": "33 min jog @ ~9:20"
+  },
+  "35 min jog @ ~8:35": {
+    "kind": "steady",
+    "paceS": 515,
+    "text": "35 min jog @ ~8:35"
+  },
+  "35 min jog @ ~9:20": {
+    "kind": "steady",
+    "paceS": 560,
+    "text": "35 min jog @ ~9:20"
+  },
+  "38 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "38 min jog @ ~8:50"
+  },
+  "38 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "38 min jog @ ~9:05"
+  },
+  "3×1 km @ 5:41": {
+    "kind": "reps",
+    "count": 3,
+    "repDistM": 1000,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3×1 km @ 5:41"
+  },
+  "3×12 bent knee — the one that fails first": null,
+  "3×12 straight knee (gastroc)": null,
+  "3×15 s": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×15 s",
+    "repDurS": 15
+  },
+  "3×2.0 km @ ~7:07": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×2.0 km @ ~7:07",
+    "repDistM": 2000
+  },
+  "3×2.5 km @ ~7:07": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×2.5 km @ ~7:07",
+    "repDistM": 2500
+  },
+  "3×30 s plank · 2×10 glute bridge": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×30 s plank · 2×10 glute bridge",
+    "repDurS": 30
+  },
+  "3×30 s single-leg stand, eyes closed": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×30 s single-leg stand, eyes closed",
+    "repDurS": 30
+  },
+  "3×5 min @ ~6:50–7:05": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×5 min @ ~6:50–7:05",
+    "repDurS": 300
+  },
+  "3×6 min @ ~6:50–7:05": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "3×6 min @ ~6:50–7:05",
+    "repDurS": 360
+  },
+  "4 km @ conversational": null,
+  "4 km @ ~6:15 · a.m.": {
+    "kind": "steady",
+    "paceS": 375,
+    "text": "4 km @ ~6:15 · a.m."
+  },
+  "4 km @ ~6:15 · flat · soft · cadence ≥158": {
+    "kind": "steady",
+    "paceS": 375,
+    "text": "4 km @ ~6:15 · flat · soft · cadence ≥158"
+  },
+  "4.5 km @ conversational": null,
+  "42 min jog @ ~9:05": {
+    "kind": "steady",
+    "paceS": 545,
+    "text": "42 min jog @ ~9:05"
+  },
+  "48 min jog @ ~8:40": {
+    "kind": "steady",
+    "paceS": 520,
+    "text": "48 min jog @ ~8:40"
+  },
+  "48 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "48 min jog @ ~8:50"
+  },
+  "4×1 km @ 5:25–5:35": {
+    "kind": "reps",
+    "count": 4,
+    "repDistM": 1000,
+    "paceBandS": [
+      325,
+      335
+    ],
+    "zone": null,
+    "text": "4×1 km @ 5:25–5:35"
+  },
+  "4×15 s quick, tall form": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": null,
+    "zone": null,
+    "text": "4×15 s quick, tall form",
+    "repDurS": 15
+  },
+  "4×20 s fast-relaxed": {
+    "kind": "reps",
+    "count": 4,
+    "repDurS": 20,
+    "paceBandS": null,
+    "zone": null,
+    "text": "4×20 s fast-relaxed"
+  },
+  "4×20 s fast-relaxed · only if silent": {
+    "kind": "reps",
+    "count": 4,
+    "repDurS": 20,
+    "paceBandS": null,
+    "zone": null,
+    "text": "4×20 s fast-relaxed · only if silent"
+  },
+  "4×20 s relaxed fast": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": null,
+    "zone": null,
+    "text": "4×20 s relaxed fast",
+    "repDurS": 20
+  },
+  "5 km @ conversation pace · HR ≤150": null,
+  "5 km @ conversational": null,
+  "5 km @ ~6:15": {
+    "kind": "steady",
+    "paceS": 375,
+    "text": "5 km @ ~6:15"
+  },
+  "5 km @ ~6:15 · a.m.": {
+    "kind": "steady",
+    "paceS": 375,
+    "text": "5 km @ ~6:15 · a.m."
+  },
+  "5 km as fast as you can hold — even effort": null,
+  "5 min brisk walk": null,
+  "5 min walk": null,
+  "5 min walk · 12 min easy jog · 4×20 s strides": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": null,
+    "zone": null,
+    "text": "5 min walk · 12 min easy jog · 4×20 s strides",
+    "repDurS": 20
+  },
+  "5.5 km @ conversational": null,
+  "55 min jog @ ~8:50": {
+    "kind": "steady",
+    "paceS": 530,
+    "text": "55 min jog @ ~8:50"
+  },
+  "5×1 km by effort · Z4": {
+    "kind": "reps",
+    "count": 5,
+    "repDistM": 1000,
+    "paceBandS": null,
+    "zone": 4,
+    "text": "5×1 km by effort · Z4"
+  },
+  "5×20 s relaxed fast": {
+    "kind": "reps",
+    "count": 5,
+    "paceBandS": null,
+    "zone": null,
+    "text": "5×20 s relaxed fast",
+    "repDurS": 20
+  },
+  "6 km @ conversational": null,
+  "6 km @ ~6:20 · flat · a.m.": {
+    "kind": "steady",
+    "paceS": 380,
+    "text": "6 km @ ~6:20 · flat · a.m."
+  },
+  "60–75 min steady @ HR ~140–150": null,
+  "6×20 s relaxed fast": {
+    "kind": "reps",
+    "count": 6,
+    "paceBandS": null,
+    "zone": null,
+    "text": "6×20 s relaxed fast",
+    "repDurS": 20
+  },
+  "6×3 min hard (Z4 effort)": {
+    "kind": "reps",
+    "count": 6,
+    "repDurS": 180,
+    "paceBandS": null,
+    "zone": 4,
+    "text": "6×3 min hard (Z4 effort)"
+  },
+  "6×45 s uphill, easy effort": {
+    "kind": "reps",
+    "count": 6,
+    "paceBandS": null,
+    "zone": null,
+    "text": "6×45 s uphill, easy effort",
+    "repDurS": 45
+  },
+  "7 km @ conversational": null,
+  "7×2 min jog": {
+    "kind": "reps",
+    "count": 7,
+    "paceBandS": null,
+    "zone": null,
+    "text": "7×2 min jog",
+    "repDurS": 120
+  },
+  "8 km @ conversational": null,
+  "8 min easy @ 90+ rpm — legs have a birthday to ride to": null,
+  "8×1 min jog": {
+    "kind": "reps",
+    "count": 8,
+    "paceBandS": null,
+    "zone": null,
+    "text": "8×1 min jog",
+    "repDurS": 60
+  },
+  "9 km @ conversational": null,
+  "9 km easy": null,
+  "9.5 km @ conversational": null,
+  "Calf straight-knee + bent-knee, 3×30 s each side": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": null,
+    "zone": null,
+    "text": "Calf straight-knee + bent-knee, 3×30 s each side",
+    "repDurS": 30
+  },
+  "Hip flexor + hamstring, 2×30 s each side": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": null,
+    "zone": null,
+    "text": "Hip flexor + hamstring, 2×30 s each side",
+    "repDurS": 30
+  },
+  "km 0–5 — slower than feels right": null,
+  "km 12→13: +82 m at 8.25% — by effort: ~6:40 at sub-2 effort, 7:30 on an honest day. Costs ~58 s. HR will spike.": null,
+  "km 14–15: −102 m at −4% then −6% — SHORT STEPS, CADENCE 160+. Unrehearsed. The shin's test.": null,
+  "km 14–15: −102 m at −4% then −6% — SHORT STEPS. The shin's test.": null,
+  "km 16–21 — whatever is left": null,
+  "km 16–21.1 — gently downhill, everything left": null,
+  "km 1–4 @ 5:50 (clean gate) or 6:05 (tender gate) — band chosen Thursday. Flat and full of people. No faster.": null,
+  "km 1–4 @ 5:50 — flat, and full of people. No faster.": null,
+  "km 5–12 @ 5:41–5:45 · HR ≤ 165 — only +44 m in the first 12 km": null,
+  "km 5–12 at the opening band · HR ≤ 165 · CADENCE ≥ 158 — only +44 m in the first 12 km": null,
+  "km 5–16 @ ~7:07": {
+    "kind": "steady",
+    "paceS": 427,
+    "text": "km 5–16 @ ~7:07"
+  },
+  "last 3 km @ race pace (~7:07)": null,
+  "last 4 km @ race pace (~7:07)": null,
+  "last 5 km @ race pace (~7:07)": null,
+  "one sustained downhill, easy effort, SHORT STEPS — the only rehearsal you get": null,
+  "swap 15–20 min for rower, steady": null,
+  "touch test that evening AND Thursday morning — MTSS speaks the next day": null
 }

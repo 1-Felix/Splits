@@ -480,6 +480,11 @@ function getArchiveActivity(db, id) {
         actualKm: p.actual_km, actualPaceS: p.actual_pace_s, actualHr: p.actual_hr,
         // add-plan-prescription D5: the rep-level verdict, OMITTED when absent
         ...(quality ? { quality } : {}),
+        // honest-compliance D3: a time-scored day carries both sides of the
+        // comparison in seconds. Absent on every distance-scored day, and
+        // undefined on an archive predating schema v15 — the SELECT * above
+        // is what makes that safe.
+        ...(p.planned_s != null ? { plannedS: p.planned_s, actualS: p.actual_s } : {}),
       };
     }
   } catch { /* no plan_compliance table in this archive */ }

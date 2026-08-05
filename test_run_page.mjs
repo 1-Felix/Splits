@@ -203,6 +203,8 @@ const UNCAL_DOC = {
 // This is exactly the shape VETO/set-membership demotions create since
 // add-workout-prior, so it is reachable in production, not hypothetical.
 const DEMOTED_RUN_ID = 9005;
+// TIME_RUN_ID: a day the coach prescribed in minutes (honest-compliance D3).
+const TIME_RUN_ID = 9006;
 const DEMOTED_SEGMENTS = [
   { idx: 1, role: "warmup", t0: 0, t1: 300, d0: 0, d1: 800,
     durS: 300, distM: 800, paceS: 400, gapS: null, hr: 130, cad: null },
@@ -246,6 +248,7 @@ function makeArchive(dir) {
     planned_kind TEXT, planned_km REAL, planned_load TEXT, planned_title TEXT,
     status TEXT NOT NULL, reason TEXT, actual_km REAL, actual_pace_s REAL,
     actual_hr INTEGER, activity_id INTEGER, quality_json TEXT,
+    planned_s INTEGER, actual_s INTEGER,
     updated_at TEXT NOT NULL)`);
   db.exec(`CREATE TABLE run_metrics (
     activity_id INTEGER PRIMARY KEY, metrics_version INTEGER,
@@ -339,6 +342,26 @@ function makeArchive(dir) {
   db.prepare(`INSERT INTO run_intervals VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     LOWCONF_RUN_ID, 1, "2026-07-11 06:51:15", "reps", "3×800 m", 0.35, "stream",
     2400, 630, JSON.stringify(LOWCONF_DOC), "2026-07-27T09:00:00");
+
+  // ── honest-compliance D3: TIME_RUN_ID — a session the coach wrote in
+  // MINUTES ("2 × 10 min", 22 min of prescribed work). Scored on duration,
+  // not on the plan's km, which is only 20 min × an assumed pace. It ran
+  // SHORT in time here so the page must name the duration reason; the
+  // planned line must read minutes, not kilometres.
+  db.prepare(`INSERT INTO activities (activity_id, start_time_local, type_key, name,
+      distance_m, duration_s, avg_hr, max_hr, avg_cadence, elevation_gain_m,
+      summary_json, detail_json, first_seen_at, updated_at, detail_distilled_json,
+      detail_streams_json)
+    VALUES (?, '2026-07-30 18:03:48', 'running', 'Run/Walk Blocks',
+      1300.0, 720, 151, 168, 160.0, 4.0, '{}', '{}', 'x', 'x', NULL, NULL)`)
+    .run(TIME_RUN_ID);
+  db.prepare(`INSERT INTO plan_compliance (date, wk, snapshot_id, compliance_version,
+      planned_kind, planned_km, planned_load, planned_title, status, reason,
+      actual_km, actual_pace_s, actual_hr, activity_id, planned_s, actual_s,
+      updated_at)
+    VALUES ('2026-07-30', 'Wk 2', 1, 4, 'run', 3.4, 'Easy', '2 × 10 min',
+      'partial', 'duration', 1.3, 554, 151, ?, 1320, 720, 'x')`)
+    .run(TIME_RUN_ID);
 
   // ── sweep-lens-tail N1: DEMOTED_RUN_ID — a mid-set demotion between rep 1
   // and rep 2, and no recovery after the final rep (see the fixture comment).
@@ -768,6 +791,22 @@ try {
   const lowConfSub = await page.locator(".rep-table .card-sub").innerText();
   assert.ok(lowConfSub.includes("possible structure"),
     "confidence 0.35 hedges honestly instead of asserting structure: " + lowConfSub);
+
+  // honest-compliance D3: a time-prescribed session reads in MINUTES. Scored
+  // on the plan's 3.4 km this would say "shorter than planned" about a number
+  // that is only 20 min × an assumed pace; the page must name the duration
+  // instead, and show the prescribed 22 min rather than the derived km.
+  // Mutation-proven: dropping the `duration` reason word falls through to the
+  // raw key "duration"; dropping plannedS renders "3.4 km".
+  await page.goto(B + `/run/${TIME_RUN_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".card", { timeout: 15000 });
+  const timeText = await page.evaluate(() => document.body.innerText);
+  assert.ok(timeText.includes("shorter than the prescribed time"),
+    "a duration shortfall is named in its own unit: " + timeText.slice(0, 400));
+  assert.ok(!timeText.includes("shorter than planned"),
+    "…and never as a distance shortfall");
+  assert.ok(timeText.includes("22 min"),
+    "the planned line reads the prescribed minutes, not the derived km");
 
   // sweep-lens-tail N1: a mid-set demotion must not shift later pairings.
   // The fixture's recovery list is [60 s, 120 s demotion, 60 s]; positional

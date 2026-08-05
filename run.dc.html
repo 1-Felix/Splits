@@ -421,12 +421,16 @@ class Component extends DCLogic {
       if (run.plan) {
         const P = run.plan;
         const glyph = { done: ['✓', 'var(--good)', 'done'], swapped: ['⇄', 'var(--good)', 'swapped'],
-                        partial: ['◐', 'var(--warn)', 'partial'], missed: ['✕', 'var(--warn)', 'missed'] }[P.status] || ['·', 'var(--sub)', P.status];
-        const reasonWord = { distance: 'shorter than planned', intensity: 'ran too hard for the intent' }[P.reason] || P.reason;
+                        partial: ['◐', 'var(--warn)', 'partial'], missed: ['✕', 'var(--warn)', 'missed'],
+                        // honest-compliance: calm, never amber — neither is a failure
+                        rest: ['✓', 'var(--sub)', 'rest'], untracked: ['—', 'var(--sub)', 'not tracked'] }[P.status] || ['·', 'var(--sub)', P.status];
+        const reasonWord = { distance: 'shorter than planned', duration: 'shorter than the prescribed time', intensity: 'ran too hard for the intent' }[P.reason] || P.reason;
         pg.plan = [{
           sub: (P.wk ? P.wk + ' · ' : '') + P.date + (P.status === 'swapped' ? ' — matched to a different day than planned' : ''),
           statusGlyph: glyph[0], statusColor: glyph[1], statusWord: glyph[2],
-          planned: (P.plannedTitle || P.plannedKind || 'session') + (P.plannedKm ? ' · ' + P.plannedKm + ' km' : '') + (P.plannedLoad ? ' · ' + P.plannedLoad : ''),
+          // a session the coach wrote in minutes is READ in minutes: its km is
+          // only a byproduct of an assumed pace the athlete never agreed to
+          planned: (P.plannedTitle || P.plannedKind || 'session') + (P.plannedS ? ' · ' + Math.round(P.plannedS / 60) + ' min' : P.plannedKm ? ' · ' + P.plannedKm + ' km' : '') + (P.plannedLoad ? ' · ' + P.plannedLoad : ''),
           actual: km.toFixed(1) + ' km @ ' + this.fmtPace(paceS) + '/km' + (run.avgHr ? ' · HR ' + run.avgHr : ''),
           reason: P.reason ? [{ t: reasonWord }] : [],
           // add-plan-prescription D5: the rep-level verdict — present only

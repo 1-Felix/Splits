@@ -654,6 +654,10 @@ class Component extends DCLogic {
     partial:   { t: '◐', fg: 'var(--warn)',    word: 'partial' },
     missed:    { t: '✕', fg: 'var(--warn)',    word: 'missed' },
     unplanned: { t: '+', fg: 'var(--accent2)', word: 'unplanned' },
+    // honest-compliance: a rest day is satisfied by resting, and work this
+    // instance cannot record is neither done nor missed. Calm, never amber.
+    rest:      { t: '✓', fg: 'var(--sub)',     word: 'rest' },
+    untracked: { t: '—', fg: 'var(--sub)',     word: 'not tracked' },
     pending:   { t: '·', fg: 'var(--sub)',     word: 'planned' },
   };
   BLOCK_PHASE_COLOR = { Rebuild: 'var(--accent2)', Base: 'var(--accent2)', Build: 'var(--accent)', Peak: 'var(--accent)', Taper: 'var(--warn)', Race: 'var(--accent)' };
@@ -665,7 +669,9 @@ class Component extends DCLogic {
     'no-predictions': 'no race predictions banked in this window',
     'no-baseline-prediction': 'no race prediction near the block start',
   };
-  BLOCK_DAY_REASON = { distance: 'shorter than planned', intensity: 'ran too hard for the intent' };
+  BLOCK_DAY_REASON = { distance: 'shorter than planned',
+                       duration: 'shorter than the prescribed time',
+                       intensity: 'ran too hard for the intent' };
 
   fmtGap(sec) { const s = Math.abs(Math.round(sec)); return (sec < 0 ? '−' : sec > 0 ? '+' : '±') + this.fmtHMS(s); }
 
@@ -698,11 +704,15 @@ class Component extends DCLogic {
     return h('div', { className: 'block-drill', style: { margin: '0 0 var(--sp-2)', padding: 'var(--sp-1) var(--sp-3) var(--sp-2)', borderLeft: '2px solid var(--line)' } },
       days.length ? days.map((d) => {
         const g = this.BLOCK_GLYPH[d.status] || this.BLOCK_GLYPH.pending;
-        const planned = d.plannedKind
-          ? (d.plannedKm ? d.plannedKm + ' km' : d.plannedKind) + (d.plannedLoad ? ' · ' + d.plannedLoad : '')
-          : 'not planned';
+        // a day the coach wrote in minutes is READ in minutes — its km is only
+        // a byproduct of an assumed pace the athlete never agreed to hold
+        const planned = d.plannedS
+          ? Math.round(d.plannedS / 60) + ' min' + (d.plannedLoad ? ' · ' + d.plannedLoad : '')
+          : d.plannedKind
+            ? (d.plannedKm ? d.plannedKm + ' km' : d.plannedKind) + (d.plannedLoad ? ' · ' + d.plannedLoad : '')
+            : 'not planned';
         const actual = d.actualKm != null
-          ? d.actualKm + ' km' + (d.actualPaceS ? ' @ ' + this.fmtPace(d.actualPaceS) + '/km' : '') + (d.actualHr ? ' · HR ' + d.actualHr : '')
+          ? d.actualKm + ' km' + (d.actualS ? ' · ' + Math.round(d.actualS / 60) + ' min' : '') + (d.actualPaceS ? ' @ ' + this.fmtPace(d.actualPaceS) + '/km' : '') + (d.actualHr ? ' · HR ' + d.actualHr : '')
           : '';
         return h('div', { key: d.date + ':' + (d.activityId || d.status), className: 'block-day' },
           h('span', { key: 'd', className: 'bd-date' }, this.mDate(d.date)),

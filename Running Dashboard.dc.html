@@ -1016,15 +1016,22 @@ class Component extends DCLogic {
       done:    { t:'✓', fg:'var(--good)', word:'done' },
       swapped: { t:'⇄', fg:'var(--good)', word:'swapped — done on another day' },
       partial: { t:'◐', fg:'var(--warn)', word:'partial' },
-      missed:  { t:'✕', fg:'var(--warn)', word:'missed' }
+      missed:  { t:'✕', fg:'var(--warn)', word:'missed' },
+      // honest-compliance: neither of these is a failure, so neither is amber.
+      // Rest is compliance, not an achievement — hence --sub, not --good.
+      rest:      { t:'✓', fg:'var(--sub)', word:'rest' },
+      untracked: { t:'—', fg:'var(--sub)', word:'not tracked' }
     };
-    const compReason = { distance:'shorter than planned', intensity:'ran too hard for the intent' };
+    const compReason = { distance:'shorter than planned',
+                         duration:'shorter than the prescribed time',
+                         intensity:'ran too hard for the intent' };
     const compRowFor = (cd) => {
       if (!cd || !compGlyph[cd.status]) return [];
       let t = compGlyph[cd.status].word;
       if (cd.reason) t += ' — ' + (compReason[cd.reason] || cd.reason);
       if (cd.actualKm != null) {
         t += ': ' + cd.actualKm + ' km';
+        if (cd.actualS) t += ' · ' + Math.round(cd.actualS / 60) + ' min';
         if (cd.actualPaceS) t += ' @ ' + this.fmtPace(cd.actualPaceS) + '/km';
         if (cd.actualHr) t += ' · HR ' + cd.actualHr;
       }

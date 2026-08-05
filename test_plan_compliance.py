@@ -922,6 +922,50 @@ def test_quality_verdict_without_a_document_is_honest():
     assert q["verdict"] == "no interval document"
 
 
+def test_an_uncalibrated_document_makes_no_rep_claim():
+    """Max ran 8×1 min and the row said '0/8 reps'. His archive holds 6 runs,
+    far under the lens's ~30-run work floor, so the engine explicitly declines
+    to make a rep claim (calibrated: false) — and compliance quoted the
+    silence as a zero. Mutation: ignore the flag → red."""
+    doc = {"shape": "steady", "calibrated": False, "set": None,
+           "segments": [], "quality": {"zone": None}}
+    r = _annotated(_quality_week("8×1 min jog"), doc,
+                   _a(1, "2026-07-03", "run", 3.2))
+    q = json.loads(r["quality_json"])
+    assert q["found"] is None, "no count was made, so none is reported"
+    assert "not verifiable" in q["verdict"]
+    assert "0/8" not in q["verdict"]
+
+
+def test_a_calibrated_document_still_reports_a_bailed_set():
+    """The honesty half: where the lens CAN count, a short set is still told.
+    Mutation: suppress every rep verdict → red."""
+    doc = dict(_REPS_DOC, calibrated=True, set={"found": 2},
+               segments=[{"role": "work", "paceS": 330}] * 2)
+    r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), doc,
+                   _a(1, "2026-07-03", "run", 7.0))
+    assert json.loads(r["quality_json"])["verdict"].startswith("2/4 reps")
+
+
+def test_a_document_without_the_flag_is_treated_as_calibrated():
+    """Lap-sourced documents are always calibrated — the watch is not
+    guessing — and older banked documents predate the flag."""
+    r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), _REPS_DOC,
+                   _a(1, "2026-07-03", "run", 7.2))
+    assert json.loads(r["quality_json"])["found"] == 4
+
+
+def test_a_steady_verdict_needs_no_calibration():
+    """Comparing an average pace to a target makes no rep claim, so the work
+    floor is irrelevant to it."""
+    doc = {"shape": "steady", "calibrated": False, "set": None,
+           "segments": [], "quality": {"zone": None}}
+    r = _annotated(_quality_week("16 km easy @ ~6:10"), doc,
+                   _a(1, "2026-07-03", "run", 16.0, pace_s=373.0))
+    q = json.loads(r["quality_json"])
+    assert q["kind"] == "steady" and q["onTarget"] is True
+
+
 def test_quality_verdict_steady_doc_against_a_rep_prescription():
     doc = {"shape": "steady", "set": None, "segments": [], "quality": {"zone": None}}
     r = _annotated(_quality_week("4×1 km @ 5:25–5:35"), doc,

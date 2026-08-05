@@ -377,6 +377,17 @@ def _quality_verdict(rx: dict, doc: dict | None, row: dict) -> dict:
     if not doc:
         out["verdict"] = "no interval document"
         return out
+    if not doc.get("calibrated", True):
+        # The lens itself declines to make a rep claim below its work floor
+        # (~30 runs of history): without it, "faster than the athlete" and
+        # "faster than the rest of this run" are indistinguishable. Quoting
+        # that silence as "0/8 reps" told Max he had done none of the eight
+        # reps he had just run. Lap-sourced and pre-flag documents default to
+        # calibrated — the watch is not guessing.
+        out["found"] = None
+        out["verdict"] = ("reps not verifiable — the interval lens needs "
+                          "~30 runs of history")
+        return out
     doc_set = doc.get("set") or {}
     found = doc_set.get("found") if doc.get("shape") == "reps" else 0
     out["found"] = found or 0

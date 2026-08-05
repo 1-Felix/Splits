@@ -251,7 +251,7 @@
         "plannedKm": 0.0,
         "plannedLoad": "Easy",
         "title": "Rest",
-        "status": "missed"
+        "status": "rest"
       },
       {
         "date": "2026-07-09",
@@ -272,7 +272,7 @@
         "plannedKm": 0.0,
         "plannedLoad": "Easy",
         "title": "Rest",
-        "status": "missed"
+        "status": "rest"
       },
       {
         "date": "2026-07-11",
@@ -293,7 +293,7 @@
         "plannedKm": 0.0,
         "plannedLoad": "Easy",
         "title": "Rest",
-        "status": "missed"
+        "status": "rest"
       },
       {
         "date": "2026-07-13",
@@ -314,7 +314,7 @@
         "plannedKm": 0.0,
         "plannedLoad": "Easy",
         "title": "Rest",
-        "status": "missed"
+        "status": "rest"
       },
       {
         "date": "2026-07-15",
@@ -409,7 +409,7 @@
           "counts": {
             "done": 3,
             "partial": 1,
-            "missed": 3,
+            "missed": 0,
             "swapped": 0,
             "unplanned": 0
           },
@@ -446,7 +446,7 @@
               "plannedKm": 0.0,
               "plannedLoad": "Easy",
               "title": "Rest",
-              "status": "missed"
+              "status": "rest"
             },
             {
               "date": "2026-07-09",
@@ -466,7 +466,7 @@
               "plannedKm": 0.0,
               "plannedLoad": "Easy",
               "title": "Rest",
-              "status": "missed"
+              "status": "rest"
             },
             {
               "date": "2026-07-11",
@@ -486,7 +486,7 @@
               "plannedKm": 0.0,
               "plannedLoad": "Easy",
               "title": "Rest",
-              "status": "missed"
+              "status": "rest"
             }
           ]
         },
@@ -502,7 +502,7 @@
           "counts": {
             "done": 1,
             "partial": 0,
-            "missed": 2,
+            "missed": 1,
             "swapped": 0,
             "unplanned": 0
           },
@@ -526,7 +526,7 @@
               "plannedKm": 0.0,
               "plannedLoad": "Easy",
               "title": "Rest",
-              "status": "missed"
+              "status": "rest"
             },
             {
               "date": "2026-07-15",
@@ -584,7 +584,7 @@
         "counts": {
           "done": 4,
           "partial": 1,
-          "missed": 5,
+          "missed": 1,
           "swapped": 0,
           "unplanned": 0
         }

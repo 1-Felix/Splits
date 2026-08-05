@@ -247,6 +247,113 @@ def test_rest_days_are_not_run_slots_in_the_week_aggregate():
     conn.close()
 
 
+def _hc_week():
+    """Max's real Wk 2: run days plus strength days his phone cannot record."""
+    return {
+        "wk": "Wk 2", "mon": "2026-07-27", "sun": "2026-08-02", "km": 10.3,
+        "label": "Jul 27", "phase": "Base", "long": "3.9 km", "focus": "build",
+        "days": [
+            _day("Mon", "2026-07-27", "run", "Run/Walk 2:1", "Easy", 3.0),
+            _day("Tue", "2026-07-28", "rest", "Rest", "Easy", 0),
+            _day("Wed", "2026-07-29", "strength", "Calf & Core", "Moderate", 0),
+            _day("Thu", "2026-07-30", "run", "2 × 10 min", "Easy", 3.4),
+            _day("Fri", "2026-07-31", "rest", "Rest", "Easy", 0),
+            _day("Sat", "2026-08-01", "run", "Long · 2 × 12 min", "Moderate", 3.9),
+            _day("Sun", "2026-08-02", "strength", "Mobility · Calves", "Easy", 0),
+        ],
+    }
+
+
+HC_TODAY = dt.date(2026, 8, 5)
+
+
+def test_untracked_kind_is_neither_done_nor_missed():
+    """Max's bridge pushes running sessions only, so a strength slot is
+    unsatisfiable by construction — exactly like a rest day was. Marking it
+    missed accuses him of skipping work nothing on his setup records.
+    Mutation: drop the tracked check → red."""
+    rows = pc.score_week(_hc_week(), [], HC_TODAY, MAX_HR, SNAP,
+                         tracked={"run"})
+    for date in ("2026-07-29", "2026-08-02"):
+        assert _by_date(rows, date)["status"] == "untracked"
+
+
+def test_a_tracked_kind_with_no_evidence_is_still_missed():
+    """The honesty half. On an instance that DOES record strength, a skipped
+    strength day is a skipped strength day. Mutation: always untracked → red."""
+    rows = pc.score_week(_hc_week(), [], HC_TODAY, MAX_HR, SNAP,
+                         tracked={"run", "strength"})
+    for date in ("2026-07-29", "2026-08-02"):
+        assert _by_date(rows, date)["status"] == "missed"
+
+
+def test_evidence_outranks_capability():
+    """One logged session scores done whatever the capability set says — the
+    check only ever governs the ABSENCE of evidence."""
+    rows = pc.score_week(_hc_week(), [_a(7, "2026-07-29", "strength", 0.0)],
+                         HC_TODAY, MAX_HR, SNAP, tracked={"run"})
+    assert _by_date(rows, "2026-07-29")["status"] == "done"
+
+
+def test_a_run_slot_is_never_untracked():
+    """Running is the one kind every instance records. A missed run is the
+    signal this whole engine exists to carry and must survive every filter."""
+    rows = pc.score_week(_hc_week(), [], HC_TODAY, MAX_HR, SNAP, tracked=set())
+    assert _by_date(rows, "2026-07-27")["status"] == "missed"
+
+
+def test_default_tracked_is_everything_so_old_callers_are_unchanged():
+    rows_default = pc.score_week(_hc_week(), [], HC_TODAY, MAX_HR, SNAP)
+    rows_all = pc.score_week(_hc_week(), [], HC_TODAY, MAX_HR, SNAP,
+                             tracked={"run", "strength", "cross"})
+    assert rows_default == rows_all
+
+
+def test_tracked_kinds_reads_the_archive_inside_the_window():
+    """Two of a kind inside 90 days makes it visible; one stray log does not,
+    so a single accidental entry cannot condemn every later day."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [
+        _garmin_act(1, "2026-08-01", 5.0, 1800),                       # run
+        _garmin_act(2, "2026-08-02", 5.0, 1800),                       # run
+        _garmin_act(3, "2026-07-30", 0.0, 2400, tk="strength_training"),
+        _garmin_act(4, "2026-01-05", 0.0, 2400, tk="indoor_cycling"),  # too old
+        _garmin_act(5, "2026-01-06", 0.0, 2400, tk="indoor_cycling"),  # too old
+    ])
+    tracked = pc.tracked_kinds(conn, HC_TODAY)
+    assert "run" in tracked
+    assert "strength" not in tracked, "one session is not a habit"
+    assert "cross" not in tracked, "outside the 90-day window"
+    conn.close()
+
+
+def test_tracked_kinds_always_contains_run_even_on_an_empty_archive():
+    d = _tmp()
+    conn = arch.open_archive(d)
+    assert pc.tracked_kinds(conn, HC_TODAY) == {"run"}
+    conn.close()
+
+
+def test_run_compliance_derives_capability_from_the_archive():
+    """End to end: an archive of runs only must produce untracked strength
+    days, with no parameter passed by the caller."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    arch.upsert_activities(conn, [
+        _garmin_act(1, "2026-07-27", 2.6, 1417, hr=143),
+        _garmin_act(2, "2026-07-30", 2.4, 1387, hr=151),
+        _garmin_act(3, "2026-08-01", 3.0, 1656, hr=157),
+    ])
+    plan = {"race": {"date": "2027-04-25"}, "block": [_hc_week()]}
+    pc.run_compliance(conn, "raw", plan, HC_TODAY, MAX_HR)
+    rows = arch.compliance_rows(conn)
+    assert _by_date(rows, "2026-07-29")["status"] == "untracked"
+    assert _by_date(rows, "2026-08-02")["status"] == "untracked"
+    assert _by_date(rows, "2026-07-28")["status"] == "rest"
+    conn.close()
+
+
 def test_undetailed_week_scores_nothing():
     week = _closed_week()
     week["days"] = None

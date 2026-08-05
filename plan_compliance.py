@@ -50,6 +50,13 @@ EASY_HR_CEILING = 0.85     # Easy/Moderate intent: avg HR above this × max HR �
 EASY_LOADS = {"Easy", "Moderate"}
 STEADY_TOLERANCE_S = 10    # a `~` steady target is approximate by its own notation
 
+# Capability (honest-compliance D2): a slot kind is scoreable only if this
+# instance can actually SEE that kind of work. Two activities rather than one
+# so a single stray log cannot condemn every later day; a trailing window
+# rather than all-time so the answer tracks what the instance can currently do.
+TRACKED_MIN_ACTIVITIES = 2
+TRACKED_WINDOW_DAYS = 90
+
 PLAN_DUMP_TIMEOUT_S = float(os.environ.get("SPLITS_PLAN_DUMP_TIMEOUT_S", "10"))
 
 # Env allow-list for the dump child — mirrors plan-io.mjs SAFE_ENV_KEYS: just
@@ -137,6 +144,28 @@ def kind_for_type(type_key) -> str | None:
     return None
 
 
+def tracked_kinds(conn, today: dt.date) -> set[str]:
+    """The activity kinds this archive can currently see — the instance's own
+    answer to 'is there any evidence path for this kind of work?'.
+
+    Derived, never configured, so it self-heals in both directions: the day a
+    Health Connect athlete's phone starts logging strength, strength days
+    start scoring for him with no code change; an athlete whose watch has
+    always logged strength keeps being told, honestly, when he skipped one.
+
+    `run` is always included — running is the one kind every instance records,
+    and a missed run is the signal this engine exists to carry."""
+    since = (today - dt.timedelta(days=TRACKED_WINDOW_DAYS)).isoformat()
+    counts: dict[str, int] = {}
+    for (type_key,) in conn.execute(
+            "SELECT type_key FROM activities "
+            "WHERE substr(start_time_local, 1, 10) >= ?", (since,)):
+        kind = kind_for_type(type_key)
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    return {k for k, n in counts.items() if n >= TRACKED_MIN_ACTIVITIES} | {"run"}
+
+
 def _acts_for_range(conn, mon: str, sun: str) -> list[dict]:
     """Matchable activities (mapped kind only) in [mon, sun], oldest first."""
     rows = conn.execute(
@@ -188,9 +217,15 @@ def _score_run(row: dict, day: dict, act: dict, max_hr: int) -> None:
 
 
 def score_week(week: dict, acts: list[dict], today: dt.date,
-               max_hr: int, snapshot_id: int) -> list[dict]:
+               max_hr: int, snapshot_id: int,
+               tracked: set[str] | None = None) -> list[dict]:
     """Compliance rows for one plan week against its archived actuals.
-    Pure — no I/O, fully deterministic for a closed week."""
+    Pure — no I/O, fully deterministic for a closed week.
+
+    `tracked` is the set of kinds this instance can see (see tracked_kinds).
+    It is computed by the CALLER and passed in so this function stays pure.
+    None means "every kind is tracked" — the honest default for a caller that
+    has not asked the archive."""
     days = week.get("days") or []
     if not days:
         return []  # undetailed week — the briefing's integrity warning covers it
@@ -240,7 +275,11 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
                     row["status"] = "done"
                     row["activity_id"] = act["id"]
                 elif day["date"] < today_iso:
-                    row["status"] = "missed"
+                    # No evidence — but "he skipped it" and "nothing here can
+                    # record it" are different claims, and only one of them is
+                    # ever true on a running-only ingest.
+                    row["status"] = ("missed" if tracked is None
+                                     or day["kind"] in tracked else "untracked")
         rows.append(row)
 
     if closed:  # swap pass (design D3): rescue missed run slots at week close
@@ -393,6 +432,7 @@ def run_compliance(conn, raw_text: str, plan: dict, today: dt.date,
         conn, raw_text, plan, today.isoformat())
     scored = 0
     today_iso = today.isoformat()
+    tracked = tracked_kinds(conn, today)
     for week in weeks_to_score(plan.get("block") or [], today):
         week_snapshot = snapshot_id
         if week.get("sun", "") < today_iso:  # closed → freeze at first post-close scoring
@@ -406,7 +446,7 @@ def run_compliance(conn, raw_text: str, plan: dict, today: dt.date,
                 else:  # stored rows predate this week's shape — score fresh
                     week_snapshot = snapshot_id
         acts = _acts_for_range(conn, week["mon"], week["sun"])
-        rows = score_week(week, acts, today, max_hr, week_snapshot)
+        rows = score_week(week, acts, today, max_hr, week_snapshot, tracked)
         if rows:
             _annotate_quality(conn, week, rows)
             activity_archive.replace_compliance_week(conn, week["mon"], week["sun"], rows)
@@ -432,6 +472,7 @@ def _rescore_stale(conn, today: dt.date, max_hr: int) -> int:
     """COMPLIANCE_VERSION self-heal: every frozen week holding stale-version
     rows is rescored against the snapshot it originally referenced."""
     healed = 0
+    tracked = tracked_kinds(conn, today)
     for snapshot_id, wk in activity_archive.stale_compliance_weeks(
             conn, COMPLIANCE_VERSION):
         plan = activity_archive.snapshot_plan(conn, snapshot_id)
@@ -440,7 +481,7 @@ def _rescore_stale(conn, today: dt.date, max_hr: int) -> int:
         if not week:
             continue  # unknown label — verify-archive keeps flagging the stale rows
         acts = _acts_for_range(conn, week["mon"], week["sun"])
-        rows = score_week(week, acts, today, max_hr, snapshot_id)
+        rows = score_week(week, acts, today, max_hr, snapshot_id, tracked)
         _annotate_quality(conn, week, rows)
         activity_archive.replace_compliance_week(conn, week["mon"], week["sun"], rows)
         healed += 1

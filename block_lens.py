@@ -136,7 +136,12 @@ def enumerate_blocks(conn) -> list[dict]:
 # ──────────────────────────────────────────────────────────────────────────────
 # execution rollup (design D3) — grouped by week window, verdicts as stored
 # ──────────────────────────────────────────────────────────────────────────────
-_STATUSES = ("done", "partial", "missed", "swapped", "unplanned")
+# honest-compliance: `rest` and `untracked` are terminal verdicts that are not
+# execution — one asked nothing of the athlete, the other cannot be seen from
+# here. They are counted (the drill still shows them) but never scored.
+_STATUSES = ("done", "partial", "missed", "swapped", "unplanned",
+             "rest", "untracked")
+_UNSCORED = ("pending", "rest", "untracked")
 
 
 def _day_row(r: dict) -> dict:
@@ -149,6 +154,9 @@ def _day_row(r: dict) -> dict:
         d["actualKm"] = r["actual_km"]
         d["actualPaceS"] = r["actual_pace_s"]
         d["actualHr"] = r["actual_hr"]
+    if r.get("planned_s") is not None:
+        d["plannedS"] = r["planned_s"]
+        d["actualS"] = r.get("actual_s")
     if r["activity_id"] is not None:
         d["activityId"] = r["activity_id"]
     return d
@@ -187,7 +195,7 @@ def build_execution(block: dict, comp_rows: list[dict]) -> tuple[list[dict], dic
                 counts[r["status"]] += 1
                 totals["counts"][r["status"]] += 1
             actual_km += r["actual_km"] or 0
-            if r["planned_kind"] is not None and r["status"] != "pending":
+            if r["planned_kind"] is not None and r["status"] not in _UNSCORED:
                 totals["km_planned_to_date"] += r["planned_km"] or 0
                 totals["scored_days"] += 1
                 if r["status"] in ("done", "swapped"):

@@ -411,7 +411,9 @@
             "partial": 1,
             "missed": 0,
             "swapped": 0,
-            "unplanned": 0
+            "unplanned": 0,
+            "rest": 3,
+            "untracked": 0
           },
           "actualKm": 24.2,
           "days": [
@@ -504,7 +506,9 @@
             "partial": 0,
             "missed": 1,
             "swapped": 0,
-            "unplanned": 0
+            "unplanned": 0,
+            "rest": 1,
+            "untracked": 0
           },
           "actualKm": 11.0,
           "days": [
@@ -572,8 +576,8 @@
         }
       ],
       "execution": {
-        "percentExecuted": 45,
-        "scoredDays": 10,
+        "percentExecuted": 75,
+        "scoredDays": 6,
         "qualityHitRate": {
           "hit": 0,
           "of": 0
@@ -586,7 +590,9 @@
           "partial": 1,
           "missed": 1,
           "swapped": 0,
-          "unplanned": 0
+          "unplanned": 0,
+          "rest": 4,
+          "untracked": 0
         }
       },
       "adaptation": {
@@ -652,7 +658,7 @@
         },
         "isComplete": false,
         "weeksTotal": 2,
-        "percentExecuted": 45,
+        "percentExecuted": 75,
         "kmPlanned": 31,
         "kmActual": 35.2,
         "efDeltaSPerKm": null,

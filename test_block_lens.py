@@ -246,7 +246,8 @@ def test_finished_block_document():
 
     wk2 = doc["weeks"][1]
     assert wk2["counts"] == {"done": 1, "partial": 0, "missed": 0,
-                             "swapped": 1, "unplanned": 0}
+                             "swapped": 1, "unplanned": 0,
+                             "rest": 0, "untracked": 0}
     swapped_day = next(d for d in wk2["days"] if d["status"] == "swapped")
     assert swapped_day["activityId"] == 104, "the drill links the swapped-in run"
     race_day = next(d for d in doc["weeks"][3]["days"]
@@ -281,7 +282,8 @@ def test_current_block_document():
     # rollup weights: Wk1 = 3 done, 1 partial, 1 missed → partial counts 0.5
     wk1 = doc["weeks"][0]
     assert wk1["counts"] == {"done": 3, "partial": 1, "missed": 1,
-                             "swapped": 0, "unplanned": 0}
+                             "swapped": 0, "unplanned": 0,
+                             "rest": 0, "untracked": 0}
     assert wk1["actualKm"] == 18.2
     ex = doc["execution"]
     assert ex["scoredDays"] == 8
@@ -333,7 +335,8 @@ def test_retired_week_rejoins_the_rollup():
     wk1 = doc["weeks"][0]
     assert wk1.get("retired") is True and wk1["mon"] == "2026-07-06"
     assert wk1["counts"] == {"done": 3, "partial": 1, "missed": 1,
-                             "swapped": 0, "unplanned": 0}
+                             "swapped": 0, "unplanned": 0,
+                             "rest": 0, "untracked": 0}
     assert wk1["plannedKm"] is None, "the header km retired with the week"
     assert len(wk1["days"]) == 5, "the drill keeps every scored day"
     assert doc["execution"]["kmActual"] == 24.2, "nothing the athlete ran vanished"
@@ -474,6 +477,61 @@ def test_assemble_no_current_after_race_without_new_plan():
     assert out["past"][0]["isComplete"] is True, \
         "the first completed block becomes a retrospective"
     conn.close()
+
+
+# ── honest-compliance: the execute rate counts required, visible work ────────
+def _comp_row(date, kind, status, **kw):
+    row = {"date": date, "wk": "Wk 2", "planned_kind": kind,
+           "planned_km": 0.0, "planned_load": "Easy", "planned_title": "X",
+           "status": status, "reason": None, "actual_km": None,
+           "actual_pace_s": None, "actual_hr": None, "activity_id": None,
+           "planned_s": None, "actual_s": None}
+    row.update(kw)
+    return row
+
+
+def test_percent_executed_ignores_rest_and_untracked_days():
+    """Max's live headline read 35% EXECUTED while he had run 7 of his 8
+    sessions, because every rest day sat in the denominator as a failed day.
+    A day that asked nothing of him, or that nothing here can see, is not a
+    day he failed to execute. Mutation: restore the old denominator → red."""
+    rows = [
+        _comp_row("2026-07-27", "run", "swapped", planned_km=3.0,
+                  planned_title="Run/Walk", actual_km=2.6, actual_pace_s=545,
+                  actual_hr=143, activity_id=1),
+        _comp_row("2026-07-28", "rest", "rest", planned_title="Rest"),
+        _comp_row("2026-07-29", "strength", "untracked", planned_title="Calf"),
+        _comp_row("2026-07-30", "run", "done", planned_km=3.4,
+                  planned_title="2 × 10 min", actual_km=2.4, actual_pace_s=578,
+                  actual_hr=151, activity_id=2, planned_s=1320, actual_s=1387),
+    ]
+    block = {"race_date": "2027-04-25", "race_name": "First Half",
+             "weeks": [_w("Wk 2", "2026-07-27", "2026-08-02", 10.3, [],
+                          phase="Base")]}
+    weeks, execution = bl.build_execution(block, rows)
+    assert execution["scoredDays"] == 2, "only the two run slots were scoreable"
+    assert execution["percentExecuted"] == 100
+    assert execution["counts"]["rest"] == 1
+    assert execution["counts"]["untracked"] == 1
+    day = next(d for d in weeks[0]["days"] if d["date"] == "2026-07-30")
+    assert day["plannedS"] == 1320 and day["actualS"] == 1387
+
+
+def test_a_missed_run_still_drags_the_execute_rate_down():
+    """The correction must not become an amnesty: a skipped run is still a
+    day he did not execute. Mutation: exclude missed too → red."""
+    rows = [
+        _comp_row("2026-07-27", "run", "missed", planned_km=3.0),
+        _comp_row("2026-07-28", "rest", "rest"),
+        _comp_row("2026-07-30", "run", "done", planned_km=3.4,
+                  actual_km=3.5, activity_id=2),
+    ]
+    block = {"race_date": "2027-04-25", "race_name": "First Half",
+             "weeks": [_w("Wk 2", "2026-07-27", "2026-08-02", 10.3, [],
+                          phase="Base")]}
+    _weeks, execution = bl.build_execution(block, rows)
+    assert execution["scoredDays"] == 2
+    assert execution["percentExecuted"] == 50
 
 
 if __name__ == "__main__":

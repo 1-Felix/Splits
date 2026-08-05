@@ -188,6 +188,65 @@ def test_strength_presence_and_absence():
     assert _by_date(rows, "2026-07-04")["status"] == "missed"
 
 
+# ── honest-compliance: rest, capability, duration ────────────────────────────
+def _rest_week():
+    """Max's real Wk 1 shape: three run/walk days around four rest days."""
+    return {
+        "wk": "Wk 1", "mon": "2026-07-20", "sun": "2026-07-26", "km": 8,
+        "label": "Jul 20", "phase": "Base", "long": "3 km", "focus": "start",
+        "days": [
+            _day("Mon", "2026-07-20", "run", "Run/Walk 1:1", "Easy", 2.5),
+            _day("Tue", "2026-07-21", "rest", "Rest", "Easy", 0),
+            _day("Wed", "2026-07-22", "run", "Run/Walk 1:1", "Easy", 2.5),
+            _day("Thu", "2026-07-23", "rest", "Rest", "Easy", 0),
+            _day("Fri", "2026-07-24", "rest", "Rest", "Easy", 0),
+            _day("Sat", "2026-07-25", "run", "Run/Walk 1:1 · Long", "Easy", 3.0),
+            _day("Sun", "2026-07-26", "rest", "Rest", "Easy", 0),
+        ],
+    }
+
+
+REST_TODAY = dt.date(2026, 7, 29)  # the week is closed
+
+
+def test_a_past_rest_day_is_rest_never_missed():
+    """Found live on Max's dashboard 2026-08-05: six of his ten ✕ marks were
+    rest days. A rest slot falls through _is_run_slot, looks for an activity
+    of kind 'rest' that kind_for_type can never return, and was marked missed
+    — unsatisfiable by construction. Mutation: drop the rest branch → red."""
+    rows = pc.score_week(_rest_week(), [], REST_TODAY, MAX_HR, SNAP)
+    for date in ("2026-07-21", "2026-07-23", "2026-07-24", "2026-07-26"):
+        r = _by_date(rows, date)
+        assert r["status"] == "rest", f"{date} is a rest day, not a failure"
+        assert r["reason"] is None
+
+
+def test_a_future_rest_day_is_still_pending():
+    rows = pc.score_week(_rest_week(), [], dt.date(2026, 7, 22), MAX_HR, SNAP)
+    assert _by_date(rows, "2026-07-23")["status"] == "pending"
+
+
+def test_running_on_a_rest_day_keeps_both_facts():
+    """The slot is still satisfied — resting was never required of the run —
+    and the run itself still surfaces as unplanned. Neither is suppressed."""
+    rows = pc.score_week(_rest_week(), [_a(1, "2026-07-23", "run", 1.0)],
+                         REST_TODAY, MAX_HR, SNAP)
+    assert _by_date(rows, "2026-07-23")["status"] == "rest"
+    assert any(r["status"] == "unplanned" and r["date"] == "2026-07-23"
+               for r in rows), "the run he did is still reported"
+
+
+def test_rest_days_are_not_run_slots_in_the_week_aggregate():
+    """A rest day carries km 0, so it must never inflate runsPlanned."""
+    d = _tmp()
+    conn = arch.open_archive(d)
+    plan = {"race": {"date": "2027-04-25"}, "block": [_rest_week()]}
+    pc.run_compliance(conn, "raw", plan, REST_TODAY, MAX_HR)
+    block = pc.assemble_compliance(conn, plan, REST_TODAY)
+    assert block["weeks"][0]["runsPlanned"] == 3
+    conn.close()
+
+
 def test_undetailed_week_scores_nothing():
     week = _closed_week()
     week["days"] = None

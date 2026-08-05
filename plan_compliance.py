@@ -227,12 +227,20 @@ def score_week(week: dict, acts: list[dict], today: dt.date,
                 row["status"] = "missed"
                 swap_candidates.append((day, row))
         else:
-            act = take(day["date"], day["kind"], absorb=True)
-            if act:
-                row["status"] = "done"
-                row["activity_id"] = act["id"]
-            elif day["date"] < today_iso:
-                row["status"] = "missed"
+            if day.get("kind") == "rest":
+                # A rest day is satisfied by RESTING. It has no activity to
+                # match and never could: kind_for_type cannot return "rest".
+                # Scoring it against an absent activity made every rest day a
+                # red ✕ — six of them on Max's board (found 2026-08-05).
+                if day["date"] < today_iso:
+                    row["status"] = "rest"
+            else:
+                act = take(day["date"], day["kind"], absorb=True)
+                if act:
+                    row["status"] = "done"
+                    row["activity_id"] = act["id"]
+                elif day["date"] < today_iso:
+                    row["status"] = "missed"
         rows.append(row)
 
     if closed:  # swap pass (design D3): rescue missed run slots at week close

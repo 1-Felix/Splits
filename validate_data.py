@@ -172,7 +172,11 @@ def validate_insights(ins: dict, e: list[str]) -> None:
                   f"insights.trajectory.weekly {label} anchorId must be numeric", e)
 
 
-_COMPLIANCE_STATUSES = {"done", "partial", "missed", "swapped", "unplanned", "pending"}
+# honest-compliance: `rest` (a rest day is satisfied by resting) and
+# `untracked` (this instance cannot see that kind of work) are terminal
+# verdicts like the rest — neither is a failure.
+_COMPLIANCE_STATUSES = {"done", "partial", "missed", "swapped", "unplanned",
+                        "pending", "rest", "untracked"}
 
 
 def validate_compliance(comp: dict, e: list[str]) -> None:
@@ -193,13 +197,14 @@ def validate_compliance(comp: dict, e: list[str]) -> None:
               f"compliance.days {label} date must be YYYY-MM-DD", e)
         check(d.get("status") in _COMPLIANCE_STATUSES,
               f"compliance.days {label} invalid status {d.get('status')!r}", e)
-        check(d.get("plannedKind") in (None, "run", "strength", "cross"),
+        check(d.get("plannedKind") in (None, "run", "strength", "cross", "rest"),
               f"compliance.days {label} invalid plannedKind {d.get('plannedKind')!r}", e)
-        check(d.get("reason") in (None, "distance", "intensity"),
+        check(d.get("reason") in (None, "distance", "intensity", "duration"),
               f"compliance.days {label} invalid reason {d.get('reason')!r}", e)
         check(d.get("plannedKind") is not None or d.get("status") == "unplanned",
               f"compliance.days {label} without plannedKind must be status unplanned", e)
-        for k in ("plannedKm", "actualKm", "actualPaceS", "actualHr"):
+        for k in ("plannedKm", "actualKm", "actualPaceS", "actualHr",
+                  "plannedS", "actualS"):
             if k in d and d[k] is not None:
                 check(_num(d[k]), f"compliance.days {label} {k} must be numeric", e)
     weeks = comp.get("weeks")

@@ -457,7 +457,21 @@ def test_validate_data_compliance_shape():
                       "actualHr": 145},
                      {"date": "2026-07-02", "wk": "Wk 2", "plannedKind": None,
                       "plannedKm": None, "plannedLoad": None, "title": None,
-                      "status": "unplanned", "actualKm": 4.0}],
+                      "status": "unplanned", "actualKm": 4.0},
+                     # honest-compliance: a rest day is satisfied by resting,
+                     # work this instance cannot see is neither done nor missed,
+                     # and a time-scored day carries seconds beside its km
+                     {"date": "2026-07-03", "wk": "Wk 2", "plannedKind": "rest",
+                      "plannedKm": 0, "plannedLoad": "Easy", "title": "Rest",
+                      "status": "rest"},
+                     {"date": "2026-07-04", "wk": "Wk 2", "plannedKind": "strength",
+                      "plannedKm": 0, "plannedLoad": "Easy", "title": "Mobility",
+                      "status": "untracked"},
+                     {"date": "2026-07-05", "wk": "Wk 2", "plannedKind": "run",
+                      "plannedKm": 3.4, "plannedLoad": "Easy", "title": "2 × 10 min",
+                      "status": "partial", "reason": "duration",
+                      "plannedS": 1320, "actualS": 900,
+                      "actualKm": 2.4, "actualPaceS": 578, "actualHr": 151}],
             "weeks": [{"wk": "Wk 2", "mon": "2026-06-29", "sun": "2026-07-05",
                        "plannedKm": 32, "actualKm": 9.1, "runsPlanned": 4,
                        "runsDone": 1}]}
@@ -469,6 +483,7 @@ def test_validate_data_compliance_shape():
         (lambda c: c["days"][0].update(status="acing_it"), "invalid status"),
         (lambda c: c["days"][0].update(reason="vibes"), "invalid reason"),
         (lambda c: c["days"][1].update(status="done"), "must be status unplanned"),
+        (lambda c: c["days"][4].update(plannedS="twenty"), "must be numeric"),
         (lambda c: c["weeks"][0].update(runsDone="one"), "must be numeric"),
     ):
         bad = json.loads(json.dumps(good))

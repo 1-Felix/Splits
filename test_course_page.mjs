@@ -40,10 +40,11 @@ export default garminData;
 `;
 };
 
-const planFor = (courseId) => `export const planData = {
-  race: { name: "Allgäu Panorama Halbmarathon", location: "Sonthofen", date: "2026-08-09",
+const planFor = (courseId, opts = {}) => `export const planData = {
+  race: { name: "Allgäu Panorama Halbmarathon", location: "Sonthofen", date: "${opts.date || "2026-08-09"}",
           distanceKm: 21.1, goalTime: "1:59:59", goalPaceSecPerKm: 341, pb: "2:19:07"${
-            courseId ? `, courseId: ${courseId}` : ""} },
+            courseId ? `, courseId: ${courseId}` : ""}${
+            opts.prep ? `, prep: ${JSON.stringify(opts.prep)}` : ""} },
   block: [{ wk: "Wk 7", label: "Aug 3", mon: "2026-08-03", sun: "2026-08-09",
             phase: "Race", km: 9, long: "Race", focus: "Taper", days: null }],
   coach: { headline: "h", note: "n", focus: [], log: [] },
@@ -212,6 +213,59 @@ try {
   assert.ok(!navLabels.includes("Course"), "no Course tab when there is no course: " + navLabels);
   assert.deepStrictEqual(page2Errors, [], "no page errors on the dark page");
   await ctx2.close();
+
+  // ── the race-prep checklist (plan-owned, one-off) ─────────────────────────
+  // Content lives in race.prep, not the page — same rule as the wall. The race
+  // date is computed relative to NOW so this test reads the same before and
+  // after the real Sonthofen weekend.
+  step = "prep";
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const PREP = { title: "Race weekend — the prep plan", updated: "2026-08-07", sections: [
+    { title: "TONIGHT", items: ["Pasta dinner", "Mix the flask"] },
+    { title: "RACE MORNING", items: ["Oats at 6:15"] },
+  ] };
+  await writeFile(join(dataDir, "garmin-data.js"), garminDataFor(LENS));
+  await writeFile(join(dataDir, "plan-data.js"),
+    planFor(493447940, { date: iso(new Date(Date.now() + 2 * 864e5)), prep: PREP }));
+  const ctx3 = await browser.newContext({ viewport: { width: 1200, height: 1800 } });
+  const page3 = await ctx3.newPage();
+  const page3Errors = [];
+  page3.on("pageerror", (e) => page3Errors.push(String(e)));
+  await page3.goto(B + "/course", { waitUntil: "networkidle" });
+  await page3.waitForSelector(".prep-item", { timeout: 10000 });
+  let prepText = await page3.evaluate(() => document.body.innerText);
+  assert.ok(/Race weekend — the prep plan/.test(prepText), "the prep card renders from race.prep");
+  assert.ok(/0 \/ 3/.test(prepText), "the tick counter starts empty");
+  await page3.click(".prep-item");
+  await page3.waitForTimeout(150);
+  assert.strictEqual(
+    await page3.evaluate(() => document.querySelector(".prep-item").getAttribute("aria-pressed")),
+    "true", "a clicked item reads as ticked");
+  prepText = await page3.evaluate(() => document.body.innerText);
+  assert.ok(/1 \/ 3/.test(prepText), "the counter follows the tick");
+  // the tick must survive a reload — it lives in localStorage, not React state
+  await page3.reload({ waitUntil: "networkidle" });
+  await page3.waitForSelector(".prep-item", { timeout: 10000 });
+  assert.strictEqual(
+    await page3.evaluate(() => document.querySelector(".prep-item").getAttribute("aria-pressed")),
+    "true", "ticks persist across a reload");
+  assert.deepStrictEqual(page3Errors, [], "no page errors on the prep page");
+  await ctx3.close();
+
+  // ── once the race is run the checklist hides ──────────────────────────────
+  step = "prep-hidden";
+  await writeFile(join(dataDir, "plan-data.js"),
+    planFor(493447940, { date: iso(new Date(Date.now() - 2 * 864e5)), prep: PREP }));
+  const ctx4 = await browser.newContext({ viewport: { width: 1200, height: 1200 } });
+  const page4 = await ctx4.newPage();
+  await page4.goto(B + "/course", { waitUntil: "networkidle" });
+  await page4.waitForSelector('svg[aria-label^="Course elevation by distance"]', { timeout: 10000 });
+  const goneText = await page4.evaluate(() => document.body.innerText);
+  assert.ok(!/Race weekend — the prep plan/.test(goneText), "the prep card hides after race day");
+  assert.strictEqual(
+    await page4.evaluate(() => document.querySelectorAll(".prep-item").length), 0,
+    "no tickable items after race day");
+  await ctx4.close();
 
   assert.deepStrictEqual(pageErrors, [], "no page errors");
   console.log("ALL PASS");

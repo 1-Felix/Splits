@@ -105,6 +105,33 @@
     </div>
   </sc-for>
 
+  <!-- ===== RACE PREP (one-off, plan-owned: race.prep) ===== -->
+  <sc-for list="{{ prep }}" as="pr" hint-placeholder-count="0">
+    <div class="card" style="margin-bottom:var(--sp-4)">
+      <div class="card-head">
+        <div>
+          <div class="card-title">{{ pr.title }}</div>
+          <div class="card-sub">{{ pr.sub }}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:var(--fs-2xl);font-weight:900;letter-spacing:-.03em;font-variant-numeric:tabular-nums">{{ pr.count }}</div>
+          <div style="font-size:var(--fs-2xs);letter-spacing:.18em;color:var(--sub);font-weight:700">TICKED</div>
+        </div>
+      </div>
+      <sc-for list="{{ pr.sections }}" as="s" hint-placeholder-count="5">
+        <div style="margin-top:var(--sp-3)">
+          <div style="font-size:var(--fs-2xs);letter-spacing:.16em;color:var(--sub);font-weight:700;padding-bottom:var(--sp-1);border-bottom:1px solid var(--line)">{{ s.title }}</div>
+          <sc-for list="{{ s.items }}" as="i" hint-placeholder-count="6">
+            <button class="prep-item" aria-pressed="{{ i.on }}" onClick="{{ i.toggle }}" style="{{ i.style }}">
+              <span aria-hidden="true" style="{{ i.box }}">{{ i.mark }}</span>
+              <span>{{ i.text }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </sc-for>
+
   <!-- ===== PROFILE ===== -->
   <sc-for list="{{ profile }}" as="p" hint-placeholder-count="1">
     <div class="card" style="margin-bottom:var(--sp-4)">
@@ -217,7 +244,7 @@ class Component extends DCLogic {
   // which only exist after race day (design: deep views may talk to the API).
   state = { theme: (window.SplitsTopbar && window.SplitsTopbar.initialTheme()) || 'volt',
             data: null, target: 'goal', customTarget: '', decline: true,
-            cross: null, now: new Date() };
+            cross: null, now: new Date(), prepTicks: {} };
 
   tb() { return window.SplitsTopbar; }
 
@@ -237,7 +264,15 @@ class Component extends DCLogic {
     // Resolve modules against document.baseURI — the dc runtime's compiled
     // script can otherwise carry a stale base after a same-site navigation.
     const mod = (p) => import(new URL(p, document.baseURI).href);
-    mod('./running-data.js').then((m) => this.setState({ data: m.athleteData })).catch(() => this.setState({ data: false }));
+    mod('./running-data.js').then((m) => {
+      // restore this device's prep-checklist ticks for THIS race (key = race date)
+      let prepTicks = {};
+      try {
+        const rd = (m.athleteData && m.athleteData.race && m.athleteData.race.date) || 'race';
+        prepTicks = JSON.parse(localStorage.getItem('splits-prep-' + rd) || '{}') || {};
+      } catch { prepTicks = {}; }
+      this.setState({ data: m.athleteData, prepTicks });
+    }).catch(() => this.setState({ data: false }));
     mod('./chart-core.js').then((m) => { this._cc = m; this.setState({}); }).catch(() => {});
     mod('./chart-view.js').then((m) => { this._cv = m; this.setState({}); }).catch(() => {});
     mod('./course-plan.js').then((m) => { this._cp = m; this.setState({}); }).catch(() => {});
@@ -252,6 +287,18 @@ class Component extends DCLogic {
 
   lens() { const d = this.state.data; return (d && d.courseLens) || null; }
   race() { const d = this.state.data; return (d && d.race) || {}; }
+
+  // A tick is keyed by section + item TEXT, so reordering the checklist in the
+  // plan never mis-ticks an item — only rewording it resets that one row.
+  togglePrep = (key) => {
+    const t = Object.assign({}, this.state.prepTicks);
+    if (t[key]) delete t[key]; else t[key] = true;
+    try {
+      const rd = this.race().date || 'race';
+      localStorage.setItem('splits-prep-' + rd, JSON.stringify(t));
+    } catch {}
+    this.setState({ prepTicks: t });
+  };
 
   todayISO() {
     const d = this.state.now;
@@ -352,16 +399,53 @@ class Component extends DCLogic {
     const cc = this._cc, cv = this._cv, cp = this._cp;
     const R = (typeof React !== 'undefined') ? React : null;
 
-    let noCourse = [], head = [], profile = [], trace = [], plan = [], overlay = [];
+    let noCourse = [], head = [], profile = [], trace = [], plan = [], overlay = [], prep = [];
     let liveText = '';
 
     if (this.state.data === null) {
       noCourse = [{ body: 'Loading…' }];
-      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, prep, liveText };
     }
+
+    // ---- race prep (one-off, plan-owned) -----------------------------------
+    // The checklist is CONTENT from the plan (race.prep), not page copy — the
+    // next race simply carries no prep and the card never renders. It belongs
+    // to the race rather than the course, so it survives a missing courseLens;
+    // once the race is run it hides and the analysis views take over. Ticks
+    // live in localStorage on the device, keyed by race date.
+    const prepDoc = this.race().prep;
+    const prepDays = this.daysToRace();
+    if (prepDoc && Array.isArray(prepDoc.sections) && (prepDays == null || prepDays >= 0)) {
+      const ticks = this.state.prepTicks || {};
+      let total = 0, done = 0;
+      const sections = prepDoc.sections.map((s) => ({
+        title: s.title,
+        items: (s.items || []).map((it) => {
+          const key = s.title + '|' + it;
+          const on = !!ticks[key];
+          total += 1; if (on) done += 1;
+          return {
+            text: it, on: String(on), mark: on ? '✓' : '',
+            style: 'display:flex;align-items:flex-start;gap:var(--sp-2);width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:var(--sp-2) 0;cursor:pointer;font-family:inherit;font-size:var(--fs-sm);line-height:1.45;color:' +
+                   (on ? 'var(--sub);text-decoration:line-through' : 'inherit'),
+            box: 'flex:none;display:flex;align-items:center;justify-content:center;width:18px;height:18px;margin-top:1px;border-radius:5px;border:1px solid ' +
+                 (on ? 'var(--accent);background:var(--accent)' : 'var(--line);background:transparent') +
+                 ';color:#0E0F12;font-size:12px;font-weight:900',
+            toggle: () => this.togglePrep(key),
+          };
+        }),
+      }));
+      prep = [{
+        title: prepDoc.title || 'Race prep',
+        sub: 'One-off for this race' + (prepDoc.updated ? ' · updated ' + prepDoc.updated : '') + ' · ticks stay on this device',
+        count: done + ' / ' + total,
+        sections,
+      }];
+    }
+
     if (!lens) {
       noCourse = [{ body: 'This race has no course attached. Import the official route into Garmin Connect, then set race.courseId in the plan — the next sync fetches the track and this page fills in.' }];
-      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+      return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, prep, liveText };
     }
 
     // ---- header ------------------------------------------------------------
@@ -530,7 +614,7 @@ class Component extends DCLogic {
       if (cmp) overlay = [cmp];
     }
 
-    return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, liveText };
+    return { rootStyle, themes, nav, noCourse, head, profile, trace, plan, overlay, prep, liveText };
   }
 
   // Align the actual run onto the course's distance grid and attribute the

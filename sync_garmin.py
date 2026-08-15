@@ -847,18 +847,33 @@ def fetch_sleep(client, nights: int = SLEEP_NIGHTS, raw_out: list | None = None)
     return out
 
 
+def _latest_weight_g(client) -> float:
+    """Latest weigh-in from the body-composition log, in grams. The daily
+    summary only carries weight on days with a fresh weigh-in, so on any
+    other day it reads 0 — scan two years back and take the newest entry
+    (weigh-ins can be months apart; 2026-02-08 was the latest as of Aug)."""
+    start = (TODAY - dt.timedelta(days=730)).isoformat()
+    doc = safe(lambda: client.get_body_composition(start, TODAY.isoformat()),
+               {}, "get_body_composition") or {}
+    entries = [e for e in (doc.get("dateWeightList") or []) if e.get("weight")]
+    if not entries:
+        return 0
+    entries.sort(key=lambda e: e.get("date") or 0)
+    return entries[-1]["weight"]
+
+
 def fetch_profile(client, vo2_current: float | None) -> dict:
     today = TODAY.isoformat()
     summary = safe(lambda: client.get_user_summary(today), {}, "get_user_summary") or {}
     rhr_doc = safe(lambda: client.get_rhr_day(today), {}, "get_rhr_day") or {}
     rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate") or 47
-    weight_g = summary.get("weight") or 0
+    weight_g = summary.get("weight") or _latest_weight_g(client) or 0
     return {
         "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Felix"),
         "age": int(os.getenv("ATHLETE_AGE", "31")),
         "restingHR": int(rhr),
         "maxHR": int(os.getenv("ATHLETE_MAX_HR", "197")),
-        "weightKg": round(weight_g / 1000.0, 1) if weight_g else 71.0,
+        "weightKg": round(weight_g / 1000.0, 1) if weight_g else 81.0,
         "vo2maxCurrent": round(vo2_current, 1) if vo2_current else 51.3,
     }
 

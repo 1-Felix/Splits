@@ -138,6 +138,36 @@ def test_short_run_yields_nulls():
         "distances longer than the run must be NULL, never extrapolated"
 
 
+def test_certified_shortfall_credits_elapsed_time():
+    # The Sonthofen case: a certified 21.1 km race whose GPS stream ends 157 m
+    # short of 21097.5 (corner-cutting in the valley). The run's declared
+    # distance covers the target and the stream is within tolerance, so the
+    # half is credited with the TOTAL elapsed time — while the 10k, which has
+    # a real window in the stream, keeps the honest windowed value.
+    s = im.read_stream(_detail(_steady(5235, 4.0, step=5)))  # 20 940 m in 5 235 s
+    eff = im.best_efforts(s, declared_dist_m=21110.0)
+    assert eff["best_half_s"] is not None and abs(eff["best_half_s"] - 5235.0) <= 1.0, \
+        f"declared-covered half must credit total elapsed (~5235 s), got {eff['best_half_s']}"
+    assert abs(eff["best_10k_s"] - 2500.0) <= 1.0, \
+        "a distance with a real window keeps the windowed value, not the credit"
+
+
+def test_certified_shortfall_needs_declared_distance():
+    # Same stream without a declared distance ≥ target: no credit — the rule
+    # exists for certified courses, not for extrapolating ordinary runs.
+    s = im.read_stream(_detail(_steady(5235, 4.0, step=5)))  # 20 940 m
+    assert im.best_efforts(s)["best_half_s"] is None
+    assert im.best_efforts(s, declared_dist_m=20940.0)["best_half_s"] is None, \
+        "declared distance below the target must never credit"
+
+
+def test_certified_shortfall_tolerance_is_one_percent():
+    # Stream 20 500 m is >1% short of 21 097.5 — even a declared 21.1 km must
+    # not credit: beyond tolerance the shortfall is no longer plausibly GPS.
+    s = im.read_stream(_detail(_steady(5125, 4.0, step=5)))  # 20 500 m
+    assert im.best_efforts(s, declared_dist_m=21110.0)["best_half_s"] is None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 2.3 band aggregates
 # ──────────────────────────────────────────────────────────────────────────────
@@ -234,6 +264,24 @@ def test_extract_run_metrics_driver():
         "corrupt stream → empty row banked (no nightly retry loop)"
 
     assert im.extract_run_metrics(conn) == 0, "second pass finds nothing to do"
+    conn.close()
+
+
+def test_extraction_passes_declared_distance():
+    # The driver must hand the activity's summary distance to best_efforts so
+    # the certified-shortfall rule can fire on archived races.
+    conn = arch.open_archive(_tmp())
+    arch.upsert_activities(conn, [{
+        "activityId": 9, "activityName": "certified half", "startTimeLocal":
+        "2026-08-09 09:15:00", "activityType": {"typeKey": "running"},
+        "distance": 21110.0, "duration": 5235.0,
+    }])
+    arch.write_detail(conn, 9, _detail(_steady(5235, 4.0, step=5)))  # 20 940 m
+    assert im.extract_run_metrics(conn) == 1
+    half = conn.execute(
+        "SELECT best_half_s FROM run_metrics WHERE activity_id = 9").fetchone()[0]
+    assert half is not None and abs(half - 5235.0) <= 1.0, \
+        f"archived certified race must bank the credited half, got {half}"
     conn.close()
 
 

@@ -1,8 +1,22 @@
 {
+  "0.5 km easy": null,
+  "1 h level 2 · 19:00": null,
   "1 h level 2 · 19:00 — genuinely easy": null,
+  "1 h level 2 · 19:00 — the farewell ride": null,
   "1 km": null,
   "1 km easy": null,
+  "1 km jog": null,
   "1.5 km easy": null,
+  "1.5 km easy + 4×20 s strides": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": null,
+    "zone": null,
+    "text": "1.5 km easy + 4×20 s strides",
+    "repDurS": 20
+  },
+  "1.5 km easy + pickups": null,
+  "10 km @ HR ≤155 · cadence ≥160": null,
   "10 km @ conversational": null,
   "10 km @ ~6:10 · natural path / embankment": {
     "kind": "steady",
@@ -23,6 +37,7 @@
     "repDurS": 60
   },
   "11 km @ conversational": null,
+  "12 km @ HR ≤155 · cadence ≥160": null,
   "12 km @ conversational": null,
   "12 min building easy → HR ~135 · last 2 min: 3×20 s @ 100+ rpm": {
     "kind": "reps",
@@ -34,6 +49,7 @@
   },
   "13 km @ conversational": null,
   "13 km easy": null,
+  "14 km @ HR ≤155 · cadence ≥160": null,
   "14 km @ conversational": null,
   "15 km @ conversational": null,
   "15 min (~2 km) very easy · flat ground": null,
@@ -49,6 +65,7 @@
     "paceS": 370,
     "text": "16 km easy @ ~6:10"
   },
+  "17 km @ HR ≤155 · cadence ≥160": null,
   "18 min @ ~6:50–7:05 (comfortably hard)": {
     "kind": "steady",
     "paceS": 410,
@@ -61,6 +78,7 @@
     "text": "2 km @ ~7:07"
   },
   "2 km easy": null,
+  "2 km easy + pickups": null,
   "2 km easy — shin gate: pain-free before any rep": null,
   "20 heel walks · 20 toe walks · ankle circles": null,
   "20 min @ HR 158–162 · CONSTANT resistance · 85–90 rpm — write down HR at min 2 and at min 20": null,
@@ -159,6 +177,28 @@
   },
   "2×15/10 min jog": null,
   "2×18/10 min jog": null,
+  "2×2 km @ 5:38–5:41": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": [
+      338,
+      341
+    ],
+    "zone": null,
+    "text": "2×2 km @ 5:38–5:41",
+    "repDistM": 2000
+  },
+  "2×3 km @ 5:41 · HR should sit ≤165 in cool air": {
+    "kind": "reps",
+    "count": 2,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "2×3 km @ 5:41 · HR should sit ≤165 in cool air",
+    "repDistM": 3000
+  },
   "2×3.0 km @ ~7:07": {
     "kind": "reps",
     "count": 2,
@@ -272,6 +312,17 @@
     "zone": null,
     "text": "3×1 km @ 5:41"
   },
+  "3×1 km @ 5:41 · should feel smooth": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3×1 km @ 5:41 · should feel smooth",
+    "repDistM": 1000
+  },
   "3×12 bent knee — the one that fails first": null,
   "3×12 straight knee (gastroc)": null,
   "3×15 s": {
@@ -281,6 +332,28 @@
     "zone": null,
     "text": "3×15 s",
     "repDurS": 15
+  },
+  "3×2 km @ 5:41 — or the TT-repriced goal": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3×2 km @ 5:41 — or the TT-repriced goal",
+    "repDistM": 2000
+  },
+  "3×2 km @ 5:45–5:55 · HR ≤168": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": [
+      345,
+      355
+    ],
+    "zone": null,
+    "text": "3×2 km @ 5:45–5:55 · HR ≤168",
+    "repDistM": 2000
   },
   "3×2.0 km @ ~7:07": {
     "kind": "reps",
@@ -330,6 +403,7 @@
     "text": "3×6 min @ ~6:50–7:05",
     "repDurS": 360
   },
+  "4 km @ HR ≤150 · a.m.": null,
   "4 km @ conversational": null,
   "4 km @ ~6:15 · a.m.": {
     "kind": "steady",
@@ -341,6 +415,9 @@
     "paceS": 375,
     "text": "4 km @ ~6:15 · flat · soft · cadence ≥158"
   },
+  "4 km easy + 2 pickups": null,
+  "4 km very easy": null,
+  "4 km very easy · gate rule": null,
   "4.5 km @ conversational": null,
   "42 min jog @ ~9:05": {
     "kind": "steady",
@@ -368,6 +445,17 @@
     "zone": null,
     "text": "4×1 km @ 5:25–5:35"
   },
+  "4×1 km @ 5:30–5:40 · HR ≤172": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": [
+      330,
+      340
+    ],
+    "zone": null,
+    "text": "4×1 km @ 5:30–5:40 · HR ≤172",
+    "repDistM": 1000
+  },
   "4×15 s quick, tall form": {
     "kind": "reps",
     "count": 4,
@@ -383,6 +471,14 @@
     "paceBandS": null,
     "zone": null,
     "text": "4×20 s fast-relaxed"
+  },
+  "4×20 s fast-relaxed · cadence high": {
+    "kind": "reps",
+    "count": 4,
+    "paceBandS": null,
+    "zone": null,
+    "text": "4×20 s fast-relaxed · cadence high",
+    "repDurS": 20
   },
   "4×20 s fast-relaxed · only if silent": {
     "kind": "reps",
@@ -400,6 +496,9 @@
     "text": "4×20 s relaxed fast",
     "repDurS": 20
   },
+  "5 km @ 5:41 — race effort, race cadence, race focus": null,
+  "5 km @ HR ≤150": null,
+  "5 km @ HR ≤150 · cadence ≥160": null,
   "5 km @ conversation pace · HR ≤150": null,
   "5 km @ conversational": null,
   "5 km @ ~6:15": {
@@ -413,6 +512,8 @@
     "text": "5 km @ ~6:15 · a.m."
   },
   "5 km as fast as you can hold — even effort": null,
+  "5 km easy": null,
+  "5 km very easy · gate rule": null,
   "5 min brisk walk": null,
   "5 min walk": null,
   "5 min walk · 12 min easy jog · 4×20 s strides": {
@@ -445,6 +546,7 @@
     "text": "5×20 s relaxed fast",
     "repDurS": 20
   },
+  "6 km @ HR ≤150 · cadence ≥160": null,
   "6 km @ conversational": null,
   "6 km @ ~6:20 · flat · a.m.": {
     "kind": "steady",
@@ -476,6 +578,7 @@
     "text": "6×45 s uphill, easy effort",
     "repDurS": 45
   },
+  "7 km @ HR ≤155": null,
   "7 km @ conversational": null,
   "7×2 min jog": {
     "kind": "reps",
@@ -485,6 +588,7 @@
     "text": "7×2 min jog",
     "repDurS": 120
   },
+  "8 km @ HR ≤155 · cadence ≥160": null,
   "8 km @ conversational": null,
   "8 min easy @ 90+ rpm — legs have a birthday to ride to": null,
   "8×1 min jog": {
@@ -498,6 +602,7 @@
   "9 km @ conversational": null,
   "9 km easy": null,
   "9.5 km @ conversational": null,
+  "@ 5:35 controlled — the Sonthofen lesson: the first half OBEYS": null,
   "Calf straight-knee + bent-knee, 3×30 s each side": {
     "kind": "reps",
     "count": 3,
@@ -516,12 +621,16 @@
   },
   "km 0–5 — slower than feels right": null,
   "km 12→13: +82 m at 8.25% — by effort: ~6:40 at sub-2 effort, 7:30 on an honest day. Costs ~58 s. HR will spike.": null,
+  "km 13–16 — where 20 km Sundays get cashed. Hold form: cadence, short steps, eyes up": null,
   "km 14–15: −102 m at −4% then −6% — SHORT STEPS, CADENCE 160+. Unrehearsed. The shin's test.": null,
   "km 14–15: −102 m at −4% then −6% — SHORT STEPS. The shin's test.": null,
   "km 16–21 — whatever is left": null,
+  "km 16–21.1 — everything left, spent gradually. Sub-2 is won here or lost at km 2": null,
   "km 16–21.1 — gently downhill, everything left": null,
+  "km 1–4 @ 5:41 — NOT faster. Sonthofen opened 24 s/km too fast and paid at km 8. The first 4 km obey the hand.": null,
   "km 1–4 @ 5:50 (clean gate) or 6:05 (tender gate) — band chosen Thursday. Flat and full of people. No faster.": null,
   "km 1–4 @ 5:50 — flat, and full of people. No faster.": null,
+  "km 5–12 @ 5:41 · HR ≤168 · cadence ≥160 · flask sips every 10–15 min": null,
   "km 5–12 @ 5:41–5:45 · HR ≤ 165 — only +44 m in the first 12 km": null,
   "km 5–12 at the opening band · HR ≤ 165 · CADENCE ≥ 158 — only +44 m in the first 12 km": null,
   "km 5–16 @ ~7:07": {
@@ -529,10 +638,12 @@
     "paceS": 427,
     "text": "km 5–16 @ ~7:07"
   },
+  "last 3 km @ 5:41 — only on a silent shin and honest legs": null,
   "last 3 km @ race pace (~7:07)": null,
   "last 4 km @ race pace (~7:07)": null,
   "last 5 km @ race pace (~7:07)": null,
   "one sustained downhill, easy effort, SHORT STEPS — the only rehearsal you get": null,
+  "race it — everything you have, negative split": null,
   "swap 15–20 min for rower, steady": null,
   "touch test that evening AND Thursday morning — MTSS speaks the next day": null
 }

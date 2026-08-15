@@ -1,6 +1,6 @@
 {
   "insights": {
-    "metricsVersion": 2,
+    "metricsVersion": 3,
     "efficiency": {
       "refHrBand": [
         125,

@@ -950,7 +950,8 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
                 streams = streams or synth_streams(run)
                 if streams:
                     samples = _metric_samples(streams)
-                    mrow.update(insight_metrics.best_efforts(samples))
+                    mrow.update(insight_metrics.best_efforts(
+                        samples, declared_dist_m=run.get("distanceM")))
                     mrow.update(insight_metrics.band_aggregates(samples))
                 # a sample-less run banks an empty row — the absence is
                 # deterministic, so recomputing it every build would be waste

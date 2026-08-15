@@ -646,11 +646,12 @@ _RUN_METRICS_COLS = (
 
 
 def runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
-    """(activity_id, start_time_local, type_key) of every archived run that has
-    a detail payload but no run_metrics row at `version` — rows at a stale
-    version count as missing, which is how a METRICS_VERSION bump self-heals."""
+    """(activity_id, start_time_local, type_key, distance_m) of every archived
+    run that has a detail payload but no run_metrics row at `version` — rows at
+    a stale version count as missing, which is how a METRICS_VERSION bump
+    self-heals. distance_m feeds the certified-shortfall rule."""
     return conn.execute(
-        f"""SELECT a.activity_id, a.start_time_local, a.type_key
+        f"""SELECT a.activity_id, a.start_time_local, a.type_key, a.distance_m
             FROM activities a
             LEFT JOIN run_metrics m
               ON m.activity_id = a.activity_id AND m.metrics_version = ?

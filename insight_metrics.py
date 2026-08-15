@@ -31,7 +31,10 @@ import activity_archive
 # ──────────────────────────────────────────────────────────────────────────────
 # v2 (chart-drill D3): per-run in-band display values become stored columns
 # (refhr_pace_s_per_km, refpace_cadence_spm) — the bump self-heals every row.
-METRICS_VERSION = 2
+# v3: certified-shortfall rule — a declared distance that covers a best-effort
+# target credits total elapsed time when the stream falls ≤1% short (GPS
+# under-read on a certified course); the bump recomputes every row.
+METRICS_VERSION = 3
 
 # Bands frozen after the task-3.1 density check against the real archive
 # (2026-07-05, 162 runs): HR 125–145 yields ≥31 in-band min for every month
@@ -45,6 +48,12 @@ WARMUP_CUTOFF_S = 480          # first 8 min excluded from band pools (HR lag)
 WALKING_FLOOR_MPS = 1.4        # samples slower than this are walking, not running
 MAX_SAMPLE_GAP_S = 15          # a longer gap is a recording pause — weighs nothing
 MIN_INBAND_MINUTES = 10        # months with less in-band time yield null points
+
+# A stream may under-read a certified course (corner-cutting, tree cover —
+# Sonthofen 2026-08-09 recorded 20 940 m over a 21.1 km course). When the
+# activity's DECLARED distance covers a target and the stream falls short by
+# no more than this fraction, the whole run's elapsed time is the effort.
+CERTIFIED_SHORTFALL_PCT = 0.01
 
 # run_metrics column → target metres (mile is exact; half is 21.0975 km)
 BEST_EFFORT_TARGETS = {
@@ -151,9 +160,23 @@ def fastest_window_s(samples: list[tuple], target_m: float) -> float | None:
     return round(best, 1) if best is not None else None
 
 
-def best_efforts(samples: list[tuple]) -> dict:
-    return {col: fastest_window_s(samples, target)
-            for col, target in BEST_EFFORT_TARGETS.items()}
+def best_efforts(samples: list[tuple], declared_dist_m: float | None = None) -> dict:
+    """Fastest window per target. A target the stream never covers may still
+    earn the certified-shortfall credit: declared distance ≥ target and stream
+    within CERTIFIED_SHORTFALL_PCT of it → the run's total elapsed time is the
+    effort. Crediting total elapsed is conservative — the true time over the
+    exact target distance can only be smaller."""
+    covered = samples[-1][1] - samples[0][1] if len(samples) >= 2 else 0.0
+    elapsed = samples[-1][0] - samples[0][0] if len(samples) >= 2 else 0.0
+    out = {}
+    for col, target in BEST_EFFORT_TARGETS.items():
+        val = fastest_window_s(samples, target)
+        if (val is None and declared_dist_m is not None
+                and declared_dist_m >= target
+                and covered >= target * (1.0 - CERTIFIED_SHORTFALL_PCT)):
+            val = round(elapsed, 1)
+        out[col] = val
+    return out
 
 
 def band_aggregates(samples: list[tuple]) -> dict:
@@ -207,7 +230,7 @@ def extract_run_metrics(conn) -> int:
     data). A per-run parse failure stores an empty row with a warning: the
     failure is deterministic, so retrying it every night would be waste."""
     pending = activity_archive.runs_missing_metrics(conn, METRICS_VERSION)
-    for aid, start_local, type_key in pending:
+    for aid, start_local, type_key, distance_m in pending:
         row = {
             "activity_id": aid,
             "metrics_version": METRICS_VERSION,
@@ -216,7 +239,7 @@ def extract_run_metrics(conn) -> int:
         }
         try:
             samples = read_stream(activity_archive.detail_payload(conn, aid) or {})
-            row.update(best_efforts(samples))
+            row.update(best_efforts(samples, declared_dist_m=distance_m))
             row.update(band_aggregates(samples))
         except Exception as e:  # noqa: BLE001 — one bad stream must not sink the rest
             _warn(f"metrics extraction failed for {aid} "

@@ -330,11 +330,19 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
     L.append("")
     L.append("## Plan vs actual")
     scored_any = False
+    briefed: list[dict] = []
     for week in plan_compliance.weeks_to_score(block, today):
-        rows = [r for r in all_rows if r["wk"] == week.get("wk")]
+        # Join on the week's DATE WINDOW, never its label. Week labels are
+        # block-local — every block restarts at "Wk 1" — so the archive holds
+        # one "Wk 2" per block, and a label join renders a previous block's
+        # days inside this one's table. plan_compliance states the same rule
+        # at _existing_week_snapshot, for the same reason.
+        rows = [r for r in all_rows
+                if week.get("mon", "") <= r["date"] <= week.get("sun", "")]
         if not rows:
             continue
         scored_any = True
+        briefed.extend(rows)
         closed = week.get("sun", "") < today.isoformat()
         L.append("")
         L.append(f"### {week.get('wk')} ({week.get('mon')} → {week.get('sun')}) — "
@@ -345,7 +353,9 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
         L.append("")
         L.append("No compliance rows yet — first sync after deploy, or the plan has no")
         L.append("scoreable weeks.")
-    L.extend(_untracked_note(all_rows))
+    # Scoped to the weeks actually briefed above, not the whole archive:
+    # the count stands under those tables and must describe them.
+    L.extend(_untracked_note(briefed))
 
     # ── block report (add-block-lens D7): the SAME lens document the
     # dashboard shows, passed in via data — never recomputed here. No lens,

@@ -357,6 +357,73 @@ def test_no_untracked_days_means_no_note():
     assert cb._untracked_note(rows) == []
 
 
+# ── a previous block's colliding week labels ────────────────────────────────
+# Week labels are block-local: every block starts again at "Wk 1", so the
+# archive holds several "Wk 2"s from different years. These helpers plant an
+# older block's rows so the briefing can be caught joining on the label.
+
+def _archived_row(date, wk, status="done", kind="run", title="Old Block Run"):
+    return {"date": date, "wk": wk, "snapshot_id": 1,
+            "compliance_version": pc.COMPLIANCE_VERSION, "planned_kind": kind,
+            "planned_km": 5.0, "planned_load": "Easy", "planned_title": title,
+            "status": status, "reason": None, "actual_km": 5.0,
+            "actual_pace_s": 400.0, "actual_hr": 140, "activity_id": None,
+            "quality_json": None, "planned_s": None, "actual_s": None}
+
+
+def _plant_previous_block(conn, rows):
+    """Insert rows directly, bypassing replace_compliance_week's range delete."""
+    now = "2026-07-08T00:00:00"
+    conn.executemany(
+        f"INSERT INTO plan_compliance ({', '.join(arch._COMPLIANCE_COLS)}, updated_at) "
+        f"VALUES ({', '.join('?' * len(arch._COMPLIANCE_COLS))}, ?)",
+        [tuple(r.get(c) for c in arch._COMPLIANCE_COLS) + (now,) for r in rows])
+    conn.commit()
+
+
+def test_week_table_holds_only_its_own_date_range():
+    """The bug this pins: the plan-vs-actual tables joined archive rows to
+    weeks on the `wk` LABEL alone, so a previous block's "Wk 2" (a year
+    earlier) rendered inside this block's Wk 2 table. plan_compliance already
+    states the rule at _existing_week_snapshot: labels recur across blocks, so
+    the DATE WINDOW is the only safe join. Mutation: restore the label filter
+    → red."""
+    d = _tmp()
+    conn, plan = _seeded_conn(d)
+    _plant_previous_block(conn, [
+        _archived_row("2025-07-07", "Wk 2", title="Last Year Monday"),
+        _archived_row("2025-07-09", "Wk 3", title="Last Year Wednesday"),
+    ])
+    text = cb.render_briefing(conn, plan, DATA, TODAY)
+    conn.close()
+
+    assert "| 2026-06-29 | Mon |" in text, "this block's own Wk 2 row must render"
+    assert "2025-07-07" not in text,         "a previous block's Wk 2 row leaked into this block's table"
+    assert "2025-07-09" not in text,         "a previous block's Wk 3 row leaked into this block's table"
+    assert "Last Year" not in text, "no row from an archived block belongs here"
+
+
+def test_untracked_note_counts_only_the_briefed_weeks():
+    """Same root cause, second symptom: the untracked note summed every
+    untracked row the archive ever held, so a count describing two briefed
+    weeks grew with the whole history. Mutation: pass the unscoped rows → red."""
+    d = _tmp()
+    conn, plan = _seeded_conn(d)
+    _plant_previous_block(conn, [
+        _archived_row("2025-07-07", "Wk 2", status="untracked", kind="strength",
+                      title="Old Calf & Core"),
+        _archived_row("2025-07-08", "Wk 2", status="untracked", kind="strength",
+                      title="Old Mobility"),
+    ])
+    text = cb.render_briefing(conn, plan, DATA, TODAY)
+    conn.close()
+
+    # The two briefed weeks hold 4 untracked strength days of their own; the
+    # planted pair belongs to a block from 2025 and must not be summed in.
+    assert "4 planned strength days" in text,         "the note must count the briefed weeks' own untracked days"
+    assert "6 planned strength days" not in text,         "an archived block's untracked days leaked into the count"
+
+
 def test_status_cell_spells_out_the_new_verdicts():
     base = {"reason": None, "quality_json": None}
     assert cb._status_cell(dict(base, status="rest")) == "rest"

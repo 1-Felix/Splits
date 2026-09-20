@@ -333,6 +333,17 @@
     "text": "3×15 s",
     "repDurS": 15
   },
+  "3×2 km @ 5:41 · HR ≤165": {
+    "kind": "reps",
+    "count": 3,
+    "paceBandS": [
+      336,
+      346
+    ],
+    "zone": null,
+    "text": "3×2 km @ 5:41 · HR ≤165",
+    "repDistM": 2000
+  },
   "3×2 km @ 5:41 — or the TT-repriced goal": {
     "kind": "reps",
     "count": 3,
@@ -513,6 +524,7 @@
   },
   "5 km as fast as you can hold — even effort": null,
   "5 km easy": null,
+  "5 km very easy": null,
   "5 km very easy · gate rule": null,
   "5 min brisk walk": null,
   "5 min walk": null,
@@ -638,6 +650,7 @@
     "paceS": 427,
     "text": "km 5–16 @ ~7:07"
   },
+  "last 3 km @ 5:41 — only if the legs are there": null,
   "last 3 km @ 5:41 — only on a silent shin and honest legs": null,
   "last 3 km @ race pace (~7:07)": null,
   "last 4 km @ race pace (~7:07)": null,

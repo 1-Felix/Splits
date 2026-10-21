@@ -45,6 +45,8 @@ import insight_metrics
 # null deltas (insufficient-span) instead of a structurally-zero comparison;
 # weeks retired from the latest snapshot rejoin the rollup as retired entries;
 # an undetailed week's remaining km prorates by its remaining days.
+# v3: goal gap restarts at a mid-block prediction-source change,
+# `baseline: source-change`.
 BLOCK_LENS_VERSION = 3
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -330,7 +332,10 @@ def _records_in_window(conn, since: str, until: str) -> list[dict]:
 def _goal_gap(conn, race: dict, start: dt.date, end: dt.date) -> dict:
     """Predictor half time nearest block start vs latest in window, against
     the race's goal seconds. The start anchor must sit within the pinned
-    tolerance of block start — a months-old row is no baseline."""
+    tolerance of block start — a months-old row is no baseline. When the
+    predictions changed source mid-block (Riegel → Garmin), the gap restarts
+    at the new model's first row and says so with `baseline: source-change`;
+    the two models are never spliced."""
     goal_s = parse_goal_seconds(race.get("goalTime"))
     if goal_s is None:
         return {"deltaS": None, "reason": "no-goal-time"}

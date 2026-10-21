@@ -158,7 +158,9 @@
         </div>
         <div style="flex:1;display:flex;flex-direction:column;gap:var(--sp-2)">
           <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">HRV</div><div class="metric" style="font-size:var(--fs-lg)">{{ readiness.hrv }}<span style="font-size:var(--fs-2xs);color:var(--sub)"> ms</span></div></div>
+          <sc-if value="{{ hasReadyRhr }}">
           <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">RESTING HR</div><div class="metric" style="font-size:var(--fs-lg)">{{ readiness.restingHR }}<span style="font-size:var(--fs-2xs);color:var(--sub)"> bpm</span></div></div>
+          </sc-if>
           <div><div style="font-size:var(--fs-xs);color:var(--sub);font-weight:600">SLEEP</div><div class="metric" style="font-size:var(--fs-lg)">{{ readiness.sleepHours }}<span style="font-size:var(--fs-2xs);color:var(--sub)"> h</span></div></div>
         </div>
       </div>
@@ -943,11 +945,13 @@ class Component extends DCLogic {
     // hides via hasReady and everything ring-shaped stays inert.
     const rd = D.readiness || null;
     const hasReady = !!rd;
+    // a new watch can report readiness before it has a resting HR
+    const hasReadyRhr = hasReady && rd.restingHR != null;
     const c = 2*Math.PI*50;
     const ring = { c:+c.toFixed(1), off: rd ? +(c*(1-rd.score/100)).toFixed(1) : 0 };
     const ringRows = rd ? [
       { t: 'Readiness ' + rd.score + ' · ' + rd.status, em: true },
-      { t: 'HRV ' + rd.hrv + ' · RHR ' + rd.restingHR, em: false },
+      { t: 'HRV ' + rd.hrv + (hasReadyRhr ? ' · RHR ' + rd.restingHR : ''), em: false },
       { t: 'Sleep ' + rd.sleepHours + ' h · Load ' + rd.trainingLoad, em: false }
     ] : [];
     const ringObj = {
@@ -1399,7 +1403,7 @@ class Component extends DCLogic {
       onDismiss: () => this.dismissHover(),
       // the hero interpolates pred.halfNow directly — degrade a null (fresh
       // instance, no eligible run yet) to the same em-dash the KPI tile uses
-      race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, pred:{...pred, halfNow: pred.halfNow || '—'}, kpis,
+      race, ring, ringHover: ringObj, readiness: rd || {}, hasReady, hasReadyRhr, pred:{...pred, halfNow: pred.halfNow || '—'}, kpis,
       week, weekTotal, weekLabel, weekPlaceholder, backToCurrent, block, blockMeta, roadTitle,
       coach:D.coach, coachLog:D.coach.log, noteParas, noteMore, logMore,
       zones, sleep:sleepObj, hrv:hrvObj, hasSleep, rhr:rhrObj, hasRhr, heat, runs,

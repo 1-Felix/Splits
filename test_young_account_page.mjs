@@ -74,11 +74,13 @@ delete BARE.profile.vo2maxCurrent;
 delete BARE.predictions.halfGoal;
 const BARE_DATA = garminJs(BARE);
 
-// Slower and lower than the first month: the all-time deltas read signed
-// ("+2:14", "−189"), never "−-3:-14" or "+-189".
+// Slower and lower than the first month, and a readiness card from a watch
+// with no resting HR yet: the all-time deltas read signed ("+2:14", "−189"),
+// never "−-3:-14" or "+-189", and the card drops its resting-HR line.
 const SLOWER = fixture();
 SLOWER.history.paceSecPerKm = [392, 465, 504, 504, 526];
 SLOWER.history.cadenceSpm = [349, 300, 280, 250, 160];
+delete SLOWER.readiness.restingHR;
 const SLOWER_DATA = garminJs(SLOWER);
 
 const PLAN_DATA = "export const planData = {};\n";
@@ -167,6 +169,7 @@ try {
   assert.ok(cock.text.includes("44.0"), "the VO2 tile shows 44.0");
   assert.ok(!cock.text.includes("Top 5% for age"), "no Felix-specific claim");
   assert.ok(cock.text.includes("Garmin estimate"), "neutral sub-label");
+  assert.ok(cock.text.includes("RESTING HR"), "the readiness card names a known resting HR");
 
   step = "readiness-less variant";
   await restart(BARE_DATA);
@@ -189,6 +192,28 @@ try {
   assert.ok(slow.text.includes("+2:14 /km all-time"), "a slower pace reads +2:14");
   assert.ok(slow.text.includes("−189 spm all-time"), "a lower cadence reads −189");
 
+  step = "slower variant: readiness without resting HR";
+  {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(B + "/", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => document.querySelectorAll('rect[data-hb="heat"]').length > 300 &&
+      !!document.querySelector("#card-ready"), null, { timeout: 15000 });
+    const card = await page.locator("#card-ready").innerText();
+    assert.ok(card.includes("READINESS") && card.includes("80"), "the readiness card renders: " + card);
+    assert.ok(!/undefined|null|NaN/.test(card), "no undefined on the card: " + card);
+    assert.ok(!card.includes("bpm") && !card.includes("RESTING HR"),
+      "no resting-HR line or stray ' bpm' without a resting HR: " + card);
+    await page.evaluate(() => document.querySelector('circle[data-hb="ring"]').dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true })));
+    await page.waitForSelector('[data-card="ring"]', { timeout: 5000 });
+    const pop = await page.locator('[data-card="ring"]').innerText();
+    assert.ok(pop.includes("HRV 60"), "the ring card still reads HRV: " + pop);
+    assert.ok(!/RHR|undefined/.test(pop), "the ring card drops the RHR segment: " + pop);
+    assert.deepStrictEqual(errors, [], "no pageerror on / (slower)");
+    await page.close();
+  }
   console.log("PASS test_young_account_page");
 } catch (e) {
   failed = true;

@@ -24,11 +24,15 @@ In the Garmin Connect app, open your profile / user settings and check:
 
 | Zone | Low edge (bpm) |
 |------|----------------|
-| Z1   | filled at cutover |
-| Z2   | filled at cutover |
-| Z3   | filled at cutover |
-| Z4   | filled at cutover |
-| Z5   | filled at cutover |
+| Z1   | 126 |
+| Z2   | 140 |
+| Z3   | 155 |
+| Z4   | 170 |
+| Z5   | 184 |
+
+These come from max HR 199 and a resting HR of 52 (your Garmin 7-day average
+on 2026-10-21). If SPLITS' resting HR is changed later, this table changes with
+it.
 
 ## 2. Uninstall SPLITS Bridge
 

@@ -1239,7 +1239,8 @@ def validate(data: dict) -> None:
     h = data["history"]
     assert len(data["heatmapKm"]) == HEATMAP_DAYS, "heatmapKm must be exactly 365 days"
     if "vo2maxCurrent" in data["profile"] and h["vo2max"] and h["vo2max"][-1] is not None:
-        assert abs(data["profile"]["vo2maxCurrent"] - h["vo2max"][-1]) < 0.05,             "profile.vo2maxCurrent must equal history.vo2max[-1]"
+        assert abs(data["profile"]["vo2maxCurrent"] - h["vo2max"][-1]) < 0.05, \
+            "profile.vo2maxCurrent must equal history.vo2max[-1]"
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm", "weeklyKm", "weeklyRuns", "ctl", "atl"):
         assert isinstance(h.get(k), list), f"history.{k} must be a list"
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm"):

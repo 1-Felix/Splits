@@ -534,14 +534,6 @@ def test_a_missed_run_still_drags_the_execute_rate_down():
     assert execution["percentExecuted"] == 50
 
 
-if __name__ == "__main__":
-    for _name, _fn in list(globals().items()):
-        if _name.startswith("test_"):
-            _fn()
-            print("ok", _name)
-    print("ALL PASS")
-
-
 # ── Task 8: prediction sources never splice; the goal gap restarts at a switch ──
 def _preds(rows):
     conn = arch.open_archive(_tmp())
@@ -621,3 +613,11 @@ def test_riegel_only_block_keeps_no_baseline_reason():
 
 def test_block_lens_version_is_three():
     assert bl.BLOCK_LENS_VERSION == 3
+
+
+if __name__ == "__main__":
+    for _name, _fn in list(globals().items()):
+        if _name.startswith("test_"):
+            _fn()
+            print("ok", _name)
+    print("ALL PASS")

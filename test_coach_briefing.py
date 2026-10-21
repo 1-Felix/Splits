@@ -431,15 +431,6 @@ def test_status_cell_spells_out_the_new_verdicts():
         "untracked (not recorded on this instance)"
 
 
-if __name__ == "__main__":
-    for _name, _fn in list(globals().items()):
-        if _name.startswith("test_"):
-            _fn()
-            print("ok", _name)
-    print("ALL PASS")
-
-
-
 def test_briefing_names_the_restart():
     import copy
     doc = copy.deepcopy(BLOCK_LENS_CURRENT)
@@ -454,3 +445,11 @@ def test_briefing_names_the_restart():
     plain = next(l for l in cb.block_report_lines(BLOCK_LENS_CURRENT)
                  if l.startswith("- goal gap"))
     assert "since" not in plain
+
+
+if __name__ == "__main__":
+    for _name, _fn in list(globals().items()):
+        if _name.startswith("test_"):
+            _fn()
+            print("ok", _name)
+    print("ALL PASS")

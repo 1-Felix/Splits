@@ -547,10 +547,22 @@ def write_detail(conn: sqlite3.Connection, activity_id, payload) -> bool:
     return cur.rowcount == 1
 
 
+def shelf_clause(alias: str | None = "a") -> str:
+    """SQL predicate for the Health Connect shelf: frozen ingest rows, whose
+    summary_json carries sessionUid. Garmin never issued their ids."""
+    col = f"{alias}.summary_json" if alias else "summary_json"
+    return f"json_extract({col}, '$.sessionUid') IS NOT NULL"
+
+
+def is_shelf_summary(summary: dict | None) -> bool:
+    return bool(summary) and summary.get("sessionUid") is not None
+
+
 def missing_detail_ids(conn: sqlite3.Connection, limit: int | None = None,
                        newest_first: bool = True) -> list:
     order = "DESC" if newest_first else "ASC"
     sql = ("SELECT activity_id FROM activities WHERE detail_json IS NULL "
+           f"AND NOT {shelf_clause(None)} "
            f"ORDER BY start_time_local {order}")
     if limit is not None:
         rows = conn.execute(sql + " LIMIT ?", (limit,)).fetchall()

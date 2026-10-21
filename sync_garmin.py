@@ -365,7 +365,7 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
                     "time": fmt_hms(act_dur(a)),
                     "pace": act_pace(a),
                     "hr": act_hr(a),
-                    "cad": None,
+                    "cad": act_cad(a) or None,   # ingest's None, not Garmin's 0
                     "vo2": None,
                 }
                 if a.get("splitsDetail"):

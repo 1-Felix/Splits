@@ -89,7 +89,12 @@ def shelf_activities(conn) -> list[dict]:
             detail = json.loads(distilled) if distilled else None
         except (TypeError, ValueError):
             detail = None
-        out.append({
+        cadence = None
+        try:
+            cadence = ingest_builder._cadence({**run, "distanceM": dist, "durationS": dur})
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            pass
+        entry = {
             "activityId": aid,
             "startTimeLocal": run.get("startTimeLocal") or start,
             "activityType": {"typeKey": type_key},
@@ -99,5 +104,8 @@ def shelf_activities(conn) -> list[dict]:
             "splitsPaceSecPerKm": pace,
             "splitsType": ingest_builder._type_label(run.get("sportType") or "running"),
             "splitsDetail": detail,
-        })
+        }
+        if cadence:
+            entry["averageRunningCadenceInStepsPerMinute"] = cadence
+        out.append(entry)
     return out

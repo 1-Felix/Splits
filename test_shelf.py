@@ -356,3 +356,29 @@ def test_main_loads_the_projection_and_never_archives_it(sg_env, monkeypatch):
     sg.main()
     assert {a["activityId"] for a in seen["archived"]} == {G1, G2}
     assert "2026-10-20" in (data_dir / "garmin-data.js").read_text(encoding="utf-8")
+
+
+def _set_steps(c, aid, steps):
+    run = json.loads(summary_json_of(c, aid))
+    run["steps"] = steps
+    c.execute("UPDATE activities SET summary_json=? WHERE activity_id=?", (json.dumps(run), aid))
+    c.commit()
+    return run
+
+
+def test_shelf_run_with_steps_keeps_the_ingest_cadence(t3):
+    sg, c, acts = t3
+    run = _set_steps(c, T3_S1, 4800)
+    expected = ingest_builder._cadence(run)
+    assert expected
+    acts = shelf.shelf_activities(c)
+    assert by_id(acts, T3_S1)["averageRunningCadenceInStepsPerMinute"] == expected
+    rows = sg.fetch_recent_runs(FakeClient({}), acts)
+    assert next(r for r in rows if r["date"] == "2026-10-20")["cad"] == expected
+
+
+def test_shelf_run_without_steps_has_no_cadence(t3):
+    sg, c, acts = t3
+    assert "averageRunningCadenceInStepsPerMinute" not in by_id(acts, T3_S2)
+    rows = sg.fetch_recent_runs(FakeClient({}), acts)
+    assert next(r for r in rows if r["date"] == "2026-09-03")["cad"] is None

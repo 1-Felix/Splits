@@ -224,6 +224,12 @@ def _zone_seconds(hr_samples: list[dict], bounds: list[int]) -> list[float]:
     return secs
 
 
+def zone_minutes(run: dict, bounds: list[int]) -> list[int]:
+    """The distilled `zoneMin` for a banked run under the given zone edges —
+    the one definition `run_detail` and the Garmin sync's shelf rescore share."""
+    return [math.ceil(s / 60) for s in _zone_seconds(_sorted_samples(run, "hrSamples"), bounds)]
+
+
 def interval_document(run: dict, max_hr: int, rhr=None,
                       work_floor: float | None = None):
     """The FULL interval document for one banked run — the same engine, the
@@ -269,13 +275,12 @@ def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None
         return None
     splits = run_splits(run)
     hr_vals = [s["bpm"] for s in _sorted_samples(run, "hrSamples")]
-    zone_secs = _zone_seconds(_sorted_samples(run, "hrSamples"), _zone_bounds(max_hr, rhr))
     elev = run.get("elevationGainM")
     return {
         "splits": splits,
         "hrSeries": [int(round(v)) for v in _downsample(hr_vals)],
         "driftBpm": _hr_drift(hr_vals),
-        "zoneMin": [math.ceil(s / 60) for s in zone_secs],
+        "zoneMin": zone_minutes(run, _zone_bounds(max_hr, rhr)),
         "tempC": None,
         "te": None,
         "load": None,

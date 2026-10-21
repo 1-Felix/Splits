@@ -1271,15 +1271,15 @@ def write_distilled(conn: sqlite3.Connection, activity_id, distilled,
     return cur.rowcount == 1
 
 
-def patch_distilled_intervals(conn: sqlite3.Connection, activity_id, compact) -> bool:
-    """Replace only the `intervals` key of a stored distilled summary (a shelf
+def patch_distilled(conn: sqlite3.Connection, activity_id, fields: dict) -> bool:
+    """Replace only the named keys of a stored distilled summary (a shelf
     row's distilled copy is frozen otherwise). False when there is no copy."""
     row = conn.execute("SELECT detail_distilled_json FROM activities WHERE activity_id = ?",
                        (activity_id,)).fetchone()
     if not row or not row[0]:
         return False
     doc = json.loads(row[0])
-    doc["intervals"] = compact
+    doc.update(fields)
     conn.execute("UPDATE activities SET detail_distilled_json = ? WHERE activity_id = ?",
                  (json.dumps(doc, ensure_ascii=False), activity_id))
     conn.commit()

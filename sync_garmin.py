@@ -43,6 +43,7 @@ import block_lens
 import coach_briefing
 import coach_pass
 import course_lens
+import ingest_builder
 import insight_metrics
 import interval_lens
 import plan_compliance
@@ -1389,7 +1390,8 @@ def derive_intervals(conn, rescore: bool = False) -> dict:
         warn(f"zone edges {prev_bounds or 'unstamped'} -> {bounds}: rescoring every "
              "stored document and re-deriving distilled copies")
         invalidated = activity_archive.invalidate_distilled(conn)
-    activity_archive.set_meta(conn, "interval_zone_bounds", json.dumps(bounds))
+    # The stamp is written AFTER the loop: a pass that dies mid-way must
+    # still see the zones as changed tomorrow (invalidate_distilled is idempotent).
 
     pending = runs if moved else activity_archive.runs_missing_intervals(
         conn, interval_lens.INTERVAL_VERSION)
@@ -1421,8 +1423,12 @@ def derive_intervals(conn, rescore: bool = False) -> dict:
             "doc_json": json.dumps(doc, ensure_ascii=False),
         })
         if activity_archive.is_shelf_summary(summary):
-            activity_archive.patch_distilled_intervals(conn, aid, interval_lens.compact(doc))
+            fields = {"intervals": interval_lens.compact(doc)}
+            if summary.get("hrSamples"):    # zone-derived: recompute from the ingest run
+                fields["zoneMin"] = ingest_builder.zone_minutes(summary, bounds)
+            activity_archive.patch_distilled(conn, aid, fields)
         scored += 1
+    activity_archive.set_meta(conn, "interval_zone_bounds", json.dumps(bounds))
     return {"scored": scored, "floor": floor, "invalidated": invalidated}
 
 

@@ -558,6 +558,9 @@ def test_wellness_step_takes_an_empty_readiness(sg_env):
 
 # ── Task 6: zones per athlete, zone-card edges from the watch ────────────────
 import interval_lens as il  # noqa: E402
+from garmin_fixtures import _load as _fx_load  # noqa: E402
+
+ib_under_test = _fx_load("ingest_builder_zone_test", REPO / "ingest_builder.py")
 
 
 @pytest.fixture
@@ -626,15 +629,82 @@ def test_first_stamp_does_not_rescore_then_a_change_does(zn, monkeypatch):
     assert json.loads(distilled_of(c, S1))["intervals"] == il.compact(json.loads(doc_of(c, S1)))
 
 
-def test_patch_distilled_intervals_replaces_only_that_key(zn):
+def _poison(c, aid):
+    d = json.loads(distilled_of(c, aid))
+    d["intervals"], d["zoneMin"] = {"poison": True}, [99, 99, 99, 99, 99]
+    c.execute("UPDATE activities SET detail_distilled_json=? WHERE activity_id=?",
+              (json.dumps(d), aid))
+    c.commit()
+
+
+def _summary(c, aid):
+    return json.loads(c.execute("SELECT summary_json FROM activities WHERE activity_id=?", (aid,)).fetchone()[0])
+
+
+def test_zone_change_patches_the_shelf_copy_and_not_the_garmin_one(zn, monkeypatch):
+    sg, c = zn
+    sg.derive_intervals(c)
+    run = _summary(c, S1)
+    old_zone_min = ib_under_test.zone_minutes(run, il.zone_bounds(199))
+    new_zone_min = ib_under_test.zone_minutes(run, il.zone_bounds(199, 57))
+    assert old_zone_min != new_zone_min
+    _poison(c, S1)
+    _poison(c, G1)
+    g1_before = distilled_of(c, G1)
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    sg.derive_intervals(c)
+    d = json.loads(distilled_of(c, S1))
+    assert d["intervals"] == il.compact(json.loads(doc_of(c, S1)))
+    assert d["zoneMin"] == new_zone_min
+    assert distilled_of(c, G1) == g1_before             # Garmin copies go via _distill_pass
+
+
+def test_shelf_row_without_hr_samples_keeps_its_zone_min(zn, monkeypatch):
+    sg, c = zn
+    sg.derive_intervals(c)
+    run = _summary(c, S1)
+    run["hrSamples"] = []
+    c.execute("UPDATE activities SET summary_json=? WHERE activity_id=?", (json.dumps(run), S1))
+    c.commit()
+    _poison(c, S1)
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    sg.derive_intervals(c)
+    assert json.loads(distilled_of(c, S1))["zoneMin"] == [99, 99, 99, 99, 99]
+
+
+def test_a_pass_that_dies_midway_does_not_lose_the_rescore(zn, monkeypatch):
+    sg, c = zn
+    sg.derive_intervals(c)
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    real = arch.upsert_run_intervals
+    calls = {"n": 0}
+
+    def flaky(conn, row):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        return real(conn, row)
+    monkeypatch.setattr(sg.activity_archive, "upsert_run_intervals", flaky)
+    with pytest.raises(RuntimeError):
+        sg.derive_intervals(c)
+    assert json.loads(arch.get_meta(c, "interval_zone_bounds")) == [100, 119, 139, 159, 179, 199]
+    seen = []
+    realb = il.build_document
+    monkeypatch.setattr(il, "build_document", lambda *a, **k: (seen.append(a[4]), realb(*a, **k))[1])
+    sg.derive_intervals(c)
+    assert seen and all(b == [128, 142, 156, 171, 185, 199] for b in seen)
+    assert json.loads(arch.get_meta(c, "interval_zone_bounds")) == [128, 142, 156, 171, 185, 199]
+
+
+def test_patch_distilled_replaces_only_the_named_keys(zn):
     sg, c = zn
     before = json.loads(distilled_of(c, S1))
-    assert arch.patch_distilled_intervals(c, S1, {"shape": "x"}) is True
+    assert arch.patch_distilled(c, S1, {"intervals": {"shape": "x"}}) is True
     after = json.loads(distilled_of(c, S1))
     assert after["intervals"] == {"shape": "x"}
     assert {k: v for k, v in after.items() if k != "intervals"} == \
         {k: v for k, v in before.items() if k != "intervals"}
-    assert arch.patch_distilled_intervals(c, 424242, {"shape": "x"}) is False
+    assert arch.patch_distilled(c, 424242, {"intervals": {}}) is False
 
 
 def test_invalidate_distilled_spares_the_shelf(zn):

@@ -684,6 +684,26 @@ def runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
     ).fetchall()
 
 
+
+def shelf_runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
+    """Shelf runs (Health Connect rows, no detail_json) that hold stored streams
+    but no run_metrics row at `version`: (activity_id, start_time_local,
+    type_key, distance_m). Their streams are the only source a METRICS_VERSION
+    bump can recompute from; a shelf row without streams is never listed."""
+    return conn.execute(
+        f"""SELECT a.activity_id, a.start_time_local, a.type_key, a.distance_m
+            FROM activities a
+            LEFT JOIN run_metrics m
+              ON m.activity_id = a.activity_id AND m.metrics_version = ?
+            WHERE {shelf_clause('a')}
+              AND a.detail_streams_json IS NOT NULL
+              AND {_RUN_TYPE_SQL}
+              AND m.activity_id IS NULL
+            ORDER BY a.start_time_local""",
+        (version,),
+    ).fetchall()
+
+
 _RUN_INTERVALS_COLS = (
     "activity_id", "lens_version", "start_time_local", "shape", "label",
     "confidence", "source", "work_dist_m", "work_dur_s", "doc_json",

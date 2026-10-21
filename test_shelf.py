@@ -776,3 +776,67 @@ def test_zone_card_falls_back_to_athlete_bounds(sg_env, monkeypatch):
     assert [z["lo"] for z in zones] == sg.athlete_zone_bounds(199)[:5]
     assert zones[4]["hi"] == 199
     assert len(client.calls) == 1                # no second call once the rows lack edges
+
+
+# ── Task 7: shelf metrics heal from their streams ────────────────────────────
+import insight_metrics as im  # noqa: E402
+
+_METRIC_COLS = ("is_treadmill", "best_1k_s", "best_mile_s", "best_5k_s", "best_10k_s",
+                "best_half_s", "refhr_time_s", "refhr_dist_m", "refpace_time_s",
+                "refpace_cadence_x_time", "refhr_pace_s_per_km", "refpace_cadence_spm")
+
+
+def metrics_row(c, aid, version):
+    cols = ", ".join(_METRIC_COLS)
+    return c.execute(f"SELECT {cols} FROM run_metrics WHERE activity_id = ? "
+                     "AND metrics_version = ?", (aid, version)).fetchone()
+
+
+def ingest_computed_metrics(c, aid):
+    """What ingest_builder.build_archive computes for a run's metrics row."""
+    run = json.loads(c.execute("SELECT summary_json FROM activities WHERE activity_id = ?",
+                               (aid,)).fetchone()[0])
+    mrow = {"is_treadmill": 1 if run.get("sportType", "").lower() == "treadmill_running" else 0}
+    samples = ib_under_test._metric_samples(ib_under_test.synth_streams(run))
+    mrow.update(im.best_efforts(samples, declared_dist_m=run.get("distanceM")))
+    mrow.update(im.band_aggregates(samples))
+    return tuple(mrow.get(k) for k in _METRIC_COLS)
+
+
+@pytest.fixture
+def heal(sg_env):
+    sg, data_dir = sg_env
+    c = arch.open_archive(data_dir)
+    shelf_row(c, S1, "uid-1", dt.datetime(2026, 9, 1, 7, 0), 1800, 5000.0, streams=True)
+    shelf_row(c, S2, "uid-2", dt.datetime(2026, 9, 3, 7, 0), 1800, 5000.0, streams=False)
+    garmin_row(c, G1, dt.datetime(2026, 10, 1, 7, 0), 1800, 5000.0)
+    yield sg, c
+    c.close()
+
+
+def test_metrics_version_bump_heals_shelf_rows(heal, monkeypatch):
+    sg, c = heal
+    monkeypatch.setattr(im, "METRICS_VERSION", im.METRICS_VERSION + 1)
+    im.extract_run_metrics(c)
+    row = metrics_row(c, S1, im.METRICS_VERSION)
+    assert row is not None and row == ingest_computed_metrics(c, S1)
+    assert row[1] is not None                       # positive control: not an empty row
+    assert metrics_row(c, S2, im.METRICS_VERSION) is None   # no streams: never listed
+    assert sg.verify_archive() == 0
+
+
+def test_shelf_runs_missing_metrics_lists_only_streamed_shelf_rows(heal):
+    _, c = heal
+    v = im.METRICS_VERSION
+    got = arch.shelf_runs_missing_metrics(c, v)
+    assert [r[0] for r in got] == [S1] and len(got[0]) == 4
+    assert S1 not in {r[0] for r in arch.runs_missing_metrics(c, v)}
+    im.extract_run_metrics(c)
+    assert arch.shelf_runs_missing_metrics(c, v) == []
+
+
+def test_samples_from_streams_parity(heal):
+    _, c = heal
+    streams = arch.streams_payload(c, S1)
+    assert ib_under_test._metric_samples(streams) == im.samples_from_streams(streams)
+    assert len(im.samples_from_streams(streams)) == len(streams["t"])

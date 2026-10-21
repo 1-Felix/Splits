@@ -798,15 +798,9 @@ def _hold(axis: list, at: dict, cap: int = SAMPLE_GAP_CAP_S) -> list:
 
 
 def _metric_samples(streams: dict) -> list[tuple]:
-    """The insight-metrics samples dict — (elapsed_s, cumulative_m, hr, cadence,
-    speed_mps) tuples, exactly read_stream's contract — built from the SAME
-    synthesized columns the archive serves, so metrics and charts can never
-    disagree. Cadence is always None (Samsung writes no per-sample cadence):
-    the refpace pools stay empty and refpace_cadence_spm stays NULL — pinned
-    by the samples-dict parity test."""
-    hr = streams.get("hr") or [None] * len(streams["t"])
-    return [(float(t), float(d), h, None, v)
-            for t, d, h, v in zip(streams["t"], streams["d"], hr, streams["v"])]
+    """Delegates to insight_metrics.samples_from_streams, which owns the
+    contract so the shelf heal and this builder can never drift."""
+    return insight_metrics.samples_from_streams(streams)
 
 
 def _upsert_archive_row(conn, aid: int, run: dict) -> bool:

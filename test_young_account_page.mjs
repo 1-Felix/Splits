@@ -74,6 +74,13 @@ delete BARE.profile.vo2maxCurrent;
 delete BARE.predictions.halfGoal;
 const BARE_DATA = garminJs(BARE);
 
+// Slower and lower than the first month: the all-time deltas read signed
+// ("+2:14", "−189"), never "−-3:-14" or "+-189".
+const SLOWER = fixture();
+SLOWER.history.paceSecPerKm = [392, 465, 504, 504, 526];
+SLOWER.history.cadenceSpm = [349, 300, 280, 250, 160];
+const SLOWER_DATA = garminJs(SLOWER);
+
 const PLAN_DATA = "export const planData = {};\n";
 
 function startServer(dataDir) {
@@ -111,6 +118,14 @@ await writeFile(join(dataDir, "garmin-data.js"), GARMIN_DATA);
 await writeFile(join(dataDir, "plan-data.js"), PLAN_DATA);
 let server = startServer(dataDir);
 
+async function restart(data) {
+  server.kill();
+  await new Promise((r) => server.once("exit", r));
+  await writeFile(join(dataDir, "garmin-data.js"), data);
+  server = startServer(dataDir);
+  await waitReady(server);
+}
+
 let browser;
 let failed = false;
 let step = "boot";
@@ -142,6 +157,7 @@ try {
   assert.ok(!/NaN|null|undefined/.test(prog.text), "no NaN/null/undefined on /progress: " +
     (prog.text.match(/.{0,30}(NaN|null|undefined).{0,30}/) || [""])[0]);
   assert.ok(!prog.text.includes("+162"), "cadence delta must not read +162");
+  assert.ok(prog.text.includes("−0:30 /km all-time"), "a faster pace still reads −0:30");
   assert.ok(!/\+44\.0/.test(prog.text), "VO2 delta must not read +44.0");
 
   step = "cockpit";
@@ -153,11 +169,7 @@ try {
   assert.ok(cock.text.includes("Garmin estimate"), "neutral sub-label");
 
   step = "readiness-less variant";
-  server.kill();
-  await new Promise((r) => server.once("exit", r));
-  await writeFile(join(dataDir, "garmin-data.js"), BARE_DATA);
-  server = startServer(dataDir);
-  await waitReady(server);
+  await restart(BARE_DATA);
   for (const [path, ready] of [
     ["/", () => document.querySelectorAll('rect[data-hb="heat"]').length > 300],
     ["/progress", () => document.body.innerText.includes("Avg run pace")],
@@ -167,6 +179,16 @@ try {
     assert.ok(!/NaN|null|undefined/.test(r.text), "no NaN/null/undefined on " + path + ": " +
       (r.text.match(/.{0,30}(NaN|null|undefined).{0,30}/) || [""])[0]);
   }
+
+  step = "slower variant: signed deltas";
+  await restart(SLOWER_DATA);
+  const slow = await render("/progress", () => document.body.innerText.includes("Avg run pace"));
+  assert.deepStrictEqual(slow.errors, [], "no pageerror on /progress (slower)");
+  assert.ok(!/\+-|−-|:-/.test(slow.text), "deltas are sign-aware: " +
+    (slow.text.match(/.{0,30}(\+-|−-|:-).{0,30}/) || [""])[0]);
+  assert.ok(slow.text.includes("+2:14 /km all-time"), "a slower pace reads +2:14");
+  assert.ok(slow.text.includes("−189 spm all-time"), "a lower cadence reads −189");
+
   console.log("PASS test_young_account_page");
 } catch (e) {
   failed = true;

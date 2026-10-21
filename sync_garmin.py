@@ -127,6 +127,19 @@ def ffill(series: list) -> list:
     return out
 
 
+def lead_null_ffill(series: list) -> list:
+    """Forward-fill interior gaps like `ffill`, but never invent history: values
+    before the first real one stay None (a young account's series)."""
+    out = list(series)
+    last = None
+    for i, v in enumerate(out):
+        if v is None:
+            out[i] = last
+        else:
+            last = v
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. CONNECTION
 # ──────────────────────────────────────────────────────────────────────────────
@@ -628,6 +641,15 @@ def month_keys(months: int) -> list[str]:
 
 def fetch_monthly(client, acts: list[dict], months: int = MONTHS) -> dict:
     keys = month_keys(months)
+    runs = [a for a in acts if is_run(a) and act_date(a)]
+    first_run = min((act_date(a)[:7] for a in runs), default=None)
+    # a young account's series starts at its first run, not 30 months back
+    if first_run is None:
+        keys = keys[-1:]
+    else:
+        keys = [k for k in keys if k >= first_run]
+    # VO2max lookups only make sense once Garmin has known the account
+    first_garmin = min((act_date(a)[:7] for a in runs if not a.get("splitsShelf")), default=None)
     pace_acc = {k: [] for k in keys}
     cad_acc = {k: [] for k in keys}
     vo2_acc = {k: [] for k in keys}
@@ -644,20 +666,21 @@ def fetch_monthly(client, acts: list[dict], months: int = MONTHS) -> dict:
         if act_vo2(a):
             vo2_acc[k].append(act_vo2(a))
 
-    pace = ffill([round(mean(pace_acc[k])) if pace_acc[k] else None for k in keys])
-    cad = ffill([round(mean(cad_acc[k])) if cad_acc[k] else None for k in keys])
+    pace = lead_null_ffill([round(mean(pace_acc[k])) if pace_acc[k] else None for k in keys])
+    cad = lead_null_ffill([round(mean(cad_acc[k])) if cad_acc[k] else None for k in keys])
     vo2 = [round(mean(vo2_acc[k]), 1) if vo2_acc[k] else None for k in keys]
 
     # vo2 often isn't on every activity — backfill the gaps from get_max_metrics
-    # at each month end (cheap, ~once per missing month).
+    # at each month end (cheap, ~once per missing month), but never for a month
+    # before the account's first Garmin run.
     if any(v is None for v in vo2):
         for i, k in enumerate(keys):
-            if vo2[i] is not None:
+            if vo2[i] is not None or first_garmin is None or k < first_garmin:
                 continue
             cdate = _month_end(k)
             v = safe(lambda: _parse_vo2(client.get_max_metrics(cdate)), None, f"get_max_metrics {k}")
             vo2[i] = round(v, 1) if v else None
-    vo2 = ffill(vo2)
+    vo2 = lead_null_ffill(vo2)
 
     return {"vo2maxStartMonth": keys[0], "vo2max": vo2, "paceSecPerKm": pace, "cadenceSpm": cad}
 
@@ -888,14 +911,16 @@ def fetch_profile(client, vo2_current: float | None) -> dict:
     rhr_doc = safe(lambda: client.get_rhr_day(today), {}, "get_rhr_day") or {}
     rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate") or 47
     weight_g = summary.get("weight") or _latest_weight_g(client) or 0
-    return {
+    prof = {
         "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Felix"),
         "age": int(os.getenv("ATHLETE_AGE", "31")),
         "restingHR": int(rhr),
         "maxHR": int(os.getenv("ATHLETE_MAX_HR", "197")),
         "weightKg": round(weight_g / 1000.0, 1) if weight_g else 81.0,
-        "vo2maxCurrent": round(vo2_current, 1) if vo2_current else 51.3,
     }
+    if vo2_current:                      # unknown means the key is omitted
+        prof["vo2maxCurrent"] = round(vo2_current, 1)
+    return prof
 
 
 def _parse_rhr(doc: dict):
@@ -1072,7 +1097,7 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     weekly_km, weekly_runs = fetch_weekly(acts)
     ctl, atl = compute_fitness_fatigue(acts, max_hr)
     sleep = fetch_sleep(client, raw_out=sleep_raw_out)
-    vo2_current = monthly["vo2max"][-1] if monthly["vo2max"] else None
+    vo2_current = next((v for v in reversed(monthly["vo2max"]) if v is not None), None)
 
     predictions = fetch_predictions(pred_doc or {})
 
@@ -1136,11 +1161,18 @@ def validate(data: dict) -> None:
     invariants belong to plan-data.js and are checked by validate_data.py."""
     h = data["history"]
     assert len(data["heatmapKm"]) == HEATMAP_DAYS, "heatmapKm must be exactly 365 days"
-    if h["vo2max"]:
-        assert abs(data["profile"]["vo2maxCurrent"] - h["vo2max"][-1]) < 0.05, \
-            "profile.vo2maxCurrent must equal history.vo2max[-1]"
+    if "vo2maxCurrent" in data["profile"] and h["vo2max"] and h["vo2max"][-1] is not None:
+        assert abs(data["profile"]["vo2maxCurrent"] - h["vo2max"][-1]) < 0.05,             "profile.vo2maxCurrent must equal history.vo2max[-1]"
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm", "weeklyKm", "weeklyRuns", "ctl", "atl"):
         assert isinstance(h.get(k), list), f"history.{k} must be a list"
+    for k in ("vo2max", "paceSecPerKm", "cadenceSpm"):
+        # a young account's series may start with nulls, never gap afterwards
+        seen = False
+        for v in h[k]:
+            if v is not None:
+                seen = True
+            assert v is not None or not seen, f"history.{k} has gaps (None after a value)"
+    for k in ("weeklyKm", "weeklyRuns", "ctl", "atl"):
         assert all(v is not None for v in h[k]), f"history.{k} has gaps (None values)"
     assert len(h["sleep"]) == SLEEP_NIGHTS, "history.sleep must have 14 nights"
     log("✓ telemetry validation passed")

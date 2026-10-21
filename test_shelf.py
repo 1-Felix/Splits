@@ -382,3 +382,97 @@ def test_shelf_run_without_steps_has_no_cadence(t3):
     assert "averageRunningCadenceInStepsPerMinute" not in by_id(acts, T3_S2)
     rows = sg.fetch_recent_runs(FakeClient({}), acts)
     assert next(r for r in rows if r["date"] == "2026-09-03")["cad"] is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Task 4: a young account's monthly series
+# ──────────────────────────────────────────────────────────────────────────────
+import copy  # noqa: E402
+
+
+def shelf_acts_from(date, km=5.0, pace=360):
+    """A shelf-projection run (what shelf.shelf_activities hands the cockpit)."""
+    return [{"activityId": 9_400_000_001, "startTimeLocal": f"{date} 07:00:00",
+             "activityType": {"typeKey": "running"}, "distance": km * 1000.0,
+             "duration": km * pace, "splitsShelf": True,
+             "splitsPaceSecPerKm": pace, "splitsDetail": {}}]
+
+
+def garmin_acts_from(date, vo2=None, cad=None, km=5.0, pace=330):
+    a = {"activityId": 20_400_000_001, "startTimeLocal": f"{date} 07:00:00",
+         "activityType": {"typeKey": "running"}, "distance": km * 1000.0,
+         "duration": km * pace, "averageHR": 150.0, "maxHR": 170.0}
+    if vo2 is not None:
+        a["vO2MaxValue"] = vo2
+    if cad is not None:
+        a["averageRunningCadenceInStepsPerMinute"] = cad
+    return [a]
+
+
+def test_lead_null_ffill(sg_env):
+    sg, _ = sg_env
+    assert sg.lead_null_ffill([]) == []
+    assert sg.lead_null_ffill([None, None]) == [None, None]
+    assert sg.lead_null_ffill([None, 3, None, 5, None]) == [None, 3, 3, 5, 5]
+
+
+def test_young_account_window_starts_at_first_run_without_backfill(sg_env):
+    sg, _ = sg_env
+    acts = shelf_acts_from("2026-06-10") + garmin_acts_from("2026-10-19", vo2=44.0, cad=162)
+    client = FakeClient({"get_max_metrics": [{"generic": {"vo2MaxPreciseValue": 43.7}}]})
+    m = sg.fetch_monthly(client, acts)
+    assert m["vo2maxStartMonth"] == "2026-06" and len(m["paceSecPerKm"]) == 5
+    assert m["vo2max"][:4] == [None] * 4 and m["vo2max"][-1] == 44.0
+    assert m["cadenceSpm"][:4] == [None] * 4 and m["cadenceSpm"][-1] == 162
+    assert all(v for v in m["paceSecPerKm"])          # pace is filled throughout
+    assert all(name != "get_max_metrics" or args[0] >= "2026-10" for name, args in client.calls)
+
+
+def test_all_shelf_account_never_asks_garmin_for_vo2(sg_env):
+    sg, _ = sg_env
+    client = FakeClient({"get_max_metrics": [{"generic": {"vo2MaxPreciseValue": 43.7}}]})
+    m = sg.fetch_monthly(client, shelf_acts_from("2026-08-10"))
+    assert m["vo2max"] == [None] * 3 and not client.calls
+
+
+def test_no_runs_gives_the_current_month_only(sg_env):  # controller ruling R5
+    sg, _ = sg_env
+    m = sg.fetch_monthly(FakeClient({}), [])
+    assert m == {"vo2maxStartMonth": "2026-10", "vo2max": [None],
+                 "paceSecPerKm": [None], "cadenceSpm": [None]}
+
+
+def _young_data(sg):
+    acts = shelf_acts_from("2026-06-10") + garmin_acts_from("2026-10-19", vo2=44.0, cad=162)
+    return sg.build_data(FakeClient(RESPONSES), acts)
+
+
+def test_validate_accepts_leading_nulls_only(sg_env):
+    sg, _ = sg_env
+    young = _young_data(sg)
+    assert young["history"]["vo2max"][0] is None
+    sg.validate(young)                                  # leading None ok
+    for key in ("vo2max", "paceSecPerKm", "cadenceSpm"):
+        bad = copy.deepcopy(young)
+        bad["history"][key][2] = 40 if key != "vo2max" else 40.0
+        bad["history"][key][3] = None                   # interior: a None after a value
+        with pytest.raises(AssertionError):
+            sg.validate(bad)
+        bad = copy.deepcopy(young)
+        bad["history"][key][-2] = 40                    # a real value, then a trailing None
+        bad["history"][key][-1] = None
+        with pytest.raises(AssertionError):
+            sg.validate(bad)
+    for key in ("weeklyKm", "weeklyRuns", "ctl", "atl"):
+        bad = copy.deepcopy(young)
+        bad["history"][key][0] = None
+        with pytest.raises(AssertionError):
+            sg.validate(bad)
+
+
+def test_no_vo2_anywhere_omits_vo2maxCurrent_and_still_validates(sg_env):
+    sg, _ = sg_env
+    data = sg.build_data(FakeClient({}), [], shelf_acts=shelf_acts_from("2026-10-10"))
+    assert "vo2maxCurrent" not in data["profile"]
+    assert data["history"]["vo2max"] == [None]
+    sg.validate(data)

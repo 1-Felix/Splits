@@ -1127,8 +1127,25 @@ class Component extends DCLogic {
     const displayToday = this.localISO(now);
     // An ingest-fed instance omits history.vo2max entirely (design D7) — the
     // VO₂ card hides and nothing below may touch the array.
-    const hasVo2 = Array.isArray(H.vo2max) && H.vo2max.length > 0;
-    const vo2Now = hasVo2 ? H.vo2max[H.vo2max.length-1] : null, vo2Prev = hasVo2 ? H.vo2max[H.vo2max.length-4] : null;
+    // A young account's monthly series starts with nulls (no history before its
+    // first run, no cadence/VO₂ before its first Garmin run): drop the leading
+    // nulls and move the start month with them, so nothing below sees a null.
+    const leadTrim = (arr, startKey) => {
+      const a = Array.isArray(arr) ? arr : [];
+      const i = a.findIndex((v) => v != null);
+      if (i < 0) return { vals: [], start: startKey };
+      const p = String(startKey || '2024-01').split('-');
+      const d = new Date(Date.UTC(+p[0], +p[1] - 1 + i, 1));
+      return { vals: a.slice(i), start: d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') };
+    };
+    const vo2S = leadTrim(H.vo2max, H.vo2maxStartMonth);
+    const paceS = leadTrim(H.paceSecPerKm, H.vo2maxStartMonth);
+    const cadS = leadTrim(H.cadenceSpm, H.vo2maxStartMonth);
+    const hasVo2 = vo2S.vals.length > 0;
+    const vo2Now = hasVo2 ? vo2S.vals[vo2S.vals.length-1] : null;
+    // delta over 3 months when there is that much history, else since the first value; none from a single value
+    const vo2Ref = vo2S.vals.length >= 4 ? vo2S.vals[vo2S.vals.length-4] : (vo2S.vals.length >= 2 ? vo2S.vals[0] : null);
+    const vo2Prev = vo2Ref;
     const kmNow = H.weeklyKm[H.weeklyKm.length-1];
     const form = +(H.ctl[H.ctl.length-1]-H.atl[H.atl.length-1]).toFixed(0);
     const goalP = D.race.goalPaceSecPerKm;
@@ -1189,11 +1206,12 @@ class Component extends DCLogic {
     // ---- VO₂ max: minimum-span domain + 12-month median band (engine) -------
     let vo2 = {};
     if (hasVo2) {
-    const vo2Cut = this.scopeCut('vo2', H.vo2max.length, this.MONTH_SCOPES);
-    const vo2Vals = H.vo2max.slice(-vo2Cut.keep);
-    const vo2Dates = monthDates(H.vo2maxStartMonth, H.vo2max.length).slice(-vo2Cut.keep);
+    const vo2Cut = this.scopeCut('vo2', vo2S.vals.length, this.MONTH_SCOPES);
+    const vo2Vals = vo2S.vals.slice(-vo2Cut.keep);
+    const vo2Dates = monthDates(vo2S.start, vo2S.vals.length).slice(-vo2Cut.keep);
     vo2 = {
-      last: vo2Now.toFixed(1), delta: '+' + (vo2Now - vo2Prev).toFixed(1) + ' / 3mo',
+      last: vo2Now.toFixed(1),
+      delta: vo2Prev == null ? '' : (vo2Now - vo2Prev >= 0 ? '+' : '−') + Math.abs(vo2Now - vo2Prev).toFixed(1) + (vo2S.vals.length >= 4 ? ' / 3mo' : ' since start'),
       sub: spanOf(vo2Dates, 'mo') + ' · 12-mo median band',
       scopes: vo2Cut.scopes,
       chart: this.engineChart('vo2', {
@@ -1214,15 +1232,15 @@ class Component extends DCLogic {
     }
 
     // ---- avg pace: goal rule always in frame, no area fill (engine) ---------
-    const paceCut = this.scopeCut('pace', H.paceSecPerKm.length, this.MONTH_SCOPES);
-    const paceVals = H.paceSecPerKm.slice(-paceCut.keep);
-    const paceDates = monthDates(H.vo2maxStartMonth, H.paceSecPerKm.length).slice(-paceCut.keep);
+    const paceCut = this.scopeCut('pace', paceS.vals.length, this.MONTH_SCOPES);
+    const paceVals = paceS.vals.slice(-paceCut.keep);
+    const paceDates = monthDates(paceS.start, paceS.vals.length).slice(-paceCut.keep);
     // a fresh ingest-fed instance boots with history.paceSecPerKm = [] — the
     // headline degrades to an em-dash instead of NaN:NaN
     const pace = {
       last: paceVals.length ? this.fmtPace(paceVals[paceVals.length - 1]) : '—',
-      delta: H.paceSecPerKm.length
-        ? '−' + this.fmtPace(H.paceSecPerKm[0] - H.paceSecPerKm[H.paceSecPerKm.length - 1]) + ' /km all-time'
+      delta: paceS.vals.length > 1
+        ? '−' + this.fmtPace(paceS.vals[0] - paceS.vals[paceS.vals.length - 1]) + ' /km all-time'
         : '',
       sub: spanOf(paceDates, 'mo'),
       scopes: paceCut.scopes,
@@ -1274,12 +1292,12 @@ class Component extends DCLogic {
     };
 
     // ---- cadence: minimum-span domain + median band (engine) ----------------
-    const cadCut = this.scopeCut('cad', H.cadenceSpm.length, this.MONTH_SCOPES);
-    const cadVals = H.cadenceSpm.slice(-cadCut.keep);
-    const cadDates = monthDates(H.vo2maxStartMonth, H.cadenceSpm.length).slice(-cadCut.keep);
+    const cadCut = this.scopeCut('cad', cadS.vals.length, this.MONTH_SCOPES);
+    const cadVals = cadS.vals.slice(-cadCut.keep);
+    const cadDates = monthDates(cadS.start, cadS.vals.length).slice(-cadCut.keep);
     const cad = {
-      last: H.cadenceSpm[H.cadenceSpm.length - 1],
-      delta: '+' + (H.cadenceSpm[H.cadenceSpm.length - 1] - H.cadenceSpm[0]) + ' spm all-time',
+      last: cadS.vals.length ? cadS.vals[cadS.vals.length - 1] : '—',
+      delta: cadS.vals.length > 1 ? '+' + (cadS.vals[cadS.vals.length - 1] - cadS.vals[0]) + ' spm all-time' : '',
       sub: spanOf(cadDates, 'mo') + ' · 12-mo median band',
       scopes: cadCut.scopes,
       chart: this.engineChart('cad', {

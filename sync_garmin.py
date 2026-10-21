@@ -914,14 +914,12 @@ def fetch_profile(client, vo2_current: float | None) -> dict:
     prof = {
         "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Athlete"),
         "age": int(os.getenv("ATHLETE_AGE", "31")),
+        # Unknown means the key is omitted (the ingest path's convention) —
+        # never another athlete's number. The spreads keep Felix's key order.
+        **({"restingHR": int(rhr)} if rhr else {}),
         "maxHR": int(os.getenv("ATHLETE_MAX_HR", "197")),
+        **({"weightKg": round(weight_g / 1000.0, 1)} if weight_g else {}),
     }
-    # Unknown means the key is omitted (the ingest path's convention) — never
-    # another athlete's number.
-    if rhr:
-        prof["restingHR"] = int(rhr)
-    if weight_g:
-        prof["weightKg"] = round(weight_g / 1000.0, 1)
     if vo2_current:
         prof["vo2maxCurrent"] = round(vo2_current, 1)
     return prof
@@ -960,17 +958,15 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict | None:
     if not score:
         score = _compute_readiness(hrv, rhr, sleep_h)
     status = tr.get("level") or _readiness_label(score)
-    out = {
+    return {
         "score": int(round(score)),
         "status": str(status).title()[:16],
         "hrv": int(hrv),
+        **({"restingHR": int(rhr)} if rhr else {}),
         "sleepHours": round(sleep_h, 1),
         "trainingLoad": int(load) if load else 0,
         "loadStatus": _load_label(status_doc),
     }
-    if rhr:
-        out["restingHR"] = int(rhr)
-    return out
 
 
 def _parse_acute_load(doc: dict):
@@ -1084,15 +1080,13 @@ def _plan_goal_time() -> str | None:
 
 
 def fetch_predictions(pred_doc: dict, planned_goal: str | None) -> dict:
-    out = {
+    return {
         "fiveK": fmt_hms(pred_doc.get("time5K")),
         "tenK": fmt_hms(pred_doc.get("time10K")),
         "halfNow": fmt_hms(pred_doc.get("timeHalfMarathon")),
+        **({"halfGoal": planned_goal} if planned_goal else {}),  # unknown → omitted
         "trend": "",  # filled from the insights trajectory when available
     }
-    if planned_goal:                      # unknown means the key is omitted
-        out["halfGoal"] = planned_goal
-    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────

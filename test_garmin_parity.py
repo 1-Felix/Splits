@@ -67,4 +67,6 @@ def test_felix_garmin_path_matches_golden():
         got = json.loads(json.dumps(_outputs(sg, FakeClient(RESPONSES), acts)))
     if os.getenv("RECORD_GOLDEN"):
         GOLDEN.write_text(json.dumps(got, indent=1), encoding="utf-8")
-    assert got == json.loads(GOLDEN.read_text(encoding="utf-8"))
+    # Text, not parsed equality: key order is part of garmin-data.js's contract
+    # and dict == ignores it.
+    assert json.dumps(got, indent=1) == GOLDEN.read_text(encoding="utf-8")

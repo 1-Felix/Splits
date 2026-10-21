@@ -537,6 +537,20 @@ def test_readiness_without_rhr_omits_the_key_and_load_label_is_honest(sg_env):
     assert "restingHR" not in r and r["loadStatus"] == "" and r["score"] == 64
 
 
+def test_readiness_level_none_falls_back_to_the_score_label(sg_env):
+    # a new watch's readiness is still calibrating: Garmin sends the string
+    # "NONE" as its level, which must not reach the card as "None"
+    sg, _ = sg_env
+    night = [{"hours": 7.2, "hrv": 94, "deepPct": 18}]
+    for level in ("NONE", "none", ""):
+        r = sg.fetch_readiness(
+            FakeClient({"get_training_readiness": [{"score": 84, "level": level}]}), night, 199)
+        assert r["status"] == sg._readiness_label(84) == "Primed"
+    r = sg.fetch_readiness(
+        FakeClient({"get_training_readiness": [{"score": 64, "level": "MODERATE"}]}), night, 199)
+    assert r["status"] == "Moderate"
+
+
 def test_build_data_omits_readiness_for_an_account_with_no_evidence(sg_env):
     sg, _ = sg_env
     data = sg.build_data(FakeClient({}), [])

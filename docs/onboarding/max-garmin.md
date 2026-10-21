@@ -16,11 +16,11 @@ In the Garmin Connect app, open your profile / user settings and check:
 - **Max heart rate**: **199**. This is your measured value, so enter it
   yourself instead of letting Garmin guess from your age.
 - **Resting heart rate**: leave on **automatic**.
-- **Heart rate zones**: (app -> your profile -> Heart Rate Zones) choose the
-  method **% Heart Rate Reserve**. Heart-rate reserve is the gap between your
-  resting and your max heart rate, so the zones fit you rather than a textbook.
-- Then enter these **exact zone edges** as custom zones, so the watch and
-  SPLITS read the same numbers. Z5 runs up to your max HR of 199.
+- **Heart rate zones**: (app -> your profile -> Heart Rate Zones) set
+  **Based on: BPM** (custom zones), then type in these **exact zone edges**.
+  Z5 runs up to your max HR of 199. Zones based on resting heart rate would
+  shift on their own whenever your resting HR changes; fixed bpm edges keep the
+  watch and SPLITS reading the same numbers.
 
 | Zone | Low edge (bpm) |
 |------|----------------|

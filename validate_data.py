@@ -271,11 +271,15 @@ def validate(d: dict) -> list[str]:
     check(all(("date" in w and "kind" in w) for w in wp),
           "every weekPlan day needs date + kind for coach-read to resolve", e)
 
-    # history arrays present, numeric, gap-free
+    # history arrays present, numeric, gap-free; a young account's monthly
+    # series may start with nulls (sync_garmin.validate's rule), never gap after
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm", "weeklyKm", "weeklyRuns", "ctl", "atl"):
         arr = h.get(k)
         check(isinstance(arr, list) and len(arr) > 0, f"history.{k} must be a non-empty list", e)
         if isinstance(arr, list):
+            if k in ("vo2max", "paceSecPerKm", "cadenceSpm"):
+                first = next((i for i, v in enumerate(arr) if v is not None), len(arr))
+                arr = arr[first:]
             check(all(isinstance(v, (int, float)) for v in arr), f"history.{k} has non-numeric / null values", e)
 
     # pace stored as integer seconds, not a formatted string

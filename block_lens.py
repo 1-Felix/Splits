@@ -45,7 +45,9 @@ import insight_metrics
 # null deltas (insufficient-span) instead of a structurally-zero comparison;
 # weeks retired from the latest snapshot rejoin the rollup as retired entries;
 # an undetailed week's remaining km prorates by its remaining days.
-BLOCK_LENS_VERSION = 2
+# v3: goal gap restarts at a mid-block prediction-source change,
+# `baseline: source-change`.
+BLOCK_LENS_VERSION = 3
 
 # ──────────────────────────────────────────────────────────────────────────────
 # algorithm parameters — all covered by BLOCK_LENS_VERSION
@@ -330,28 +332,40 @@ def _records_in_window(conn, since: str, until: str) -> list[dict]:
 def _goal_gap(conn, race: dict, start: dt.date, end: dt.date) -> dict:
     """Predictor half time nearest block start vs latest in window, against
     the race's goal seconds. The start anchor must sit within the pinned
-    tolerance of block start — a months-old row is no baseline."""
+    tolerance of block start — a months-old row is no baseline. When the
+    predictions changed source mid-block (Riegel → Garmin), the gap restarts
+    at the new model's first row and says so with `baseline: source-change`;
+    the two models are never spliced."""
     goal_s = parse_goal_seconds(race.get("goalTime"))
     if goal_s is None:
         return {"deltaS": None, "reason": "no-goal-time"}
-    preds = [(d, h) for d, h in conn.execute(
-        "SELECT date, half_s FROM race_predictions "
-        "WHERE half_s IS NOT NULL AND date <= ? ORDER BY date",
-        (_fmt_date(end),))]
+    preds = activity_archive.half_predictions(conn, _fmt_date(end))
     if not preds:
         return {"goalS": goal_s, "deltaS": None, "reason": "no-predictions"}
     anchor = min(preds, key=lambda p: abs(
         (dt.date.fromisoformat(p[0]) - start).days))
+    restarted = False
     if abs((dt.date.fromisoformat(anchor[0]) - start).days) > GOAL_ANCHOR_TOLERANCE_DAYS:
-        return {"goalS": goal_s, "deltaS": None, "reason": "no-baseline-prediction"}
+        # the predictions changed source mid-block (Riegel -> Garmin): restart
+        # the comparison at the first row of the new model, never splice
+        first = dt.date.fromisoformat(preds[0][0])
+        if (activity_archive.prediction_sources_mixed(conn)
+                and first > start + dt.timedelta(days=GOAL_ANCHOR_TOLERANCE_DAYS)):
+            anchor, restarted = preds[0], True
+        else:
+            return {"goalS": goal_s, "deltaS": None,
+                    "reason": "no-baseline-prediction"}
     latest = preds[-1]
     gap_start = round(anchor[1] - goal_s)
     gap_now = round(latest[1] - goal_s)
-    return {"goalS": goal_s,
-            "startDate": anchor[0], "startHalfS": round(anchor[1]),
-            "nowDate": latest[0], "nowHalfS": round(latest[1]),
-            "gapStartS": gap_start, "gapNowS": gap_now,
-            "deltaS": gap_now - gap_start}
+    out = {"goalS": goal_s,
+           "startDate": anchor[0], "startHalfS": round(anchor[1]),
+           "nowDate": latest[0], "nowHalfS": round(latest[1]),
+           "gapStartS": gap_start, "gapNowS": gap_now,
+           "deltaS": gap_now - gap_start}
+    if restarted:
+        out["baseline"] = "source-change"
+    return out
 
 
 def build_adaptation(conn, block: dict, today: dt.date) -> dict:

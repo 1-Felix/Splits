@@ -534,6 +534,99 @@ def test_a_missed_run_still_drags_the_execute_rate_down():
     assert execution["percentExecuted"] == 50
 
 
+# ── Task 8: prediction sources never splice; the goal gap restarts at a switch ──
+def _preds(rows):
+    conn = arch.open_archive(_tmp())
+    for d, h, s in rows:
+        arch.upsert_race_prediction(conn, d, {"half_s": h}, {}, s)
+    return conn
+
+
+def _all_rows(conn):
+    return conn.execute("SELECT date, half_s FROM race_predictions "
+                        "WHERE half_s IS NOT NULL ORDER BY date").fetchall()
+
+
+FELIX_ROWS = [("2026-06-20", 7400, "backfill"), ("2026-07-07", 7300, "sync"),
+              ("2026-07-15", 7250, "sync"), ("2026-08-02", 7180, "sync")]
+MAX_ROWS = [("2026-07-30", 8100, "riegel"), ("2026-08-15", 8050, "riegel"),
+            ("2026-10-20", 7990, "riegel"), ("2026-10-21", 7800, "sync"),
+            ("2026-10-28", 7700, "sync")]
+
+# the literal dict today's _goal_gap returned for FELIX_ROWS, captured BEFORE the change
+RECORDED_BEFORE_CHANGE = {
+    'goalS': 7200, 'startDate': '2026-07-07', 'startHalfS': 7300,
+    'nowDate': '2026-08-02', 'nowHalfS': 7180, 'gapStartS': 100,
+    'gapNowS': -20, 'deltaS': -120}
+
+
+def test_felix_like_sources_unchanged():
+    conn = _preds(FELIX_ROWS)
+    assert [tuple(r) for r in arch.half_predictions(conn)] == \
+        [tuple(r) for r in _all_rows(conn)]
+    assert arch.prediction_sources_mixed(conn) is False
+
+
+def test_ingest_only_instance_keeps_riegel():
+    conn = _preds([r for r in MAX_ROWS if r[2] == "riegel"])
+    assert arch.half_predictions(conn) == [tuple(r) for r in _all_rows(conn)]
+    assert arch.prediction_sources_mixed(conn) is False
+
+
+def test_mixed_instance_drops_riegel_everywhere():
+    conn = _preds(MAX_ROWS)
+    assert arch.prediction_sources_mixed(conn) is True
+    rows = arch.half_predictions(conn)
+    assert rows and min(d for d, _ in rows) == "2026-10-21"
+    assert arch.half_predictions(conn, until="2026-10-25") == [("2026-10-21", 7800)]
+    conn.execute("INSERT OR REPLACE INTO run_metrics (activity_id, metrics_version, "
+                 "start_time_local, is_treadmill, best_10k_s, computed_at) "
+                 "VALUES (1, ?, '2026-08-02 09:00:00', 0, 3600.0, 'x')",
+                 (im.METRICS_VERSION,))
+    traj = im.weekly_trajectory(conn, dt.date(2026, 10, 25))
+    assert all(w["garminSec"] is None for w in traj if w["week"] < "2026-W43")
+    assert traj[-1]["garminSec"] == 7800
+
+
+def test_empty_garmin_prediction_keeps_riegel():
+    # a new Garmin account's predictor answers with no times yet: that row is
+    # no prediction, so the Riegel line must not vanish behind it
+    riegel = [r for r in MAX_ROWS if r[2] == "riegel"]
+    conn = _preds(riegel + [("2026-10-21", None, "sync")])
+    assert arch.prediction_sources_mixed(conn) is False
+    assert arch.half_predictions(conn) == [(d, h) for d, h, _ in riegel]
+    gap = bl._goal_gap(conn, {"goalTime": "2:29:59"}, dt.date(2026, 7, 20),
+                       dt.date(2026, 11, 7))
+    assert "reason" not in gap and gap["nowHalfS"] == 7990
+
+
+def test_goal_gap_restarts_at_the_switch():
+    conn = _preds(MAX_ROWS)
+    gap = bl._goal_gap(conn, {"goalTime": "2:29:59"}, dt.date(2026, 7, 20),
+                       dt.date(2026, 11, 7))
+    assert gap["baseline"] == "source-change" and gap["startDate"] == "2026-10-21"
+    assert gap["startHalfS"] == 7800 and gap["nowHalfS"] == 7700
+    assert gap["deltaS"] == round(7700 - 7800)
+
+
+def test_goal_gap_unchanged_for_felix_like_block():
+    conn = _preds(FELIX_ROWS)
+    gap = bl._goal_gap(conn, {"goalTime": "2:00:00"}, dt.date(2026, 7, 6),
+                       dt.date(2026, 8, 9))
+    assert "baseline" not in gap and gap == RECORDED_BEFORE_CHANGE
+
+
+def test_riegel_only_block_keeps_no_baseline_reason():
+    conn = _preds([("2026-05-01", 8000, "riegel")])
+    gap = bl._goal_gap(conn, {"goalTime": "2:00:00"}, dt.date(2026, 7, 6),
+                       dt.date(2026, 8, 9))
+    assert gap["reason"] == "no-baseline-prediction"
+
+
+def test_block_lens_version_is_three():
+    assert bl.BLOCK_LENS_VERSION == 3
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_"):

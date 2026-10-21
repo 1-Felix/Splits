@@ -224,6 +224,18 @@ def band_aggregates(samples: list[tuple]) -> dict:
     return out
 
 
+def samples_from_streams(streams: dict) -> list[tuple]:
+    """The insight-metrics samples dict — (elapsed_s, cumulative_m, hr, cadence,
+    speed_mps) tuples, exactly read_stream's contract — built from the SAME
+    synthesized columns the archive serves, so metrics and charts can never
+    disagree. Cadence is always None (Samsung writes no per-sample cadence):
+    the refpace pools stay empty and refpace_cadence_spm stays NULL — pinned
+    by the samples-dict parity test."""
+    hr = streams.get("hr") or [None] * len(streams["t"])
+    return [(float(t), float(d), h, None, v)
+            for t, d, h, v in zip(streams["t"], streams["d"], hr, streams["v"])]
+
+
 def extract_run_metrics(conn) -> int:
     """Compute + upsert run_metrics for every archived run missing a row at the
     current METRICS_VERSION (no cap — a full recompute is seconds for years of
@@ -245,7 +257,25 @@ def extract_run_metrics(conn) -> int:
             _warn(f"metrics extraction failed for {aid} "
                   f"({type(e).__name__}: {e}); storing empty row")
         activity_archive.upsert_run_metrics(conn, row)
-    return len(pending)
+    # The Health Connect shelf has no Garmin detail to re-read; its streams
+    # are the source ingest_builder computed from, so they heal the same way.
+    shelf = activity_archive.shelf_runs_missing_metrics(conn, METRICS_VERSION)
+    for aid, start_local, type_key, distance_m in shelf:
+        row = {
+            "activity_id": aid,
+            "metrics_version": METRICS_VERSION,
+            "start_time_local": start_local,
+            "is_treadmill": 1 if type_key == "treadmill_running" else 0,
+        }
+        try:
+            samples = samples_from_streams(activity_archive.streams_payload(conn, aid) or {})
+            row.update(best_efforts(samples, declared_dist_m=distance_m))
+            row.update(band_aggregates(samples))
+        except Exception as e:  # noqa: BLE001 — one bad stream must not sink the rest
+            _warn(f"shelf metrics extraction failed for {aid} "
+                  f"({type(e).__name__}: {e}); storing empty row")
+        activity_archive.upsert_run_metrics(conn, row)
+    return len(pending) + len(shelf)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -413,9 +443,8 @@ def weekly_trajectory(conn, today: dt.date) -> list[dict]:
            ORDER BY start_time_local""", (METRICS_VERSION,))]
     if not efforts:
         return []
-    preds = [(dt.date.fromisoformat(d), h) for d, h in conn.execute(
-        "SELECT date, half_s FROM race_predictions WHERE half_s IS NOT NULL "
-        "ORDER BY date")]
+    preds = [(dt.date.fromisoformat(d), h)
+             for d, h in activity_archive.half_predictions(conn)]
 
     out = []
     wk = _week_end(efforts[0][0])

@@ -224,6 +224,12 @@ def _zone_seconds(hr_samples: list[dict], bounds: list[int]) -> list[float]:
     return secs
 
 
+def zone_minutes(run: dict, bounds: list[int]) -> list[int]:
+    """The distilled `zoneMin` for a banked run under the given zone edges —
+    the one definition `run_detail` and the Garmin sync's shelf rescore share."""
+    return [math.ceil(s / 60) for s in _zone_seconds(_sorted_samples(run, "hrSamples"), bounds)]
+
+
 def interval_document(run: dict, max_hr: int, rhr=None,
                       work_floor: float | None = None):
     """The FULL interval document for one banked run — the same engine, the
@@ -269,13 +275,12 @@ def run_detail(run: dict, max_hr: int, rhr=None, work_floor: float | None = None
         return None
     splits = run_splits(run)
     hr_vals = [s["bpm"] for s in _sorted_samples(run, "hrSamples")]
-    zone_secs = _zone_seconds(_sorted_samples(run, "hrSamples"), _zone_bounds(max_hr, rhr))
     elev = run.get("elevationGainM")
     return {
         "splits": splits,
         "hrSeries": [int(round(v)) for v in _downsample(hr_vals)],
         "driftBpm": _hr_drift(hr_vals),
-        "zoneMin": [math.ceil(s / 60) for s in zone_secs],
+        "zoneMin": zone_minutes(run, _zone_bounds(max_hr, rhr)),
         "tempC": None,
         "te": None,
         "load": None,
@@ -793,15 +798,9 @@ def _hold(axis: list, at: dict, cap: int = SAMPLE_GAP_CAP_S) -> list:
 
 
 def _metric_samples(streams: dict) -> list[tuple]:
-    """The insight-metrics samples dict — (elapsed_s, cumulative_m, hr, cadence,
-    speed_mps) tuples, exactly read_stream's contract — built from the SAME
-    synthesized columns the archive serves, so metrics and charts can never
-    disagree. Cadence is always None (Samsung writes no per-sample cadence):
-    the refpace pools stay empty and refpace_cadence_spm stays NULL — pinned
-    by the samples-dict parity test."""
-    hr = streams.get("hr") or [None] * len(streams["t"])
-    return [(float(t), float(d), h, None, v)
-            for t, d, h, v in zip(streams["t"], streams["d"], hr, streams["v"])]
+    """Delegates to insight_metrics.samples_from_streams, which owns the
+    contract so the shelf heal and this builder can never drift."""
+    return insight_metrics.samples_from_streams(streams)
 
 
 def _upsert_archive_row(conn, aid: int, run: dict) -> bool:
@@ -868,10 +867,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
             aid = _find_archive_row(conn, uid)
             if aid is None:
                 continue
-            conn.execute("DELETE FROM run_metrics WHERE activity_id = ?", (aid,))
-            conn.execute("DELETE FROM run_intervals WHERE activity_id = ?", (aid,))
-            conn.execute("DELETE FROM activities WHERE activity_id = ?", (aid,))
-            conn.commit()
+            activity_archive.prune_activity(conn, aid)
             print(f"  – pruned archived duplicate {aid} ({uid})", flush=True)
         stale = (activity_archive.get_meta(conn, _DISTILL_MARKER)
                  != str(INGEST_DISTILL_VERSION))

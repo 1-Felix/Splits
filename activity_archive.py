@@ -547,10 +547,41 @@ def write_detail(conn: sqlite3.Connection, activity_id, payload) -> bool:
     return cur.rowcount == 1
 
 
+def shelf_clause(alias: str | None = "a") -> str:
+    """SQL predicate for the Health Connect shelf: frozen ingest rows, whose
+    summary_json carries sessionUid. Garmin never issued their ids."""
+    col = f"{alias}.summary_json" if alias else "summary_json"
+    return f"json_extract({col}, '$.sessionUid') IS NOT NULL"
+
+
+def prune_activity(conn: sqlite3.Connection, activity_id: int) -> None:
+    """Delete an activity and everything keyed on its id. plan_compliance is
+    deliberately left alone: its rows are per-week verdicts that merely
+    reference a run, and the weekly re-score rewrites them."""
+    for table in ("run_metrics", "run_intervals", "activity_maps", "activities"):
+        conn.execute(f"DELETE FROM {table} WHERE activity_id = ?", (activity_id,))
+    conn.commit()
+
+
+def is_shelf_summary(summary: dict | None) -> bool:
+    return bool(summary) and summary.get("sessionUid") is not None
+
+
+def earliest_garmin_activity_date(conn: sqlite3.Connection) -> str | None:
+    """YYYY-MM-DD of the earliest activity Garmin issued (the shelf excluded),
+    or None when there is none. The wellness window starts here: the shelf
+    predates the watch, so Garmin has no nights for it."""
+    first = conn.execute(
+        f"SELECT MIN(start_time_local) FROM activities WHERE NOT ({shelf_clause(None)})"
+    ).fetchone()[0]
+    return first[:10] if first else None
+
+
 def missing_detail_ids(conn: sqlite3.Connection, limit: int | None = None,
                        newest_first: bool = True) -> list:
     order = "DESC" if newest_first else "ASC"
     sql = ("SELECT activity_id FROM activities WHERE detail_json IS NULL "
+           f"AND NOT {shelf_clause(None)} "
            f"ORDER BY start_time_local {order}")
     if limit is not None:
         rows = conn.execute(sql + " LIMIT ?", (limit,)).fetchall()
@@ -656,6 +687,26 @@ def runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
             LEFT JOIN run_metrics m
               ON m.activity_id = a.activity_id AND m.metrics_version = ?
             WHERE a.detail_json IS NOT NULL
+              AND {_RUN_TYPE_SQL}
+              AND m.activity_id IS NULL
+            ORDER BY a.start_time_local""",
+        (version,),
+    ).fetchall()
+
+
+
+def shelf_runs_missing_metrics(conn: sqlite3.Connection, version: int) -> list[tuple]:
+    """Shelf runs (Health Connect rows, no detail_json) that hold stored streams
+    but no run_metrics row at `version`: (activity_id, start_time_local,
+    type_key, distance_m). Their streams are the only source a METRICS_VERSION
+    bump can recompute from; a shelf row without streams is never listed."""
+    return conn.execute(
+        f"""SELECT a.activity_id, a.start_time_local, a.type_key, a.distance_m
+            FROM activities a
+            LEFT JOIN run_metrics m
+              ON m.activity_id = a.activity_id AND m.metrics_version = ?
+            WHERE {shelf_clause('a')}
+              AND a.detail_streams_json IS NOT NULL
               AND {_RUN_TYPE_SQL}
               AND m.activity_id IS NULL
             ORDER BY a.start_time_local""",
@@ -920,6 +971,38 @@ def upsert_race_prediction(conn: sqlite3.Connection, date: str, values: dict,
          json.dumps(raw, ensure_ascii=False), source, _now()),
     )
     conn.commit()
+
+
+def prediction_sources_mixed(conn: sqlite3.Connection) -> bool:
+    """Both our own Riegel estimates and another source's half predictions are
+    banked. A row without a half time (a new account's empty predictor
+    document) is no prediction and never counts."""
+    return conn.execute(
+        """SELECT EXISTS(SELECT 1 FROM race_predictions
+                         WHERE source = 'riegel' AND half_s IS NOT NULL)
+              AND EXISTS(SELECT 1 FROM race_predictions
+                         WHERE source IS NOT 'riegel' AND half_s IS NOT NULL)"""
+    ).fetchone()[0] == 1
+
+
+def half_predictions(conn: sqlite3.Connection,
+                     until: str | None = None) -> list[tuple[str, float]]:
+    """(date, half_s) by date, one model only. Riegel rows (SPLITS' own
+    estimate, banked by the ingest path) are dropped whenever another
+    source's half prediction exists, so the two models never join into one
+    line; a riegel-only instance keeps them."""
+    where = "half_s IS NOT NULL"
+    args: list = []
+    if until is not None:
+        where += " AND date <= ?"
+        args.append(until)
+    if conn.execute("SELECT 1 FROM race_predictions "
+                    "WHERE source IS NOT 'riegel' AND half_s IS NOT NULL "
+                    "LIMIT 1").fetchone():
+        where += " AND source IS NOT 'riegel'"
+    return [(d, h) for d, h in conn.execute(
+        f"SELECT date, half_s FROM race_predictions WHERE {where} ORDER BY date",
+        args)]
 
 
 def race_predictions_empty(conn: sqlite3.Connection) -> bool:
@@ -1250,6 +1333,32 @@ def write_distilled(conn: sqlite3.Connection, activity_id, distilled,
     return cur.rowcount == 1
 
 
+def patch_distilled(conn: sqlite3.Connection, activity_id, fields: dict) -> bool:
+    """Replace only the named keys of a stored distilled summary (a shelf
+    row's distilled copy is frozen otherwise). False when there is no copy."""
+    row = conn.execute("SELECT detail_distilled_json FROM activities WHERE activity_id = ?",
+                       (activity_id,)).fetchone()
+    if not row or not row[0]:
+        return False
+    doc = json.loads(row[0])
+    doc.update(fields)
+    conn.execute("UPDATE activities SET detail_distilled_json = ? WHERE activity_id = ?",
+                 (json.dumps(doc, ensure_ascii=False), activity_id))
+    conn.commit()
+    return True
+
+
+def invalidate_distilled(conn: sqlite3.Connection) -> int:
+    """Send every non-shelf row holding a distilled copy back through the
+    distillation pass (distilled_version = NULL). Shelf rows are untouched."""
+    cur = conn.execute(
+        "UPDATE activities SET distilled_version = NULL "
+        "WHERE detail_distilled_json IS NOT NULL "
+        f"AND NOT ({shelf_clause(None)})")
+    conn.commit()
+    return cur.rowcount
+
+
 def runs_missing_distilled(conn: sqlite3.Connection,
                            version: int | None = None) -> list:
     """activity_ids of archived runs whose distilled copy is missing OR stale —
@@ -1537,19 +1646,20 @@ def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
 
 
 def wellness_coverage(conn: sqlite3.Connection, today: str) -> dict:
-    """Wellness coverage over the archive's own span (earliest activity → today).
+    """Wellness coverage over the archive's Garmin span (earliest Garmin
+    activity → today; shelf rows predate the watch and have no nights).
 
     A date is COVERED once it has been asked about (`fetched_at`), whether or not
     the watch recorded anything. A date the sync never requested is a GAP. Those
     are different facts, and a chart that cannot tell them apart draws a lie —
     which is the whole reason `fetched_at` exists.
     """
-    earliest = conn.execute("SELECT MIN(start_time_local) FROM activities").fetchone()[0]
+    earliest = earliest_garmin_activity_date(conn)
     if not earliest:
         return {"expected": 0, "rows": 0, "fetched": 0, "with_data": 0,
                 "gaps": [], "earliest": None, "today": today}
 
-    start = dt.date.fromisoformat(earliest[:10])
+    start = dt.date.fromisoformat(earliest)
     end = dt.date.fromisoformat(today)
     expected = []
     while start <= end:

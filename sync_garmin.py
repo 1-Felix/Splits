@@ -30,8 +30,10 @@ import datetime as dt
 import json
 import math
 import os
+import re
 import sys
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from statistics import mean
 
@@ -43,9 +45,11 @@ import block_lens
 import coach_briefing
 import coach_pass
 import course_lens
+import ingest_builder
 import insight_metrics
 import interval_lens
 import plan_compliance
+import shelf
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -114,15 +118,17 @@ def fmt_hms(seconds: float | int | None) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def ffill(series: list) -> list:
-    """Forward/back-fill Nones so the charts never see a gap. Empty → 0s."""
+def lead_null_ffill(series: list) -> list:
+    """Forward-fill interior gaps so the charts never see one, but never invent
+    history: values before the first real one stay None (a young account's
+    series)."""
     out = list(series)
-    last = next((v for v in out if v is not None), 0)
+    last = None
     for i, v in enumerate(out):
         if v is None:
             out[i] = last
         else:
-            last = out[i]
+            last = v
     return out
 
 
@@ -225,6 +231,8 @@ def act_dur(a: dict) -> float:
 
 
 def act_pace(a: dict) -> int:
+    if "splitsPaceSecPerKm" in a:   # shelf projection: the ingest path's pace
+        return a["splitsPaceSecPerKm"]
     km, dur = act_km(a), act_dur(a)
     return int(round(dur / km)) if km > 0 else 0
 
@@ -352,6 +360,23 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
     try:
         out = []
         for a in runs[:n]:
+            if a.get("splitsShelf"):
+                # Health Connect shelf run: shown exactly as the ingest path
+                # showed it, from the archive alone — no Garmin call.
+                row = {
+                    "date": act_date(a),
+                    "type": a.get("splitsType") or classify(a),
+                    "km": round(act_km(a), 2),
+                    "time": fmt_hms(act_dur(a)),
+                    "pace": act_pace(a),
+                    "hr": act_hr(a),
+                    "cad": act_cad(a) or None,   # ingest's None, not Garmin's 0
+                    "vo2": None,
+                }
+                if a.get("splitsDetail"):
+                    row["detail"] = a["splitsDetail"]
+                out.append(row)
+                continue
             out.append({
                 "date": act_date(a),
                 "type": classify(a),
@@ -439,6 +464,36 @@ def fetch_run_detail(client, activity, work_floor: float | None = None,
                               work_floor=work_floor)
 
 
+_RESTING_HR_RE = re.compile(r"\d+(?:\.\d+)?")
+_resting_hr_warned: set[str] = set()
+
+
+def athlete_resting_hr() -> int | None:
+    """ATHLETE_RESTING_HR in whole bpm: an integer or a decimal string (rounded
+    half up). Empty or unset is None, the %max model. Anything else warns once
+    and reads as unset, so a typo costs the Karvonen zones, not the readers."""
+    raw = (os.getenv("ATHLETE_RESTING_HR") or "").strip()
+    if not raw:
+        return None
+    if _RESTING_HR_RE.fullmatch(raw):
+        return int(Decimal(raw).to_integral_value(rounding=ROUND_HALF_UP))
+    if raw not in _resting_hr_warned:
+        _resting_hr_warned.add(raw)
+        warn(f"ATHLETE_RESTING_HR={raw!r} is not a resting HR in bpm; "
+             "ignoring it, so zones fall back to %max")
+    return None
+
+
+def athlete_zone_bounds(max_hr: int | None = None) -> list[int]:
+    """This athlete's six HR-zone edges: Karvonen (heart-rate reserve) when
+    ATHLETE_RESTING_HR is pinned, plain %max otherwise (Felix, unchanged).
+    `max_hr` overrides ATHLETE_MAX_HR for callers that were handed one. Every
+    zone reader (distiller, intervals, zone card) comes through here."""
+    if max_hr is None:
+        max_hr = int(os.getenv("ATHLETE_MAX_HR") or "197")
+    return interval_lens.zone_bounds(int(max_hr), athlete_resting_hr())
+
+
 def distill_run_detail(det: dict | None, activity: dict,
                        laps: list | None = None,
                        workout: dict | None = None,
@@ -482,7 +537,7 @@ def distill_run_detail(det: dict | None, activity: dict,
     elev = activity.get("elevationGain")
 
     streams = distill_run_streams(det)
-    bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
+    bounds = athlete_zone_bounds()
     intervals = interval_lens.compact(
         interval_lens.build_document(streams, activity, laps, workout,
                                      bounds=bounds, floor=work_floor))
@@ -608,6 +663,15 @@ def month_keys(months: int) -> list[str]:
 
 def fetch_monthly(client, acts: list[dict], months: int = MONTHS) -> dict:
     keys = month_keys(months)
+    runs = [a for a in acts if is_run(a) and act_date(a)]
+    first_run = min((act_date(a)[:7] for a in runs), default=None)
+    # a young account's series starts at its first run, not 30 months back
+    if first_run is None:
+        keys = keys[-1:]
+    else:
+        keys = [k for k in keys if k >= first_run]
+    # VO2max lookups only make sense once Garmin has known the account
+    first_garmin = min((act_date(a)[:7] for a in runs if not a.get("splitsShelf")), default=None)
     pace_acc = {k: [] for k in keys}
     cad_acc = {k: [] for k in keys}
     vo2_acc = {k: [] for k in keys}
@@ -624,20 +688,21 @@ def fetch_monthly(client, acts: list[dict], months: int = MONTHS) -> dict:
         if act_vo2(a):
             vo2_acc[k].append(act_vo2(a))
 
-    pace = ffill([round(mean(pace_acc[k])) if pace_acc[k] else None for k in keys])
-    cad = ffill([round(mean(cad_acc[k])) if cad_acc[k] else None for k in keys])
+    pace = lead_null_ffill([round(mean(pace_acc[k])) if pace_acc[k] else None for k in keys])
+    cad = lead_null_ffill([round(mean(cad_acc[k])) if cad_acc[k] else None for k in keys])
     vo2 = [round(mean(vo2_acc[k]), 1) if vo2_acc[k] else None for k in keys]
 
     # vo2 often isn't on every activity — backfill the gaps from get_max_metrics
-    # at each month end (cheap, ~once per missing month).
+    # at each month end (cheap, ~once per missing month), but never for a month
+    # before the account's first Garmin run.
     if any(v is None for v in vo2):
         for i, k in enumerate(keys):
-            if vo2[i] is not None:
+            if vo2[i] is not None or first_garmin is None or k < first_garmin:
                 continue
             cdate = _month_end(k)
             v = safe(lambda: _parse_vo2(client.get_max_metrics(cdate)), None, f"get_max_metrics {k}")
             vo2[i] = round(v, 1) if v else None
-    vo2 = ffill(vo2)
+    vo2 = lead_null_ffill(vo2)
 
     return {"vo2maxStartMonth": keys[0], "vo2max": vo2, "paceSecPerKm": pace, "cadenceSpm": cad}
 
@@ -782,6 +847,10 @@ def fetch_wellness_day(client, date: str):
 def backfill_wellness(conn, client, earliest: str, today: str,
                       since: str | None = None, delay: float = BACKFILL_DELAY_S) -> dict:
     """Bank every night's raw sleep + HRV payload from `earliest` to `today`.
+    `earliest` is the archive's first Garmin day
+    (`activity_archive.earliest_garmin_activity_date`), the same window
+    `wellness_coverage` checks, so the completion marker below means what the
+    verify gate assumes.
 
     Resumable by construction: the archive is the cursor. A date already carrying
     `fetched_at` is skipped, so an interrupted run resumes where it stopped and a
@@ -866,16 +935,20 @@ def fetch_profile(client, vo2_current: float | None) -> dict:
     today = TODAY.isoformat()
     summary = safe(lambda: client.get_user_summary(today), {}, "get_user_summary") or {}
     rhr_doc = safe(lambda: client.get_rhr_day(today), {}, "get_rhr_day") or {}
-    rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate") or 47
+    rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate")
     weight_g = summary.get("weight") or _latest_weight_g(client) or 0
-    return {
-        "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Felix"),
+    prof = {
+        "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Athlete"),
         "age": int(os.getenv("ATHLETE_AGE", "31")),
-        "restingHR": int(rhr),
+        # Unknown means the key is omitted (the ingest path's convention) —
+        # never another athlete's number. The spreads keep Felix's key order.
+        **({"restingHR": int(rhr)} if rhr else {}),
         "maxHR": int(os.getenv("ATHLETE_MAX_HR", "197")),
-        "weightKg": round(weight_g / 1000.0, 1) if weight_g else 81.0,
-        "vo2maxCurrent": round(vo2_current, 1) if vo2_current else 51.3,
+        **({"weightKg": round(weight_g / 1000.0, 1)} if weight_g else {}),
     }
+    if vo2_current:
+        prof["vo2maxCurrent"] = round(vo2_current, 1)
+    return prof
 
 
 def _parse_rhr(doc: dict):
@@ -887,7 +960,7 @@ def _parse_rhr(doc: dict):
     return doc.get("restingHeartRate")
 
 
-def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
+def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict | None:
     today = TODAY.isoformat()
     tr_list = safe(lambda: client.get_training_readiness(today), [], "get_training_readiness") or []
     tr = tr_list[0] if isinstance(tr_list, list) and tr_list else (tr_list if isinstance(tr_list, dict) else {})
@@ -898,12 +971,16 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
     last = next((s for s in reversed(sleep) if s.get("hours")), {})
     hrv = last.get("hrv") or 0
     sleep_h = last.get("hours") or 0.0
-    rhr = safe(lambda: _parse_rhr(client.get_rhr_day(today)), None, "rhr(readiness)") or 46
+    rhr = safe(lambda: _parse_rhr(client.get_rhr_day(today)), None, "rhr(readiness)") or None
 
     status_doc = safe(lambda: client.get_training_status(today), {}, "get_training_status") or {}
     load = _parse_acute_load(status_doc)
 
     score = tr.get("score")
+    if not score and not last:
+        # No Garmin score and no night with sleep or HRV: a computed "readiness"
+        # would be the neutral 0.6 blend of nothing. Omit the card instead.
+        return None
     if not score:
         score = _compute_readiness(hrv, rhr, sleep_h)
     status = tr.get("level") or _readiness_label(score)
@@ -911,7 +988,7 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
         "score": int(round(score)),
         "status": str(status).title()[:16],
         "hrv": int(hrv),
-        "restingHR": int(rhr),
+        **({"restingHR": int(rhr)} if rhr else {}),
         "sleepHours": round(sleep_h, 1),
         "trainingLoad": int(load) if load else 0,
         "loadStatus": _load_label(status_doc),
@@ -938,7 +1015,7 @@ def _load_label(doc: dict) -> str:
                 return str(fb).split("_")[0].title()
     except Exception:  # noqa: BLE001
         pass
-    return "Optimal"
+    return ""
 
 
 def _compute_readiness(hrv, rhr, sleep_h) -> float:
@@ -956,11 +1033,18 @@ def _readiness_label(score) -> str:
 def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict]:
     monday = TODAY - dt.timedelta(days=TODAY.weekday())
     secs = [0.0] * 5
+    newest = None                   # (start, activityId) of the week's newest watch run
+    rows_by_id: dict = {}           # per-activity zone rows we already asked for
     for a in acts:
+        if a.get("splitsShelf"):
+            continue            # no zone seconds on the shelf, and no Garmin id to ask
         if not is_run(a) or not act_date(a):
             continue
         if dt.date.fromisoformat(act_date(a)) < monday:
             continue
+        key = (str(a.get("startTimeLocal") or act_date(a)), a.get("activityId"))
+        if newest is None or key > newest:
+            newest = key
         # zone seconds can live on the summary; else ask per-activity.
         got = False
         for z in range(1, 6):
@@ -971,13 +1055,30 @@ def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict
         if not got:
             aid = a.get("activityId")
             tz = safe(lambda: client.get_activity_hr_in_timezones(str(aid)), [], f"hr_zones {aid}") or []
+            rows_by_id[aid] = tz
             for row in tz:
                 z = row.get("zoneNumber")
                 if z and 1 <= z <= 5:
                     secs[z - 1] += row.get("secsInZone", 0)
 
+    # Edges: the watch's own zone boundaries, read from the newest run of the
+    # week (one extra call at most; none when that run's rows are in hand).
+    edges = None
+    if newest is not None:
+        eid = newest[1]
+        if eid not in rows_by_id:
+            rows_by_id[eid] = safe(lambda: client.get_activity_hr_in_timezones(str(eid)),
+                                   [], f"hr_zone edges {eid}") or []
+        low = {}
+        for row in rows_by_id[eid]:
+            z, lo = row.get("zoneNumber"), row.get("zoneLowBoundary")
+            if z and 1 <= z <= 5 and lo is not None:
+                low[z] = int(round(lo))
+        if len(low) == 5:
+            edges = [low[z] for z in range(1, 6)] + [int(max_hr)]
+    bounds = edges or athlete_zone_bounds(max_hr)
+
     labels = ["Recovery", "Endurance", "Tempo", "Threshold", "VO2 max"]
-    bounds = [round(max_hr * f) for f in (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)]
     return [
         {"z": z + 1, "label": labels[z], "min": int(round(secs[z] / 60)),
          "lo": bounds[z], "hi": bounds[z + 1]}
@@ -1016,12 +1117,22 @@ def fetch_raw_predictions(client) -> dict:
     return doc
 
 
-def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
+def _plan_goal_time() -> str | None:
+    """The plan's `race.goalTime` (as `ingest_builder` reads it), or None when
+    the plan is absent, unreadable or names no goal."""
+    loaded = safe(lambda: plan_compliance.load_plan(DATA_DIR / "plan-data.js"),
+                  None, "plan goal")
+    plan = loaded[1] if loaded else None
+    goal = ((plan or {}).get("race") or {}).get("goalTime")
+    return goal if isinstance(goal, str) and goal else None
+
+
+def fetch_predictions(pred_doc: dict, planned_goal: str | None) -> dict:
     return {
         "fiveK": fmt_hms(pred_doc.get("time5K")),
         "tenK": fmt_hms(pred_doc.get("time10K")),
         "halfNow": fmt_hms(pred_doc.get("timeHalfMarathon")),
-        "halfGoal": planned_goal,
+        **({"halfGoal": planned_goal} if planned_goal else {}),  # unknown → omitted
         "trend": "",  # filled from the insights trajectory when available
     }
 
@@ -1030,7 +1141,11 @@ def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
 # 4. ASSEMBLE + WRITE
 # ──────────────────────────────────────────────────────────────────────────────
 def build_data(client, acts: list[dict], pred_doc: dict | None = None,
-               sleep_raw_out: list | None = None) -> dict:
+               sleep_raw_out: list | None = None,
+               shelf_acts: list[dict] | None = None) -> dict:
+    # `shelf_acts` (spec D4): the Health Connect shelf's Garmin-shaped
+    # projection. Every history aggregate counts it; None/[] changes nothing.
+    acts = acts + (shelf_acts or [])
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
     # pulls anyway, so wellness_step can bank them without a second round-trip.
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
@@ -1046,14 +1161,16 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     weekly_km, weekly_runs = fetch_weekly(acts)
     ctl, atl = compute_fitness_fatigue(acts, max_hr)
     sleep = fetch_sleep(client, raw_out=sleep_raw_out)
-    vo2_current = monthly["vo2max"][-1] if monthly["vo2max"] else None
+    vo2_current = next((v for v in reversed(monthly["vo2max"]) if v is not None), None)
 
-    predictions = fetch_predictions(pred_doc or {})
+    predictions = fetch_predictions(pred_doc or {}, _plan_goal_time())
+    readiness = fetch_readiness(client, sleep, max_hr)
 
     data = {
         "profile": fetch_profile(client, vo2_current),
         "today": TODAY.isoformat(),
-        "readiness": fetch_readiness(client, sleep, max_hr),
+        # no evidence → no card (ingest convention); spread keeps Felix's key order
+        **({"readiness": readiness} if readiness is not None else {}),
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
         "personalBests": fetch_personal_bests(client),
@@ -1081,6 +1198,16 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     return data
 
 
+def _load_shelf_acts() -> list[dict]:
+    """The shelf projection from the archive at DATA_DIR. Read-only: it feeds
+    build_data and never reaches archive_step."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        return shelf.shelf_activities(conn)
+    finally:
+        conn.close()
+
+
 def attach_blocks_step(data: dict) -> None:
     """Attach the archive-derived blocks and the trend to the telemetry dict.
     Called from build_data, only ever inside safe() — attach_blocks fail-domains
@@ -1100,11 +1227,19 @@ def validate(data: dict) -> None:
     invariants belong to plan-data.js and are checked by validate_data.py."""
     h = data["history"]
     assert len(data["heatmapKm"]) == HEATMAP_DAYS, "heatmapKm must be exactly 365 days"
-    if h["vo2max"]:
+    if "vo2maxCurrent" in data["profile"] and h["vo2max"] and h["vo2max"][-1] is not None:
         assert abs(data["profile"]["vo2maxCurrent"] - h["vo2max"][-1]) < 0.05, \
             "profile.vo2maxCurrent must equal history.vo2max[-1]"
     for k in ("vo2max", "paceSecPerKm", "cadenceSpm", "weeklyKm", "weeklyRuns", "ctl", "atl"):
         assert isinstance(h.get(k), list), f"history.{k} must be a list"
+    for k in ("vo2max", "paceSecPerKm", "cadenceSpm"):
+        # a young account's series may start with nulls, never gap afterwards
+        seen = False
+        for v in h[k]:
+            if v is not None:
+                seen = True
+            assert v is not None or not seen, f"history.{k} has gaps (None after a value)"
+    for k in ("weeklyKm", "weeklyRuns", "ctl", "atl"):
         assert all(v is not None for v in h[k]), f"history.{k} has gaps (None values)"
     assert len(h["sleep"]) == SLEEP_NIGHTS, "history.sleep must have 14 nights"
     log("✓ telemetry validation passed")
@@ -1145,6 +1280,14 @@ INTERVAL_FLOOR_DRIFT_GATE = 0.02   # add-interval-lens D6/Task 7b: a banked
                                    # document stale, version bump or not
 
 
+def _resolve_seam(conn) -> None:
+    """Garmin wins any overlap with a Health Connect shelf row (spec D2) —
+    before anything counts or ratchets the archive's rows."""
+    pruned = shelf.resolve_seam(conn)
+    if pruned:
+        log(f"– pruned {len(pruned)} shelf rows Garmin now owns")
+
+
 def archive_step(client, acts: list[dict]) -> None:
     """Bank this sync's activity fetches into the durable archive. Runs BEFORE
     build_data (the insights must include today's run — design D8) and only
@@ -1152,6 +1295,7 @@ def archive_step(client, acts: list[dict]) -> None:
     conn = activity_archive.open_archive(DATA_DIR)
     try:
         added = activity_archive.upsert_activities(conn, acts)
+        _resolve_seam(conn)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         # fix-distill-parity D3: the distill pass no longer runs here — it
         # moved to distill_step in main(), AFTER _laps_pass (below) and
@@ -1183,7 +1327,7 @@ def distill_step() -> None:
         conn.close()
 
 
-def derive_intervals(conn) -> dict:
+def derive_intervals(conn, rescore: bool = False) -> dict:
     """Score every archived run holding streams against the athlete's own pace
     history (add-interval-lens D6, calibrated per Task 7b).
 
@@ -1210,7 +1354,7 @@ def derive_intervals(conn) -> dict:
     Stored payloads in, no network. A per-run failure (bad stream, bad
     payload) is deterministic, so it is logged and skipped rather than
     retried every night — one bad run must never sink the rest."""
-    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    bounds = athlete_zone_bounds()
     runs = activity_archive.streamed_runs(conn)
 
     samples: list[float] = []
@@ -1250,7 +1394,21 @@ def derive_intervals(conn) -> dict:
 
     activity_archive.set_meta(conn, "interval_work_floor", floor)
 
-    bounds = interval_lens.zone_bounds(max_hr)
+    # Zone model: documents are scored against one set of edges. A changed
+    # model (ATHLETE_RESTING_HR set or re-pinned) rescores everything and sends
+    # every Garmin distilled copy back through _distill_pass; the first
+    # sighting only stamps. Shelf rows keep their distilled copy, and have its
+    # `intervals` patched below instead. `rescore` forces the same path.
+    prev_bounds = activity_archive.get_meta(conn, "interval_zone_bounds")
+    invalidated = 0
+    if rescore or (prev_bounds not in (None, "") and prev_bounds != json.dumps(bounds)):
+        moved = True
+        warn(f"zone edges {prev_bounds or 'unstamped'} -> {bounds}: rescoring every "
+             "stored document and re-deriving distilled copies")
+        invalidated = activity_archive.invalidate_distilled(conn)
+    # The stamp is written AFTER the loop: a pass that dies mid-way must
+    # still see the zones as changed tomorrow (invalidate_distilled is idempotent).
+
     pending = runs if moved else activity_archive.runs_missing_intervals(
         conn, interval_lens.INTERVAL_VERSION)
 
@@ -1280,8 +1438,14 @@ def derive_intervals(conn) -> dict:
             "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
             "doc_json": json.dumps(doc, ensure_ascii=False),
         })
+        if activity_archive.is_shelf_summary(summary):
+            fields = {"intervals": interval_lens.compact(doc)}
+            if summary.get("hrSamples"):    # zone-derived: recompute from the ingest run
+                fields["zoneMin"] = ingest_builder.zone_minutes(summary, bounds)
+            activity_archive.patch_distilled(conn, aid, fields)
         scored += 1
-    return {"scored": scored, "floor": floor}
+    activity_archive.set_meta(conn, "interval_zone_bounds", json.dumps(bounds))
+    return {"scored": scored, "floor": floor, "invalidated": invalidated}
 
 
 def intervals_step() -> None:
@@ -1440,11 +1604,12 @@ def run_wellness_backfill(client, since: str | None = None) -> None:
     archive is the cursor, so interrupting never repeats completed work."""
     conn = activity_archive.open_archive(DATA_DIR)
     try:
-        cov = activity_archive.coverage(conn)
-        if not cov["earliest"]:
-            log("! archive holds no activities — run --backfill first")
+        # The span starts at the first Garmin activity: the shelf predates the
+        # watch, and every night before it would cost three empty calls.
+        earliest = activity_archive.earliest_garmin_activity_date(conn)
+        if not earliest:
+            log("! archive holds no Garmin activities — run --backfill first")
             return
-        earliest = cov["earliest"][:10]
         today = TODAY.isoformat()
         log(f"… wellness backfill: {earliest} → {today}"
             + (f" (bounded by --since {since})" if since else ""))
@@ -1725,6 +1890,7 @@ def run_backfill(client) -> None:
                 log(f"  {year}: none")
                 empty += 1
             year -= 1
+        _resolve_seam(conn)
 
         missing = activity_archive.missing_detail_ids(conn, newest_first=True)
         log(f"… backfill: fetching detail for {len(missing)} activities (throttled)")
@@ -1946,6 +2112,10 @@ def main() -> None:
                    help="fetch the workout definition behind every archived "
                         "run that references one (one-time catch-up for a "
                         "pre-v12 archive; throttled, resumable)")
+    p.add_argument("--rescore-intervals", action="store_true",
+                   help="treat the zone edges as changed: rescore every interval "
+                        "document and re-derive distilled copies, then exit "
+                        "(offline - no Garmin login)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -1953,6 +2123,15 @@ def main() -> None:
 
     if args.verify_archive:
         raise SystemExit(verify_archive())
+    if args.rescore_intervals:
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            stats = derive_intervals(conn, rescore=True)
+        finally:
+            conn.close()
+        log(f"✓ rescore-intervals: {stats['scored']} documents rescored, "
+            f"{stats['invalidated']} distilled copies invalidated")
+        raise SystemExit(0)
     if args.backfill_maps:      # OSM only — no Garmin connect() needed
         run_maps_backfill()
         return
@@ -1996,12 +2175,14 @@ def main() -> None:
     safe(compliance_step, None, "compliance step")
     safe(lambda: course_lens_step(client), None, "course lens step")
     sleep_raw: list = []
-    data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)
+    shelf_acts = safe(_load_shelf_acts, [], "shelf projection")
+    data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw,
+                      shelf_acts=shelf_acts)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
     safe(lambda: briefing_step(data), None, "coach briefing")
-    safe(lambda: wellness_step(client, data["readiness"], sleep_raw), None, "wellness banking")
+    safe(lambda: wellness_step(client, data.get("readiness") or {}, sleep_raw), None, "wellness banking")
 
 
 if __name__ == "__main__":

@@ -189,7 +189,9 @@ def block_report_lines(doc: dict) -> list[str]:
     if gap.get("deltaS") is not None:
         verdict = ("closing" if gap["deltaS"] < 0
                    else "opening" if gap["deltaS"] > 0 else "flat")
-        L.append(f"- goal gap ({doc.get('goalTime', '—')}): "
+        since = (f" since {gap['startDate']} (Garmin predictor)"
+                 if gap.get("baseline") == "source-change" else "")
+        L.append(f"- goal gap ({doc.get('goalTime', '—')}){since}: "
                  f"{_fmt_signed_hms(gap.get('gapStartS'))} → "
                  f"{_fmt_signed_hms(gap.get('gapNowS'))} vs goal — {verdict}")
     else:
@@ -441,7 +443,7 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
     L.append("")
     L.append(f"- score {r.get('score', '—')} ({r.get('status', '—')}) · "
              f"HRV {r.get('hrv', '—')} · RHR {r.get('restingHR', '—')} · "
-             f"sleep {r.get('sleepHours', '—')} h · load: {r.get('loadStatus', '—')}")
+             f"sleep {r.get('sleepHours', '—')} h · load: {r.get('loadStatus') or '—'}")
 
     # ── plan staleness ────────────────────────────────────────────────────
     L.append("")

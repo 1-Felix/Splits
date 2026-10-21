@@ -443,7 +443,7 @@ def render_briefing(conn, plan: dict, data: dict, today: dt.date) -> str:
     L.append("")
     L.append(f"- score {r.get('score', '—')} ({r.get('status', '—')}) · "
              f"HRV {r.get('hrv', '—')} · RHR {r.get('restingHR', '—')} · "
-             f"sleep {r.get('sleepHours', '—')} h · load: {r.get('loadStatus', '—')}")
+             f"sleep {r.get('sleepHours', '—')} h · load: {r.get('loadStatus') or '—'}")
 
     # ── plan staleness ────────────────────────────────────────────────────
     L.append("")

@@ -554,3 +554,155 @@ def test_wellness_step_takes_an_empty_readiness(sg_env):
         assert c.execute("SELECT COUNT(*) FROM daily_wellness").fetchone()[0] == 1
     finally:
         c.close()
+
+
+# ── Task 6: zones per athlete, zone-card edges from the watch ────────────────
+import interval_lens as il  # noqa: E402
+
+
+@pytest.fixture
+def zn(sg_env, monkeypatch):
+    sg, data_dir = sg_env
+    monkeypatch.setenv("ATHLETE_MAX_HR", "199")
+    monkeypatch.delenv("ATHLETE_RESTING_HR", raising=False)
+    c = arch.open_archive(data_dir)
+    shelf_row(c, S1, "uid-1", dt.datetime(2026, 9, 1, 7, 0), 1800, 5000.0, streams=True)
+    garmin_row(c, G1, dt.datetime(2026, 10, 1, 7, 0), 1800, 5000.0)
+    streams = arch.streams_payload(c, S1)
+    assert arch.write_streams(c, G1, streams)
+    assert arch.write_distilled(c, G1, {"intervals": {"stale": True}}, version=sg.GARMIN_DISTILL_VERSION)
+    yield sg, c
+    c.close()
+
+
+def docs(c):
+    return dict(c.execute("SELECT activity_id, doc_json FROM run_intervals").fetchall())
+
+
+def garmin_distilled_versions(c):
+    return {r[0] for r in c.execute(
+        "SELECT a.distilled_version FROM activities a WHERE a.detail_distilled_json IS NOT NULL "
+        f"AND NOT {arch.shelf_clause('a')}")}
+
+
+def distilled_of(c, aid):
+    return c.execute("SELECT detail_distilled_json FROM activities WHERE activity_id=?", (aid,)).fetchone()[0]
+
+
+def doc_of(c, aid):
+    return c.execute("SELECT doc_json FROM run_intervals WHERE activity_id=?", (aid,)).fetchone()[0]
+
+
+def test_zone_model_follows_resting_hr_env(sg_env, monkeypatch):
+    sg, _ = sg_env
+    monkeypatch.setenv("ATHLETE_MAX_HR", "199")
+    monkeypatch.delenv("ATHLETE_RESTING_HR", raising=False)
+    assert sg.athlete_zone_bounds() == [100, 119, 139, 159, 179, 199]
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    assert sg.athlete_zone_bounds() == [128, 142, 156, 171, 185, 199]
+    assert sg.athlete_zone_bounds(max_hr=190) == il.zone_bounds(190, 57)
+
+
+def test_first_stamp_does_not_rescore_then_a_change_does(zn, monkeypatch):
+    sg, c = zn
+    sg.derive_intervals(c)                       # meta absent -> stamp only
+    assert json.loads(arch.get_meta(c, "interval_zone_bounds")) == [100, 119, 139, 159, 179, 199]
+    assert garmin_distilled_versions(c) == {sg.GARMIN_DISTILL_VERSION}   # first stamp invalidates nothing
+    before = docs(c)
+    assert before
+    sg.derive_intervals(c)                       # unchanged -> nothing moves
+    assert docs(c) == before
+    seen = []
+    real = il.build_document
+    monkeypatch.setattr(il, "build_document",
+                        lambda *a, **k: (seen.append(a[4]), real(*a, **k))[1])
+    sg.derive_intervals(c)
+    assert seen == []                            # same edges again -> no rescoring
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    sg.derive_intervals(c)
+    assert seen and all(b == [128, 142, 156, 171, 185, 199] for b in seen)   # every doc rescored
+    assert garmin_distilled_versions(c) == {None}
+    assert json.loads(arch.get_meta(c, "interval_zone_bounds")) == [128, 142, 156, 171, 185, 199]
+    assert json.loads(distilled_of(c, S1))["intervals"] == il.compact(json.loads(doc_of(c, S1)))
+
+
+def test_patch_distilled_intervals_replaces_only_that_key(zn):
+    sg, c = zn
+    before = json.loads(distilled_of(c, S1))
+    assert arch.patch_distilled_intervals(c, S1, {"shape": "x"}) is True
+    after = json.loads(distilled_of(c, S1))
+    assert after["intervals"] == {"shape": "x"}
+    assert {k: v for k, v in after.items() if k != "intervals"} == \
+        {k: v for k, v in before.items() if k != "intervals"}
+    assert arch.patch_distilled_intervals(c, 424242, {"shape": "x"}) is False
+
+
+def test_invalidate_distilled_spares_the_shelf(zn):
+    sg, c = zn
+    shelf_before = distilled_of(c, S1)
+    assert arch.invalidate_distilled(c) == 1
+    assert garmin_distilled_versions(c) == {None}
+    assert distilled_of(c, S1) == shelf_before
+
+
+def test_rescore_flag_is_offline_and_rescores(zn, monkeypatch, tmp_path):
+    sg, c = zn
+    sg.derive_intervals(c)
+    before = docs(c)
+    c.close()
+
+    def boom():
+        raise AssertionError("connect() must not be called")
+    monkeypatch.setattr(sg, "connect", boom)
+    monkeypatch.setattr(sys, "argv", ["sync_garmin.py", "--rescore-intervals"])
+    with pytest.raises(SystemExit) as e:
+        sg.main()
+    assert e.value.code == 0
+    c2 = arch.open_archive(sg.DATA_DIR)
+    try:
+        assert garmin_distilled_versions(c2) == {None}
+        assert set(docs(c2)) == set(before)
+    finally:
+        c2.close()
+
+
+def _watch_rows(lows):
+    return [{"zoneNumber": z, "secsInZone": 60, "zoneLowBoundary": lo}
+            for z, lo in zip(range(1, 6), lows)]
+
+
+def _week_run(aid=30_000_000_001, **extra):
+    a = {"activityId": aid, "startTimeLocal": "2026-10-20 07:00:00",
+         "activityType": {"typeKey": "running"}, "distance": 5000.0, "duration": 1800.0}
+    a.update(extra)
+    return a
+
+
+def test_zone_card_edges_come_from_the_watch(sg_env):
+    sg, _ = sg_env
+    client = FakeClient({"get_activity_hr_in_timezones": _watch_rows((99, 128, 142, 156, 171))})
+    zones = sg.fetch_hr_zones_this_week(client, [_week_run()], 199)
+    assert [(z["lo"], z["hi"]) for z in zones] == [(99, 128), (128, 142), (142, 156), (156, 171), (171, 199)]
+    assert [z["min"] for z in zones] == [1] * 5
+    assert len(client.calls) == 1
+
+
+def test_zone_card_edges_cost_at_most_one_extra_call(sg_env):
+    sg, _ = sg_env
+    seconds = {f"hrTimeInZone_{z}": 120.0 for z in range(1, 6)}
+    client = FakeClient({"get_activity_hr_in_timezones": _watch_rows((99, 128, 142, 156, 171))})
+    acts = [_week_run(30_000_000_001, **seconds),
+            _week_run(30_000_000_002, startTimeLocal="2026-10-21 07:00:00", **seconds)]
+    zones = sg.fetch_hr_zones_this_week(client, acts, 199)
+    assert zones[1]["lo"] == 128 and [z["min"] for z in zones] == [4] * 5
+    assert client.calls == [("get_activity_hr_in_timezones", ("30000000002",))]   # the newest run
+
+
+def test_zone_card_falls_back_to_athlete_bounds(sg_env, monkeypatch):
+    sg, _ = sg_env
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "57")
+    client = FakeClient({})
+    zones = sg.fetch_hr_zones_this_week(client, [_week_run()], 199)
+    assert [z["lo"] for z in zones] == sg.athlete_zone_bounds(199)[:5]
+    assert zones[4]["hi"] == 199
+    assert len(client.calls) == 1                # no second call once the rows lack edges

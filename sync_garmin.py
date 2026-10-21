@@ -472,6 +472,16 @@ def fetch_run_detail(client, activity, work_floor: float | None = None,
                               work_floor=work_floor)
 
 
+def athlete_zone_bounds(max_hr: int | None = None) -> list[int]:
+    """This athlete's six HR-zone edges: Karvonen (heart-rate reserve) when
+    ATHLETE_RESTING_HR is pinned, plain %max otherwise (Felix, unchanged).
+    `max_hr` overrides ATHLETE_MAX_HR for callers that were handed one."""
+    if max_hr is None:
+        max_hr = int(os.getenv("ATHLETE_MAX_HR") or "197")
+    rhr = os.getenv("ATHLETE_RESTING_HR")
+    return interval_lens.zone_bounds(int(max_hr), int(rhr) if rhr else None)
+
+
 def distill_run_detail(det: dict | None, activity: dict,
                        laps: list | None = None,
                        workout: dict | None = None,
@@ -515,7 +525,7 @@ def distill_run_detail(det: dict | None, activity: dict,
     elev = activity.get("elevationGain")
 
     streams = distill_run_streams(det)
-    bounds = interval_lens.zone_bounds(int(os.getenv("ATHLETE_MAX_HR", "197")))
+    bounds = athlete_zone_bounds()
     intervals = interval_lens.compact(
         interval_lens.build_document(streams, activity, laps, workout,
                                      bounds=bounds, floor=work_floor))
@@ -1007,6 +1017,8 @@ def _readiness_label(score) -> str:
 def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict]:
     monday = TODAY - dt.timedelta(days=TODAY.weekday())
     secs = [0.0] * 5
+    newest = None                   # (start, activityId) of the week's newest watch run
+    rows_by_id: dict = {}           # per-activity zone rows we already asked for
     for a in acts:
         if a.get("splitsShelf"):
             continue            # no zone seconds on the shelf, and no Garmin id to ask
@@ -1014,6 +1026,9 @@ def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict
             continue
         if dt.date.fromisoformat(act_date(a)) < monday:
             continue
+        key = (str(a.get("startTimeLocal") or act_date(a)), a.get("activityId"))
+        if newest is None or key > newest:
+            newest = key
         # zone seconds can live on the summary; else ask per-activity.
         got = False
         for z in range(1, 6):
@@ -1024,13 +1039,30 @@ def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict
         if not got:
             aid = a.get("activityId")
             tz = safe(lambda: client.get_activity_hr_in_timezones(str(aid)), [], f"hr_zones {aid}") or []
+            rows_by_id[aid] = tz
             for row in tz:
                 z = row.get("zoneNumber")
                 if z and 1 <= z <= 5:
                     secs[z - 1] += row.get("secsInZone", 0)
 
+    # Edges: the watch's own zone boundaries, read from the newest run of the
+    # week (one extra call at most; none when that run's rows are in hand).
+    edges = None
+    if newest is not None:
+        eid = newest[1]
+        if eid not in rows_by_id:
+            rows_by_id[eid] = safe(lambda: client.get_activity_hr_in_timezones(str(eid)),
+                                   [], f"hr_zone edges {eid}") or []
+        low = {}
+        for row in rows_by_id[eid]:
+            z, lo = row.get("zoneNumber"), row.get("zoneLowBoundary")
+            if z and 1 <= z <= 5 and lo is not None:
+                low[z] = int(round(lo))
+        if len(low) == 5:
+            edges = [low[z] for z in range(1, 6)] + [int(max_hr)]
+    bounds = edges or athlete_zone_bounds(max_hr)
+
     labels = ["Recovery", "Endurance", "Tempo", "Threshold", "VO2 max"]
-    bounds = [round(max_hr * f) for f in (0.50, 0.60, 0.70, 0.80, 0.90, 1.00)]
     return [
         {"z": z + 1, "label": labels[z], "min": int(round(secs[z] / 60)),
          "lo": bounds[z], "hi": bounds[z + 1]}
@@ -1278,7 +1310,7 @@ def distill_step() -> None:
         conn.close()
 
 
-def derive_intervals(conn) -> dict:
+def derive_intervals(conn, rescore: bool = False) -> dict:
     """Score every archived run holding streams against the athlete's own pace
     history (add-interval-lens D6, calibrated per Task 7b).
 
@@ -1305,7 +1337,7 @@ def derive_intervals(conn) -> dict:
     Stored payloads in, no network. A per-run failure (bad stream, bad
     payload) is deterministic, so it is logged and skipped rather than
     retried every night — one bad run must never sink the rest."""
-    max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
+    bounds = athlete_zone_bounds()
     runs = activity_archive.streamed_runs(conn)
 
     samples: list[float] = []
@@ -1345,7 +1377,20 @@ def derive_intervals(conn) -> dict:
 
     activity_archive.set_meta(conn, "interval_work_floor", floor)
 
-    bounds = interval_lens.zone_bounds(max_hr)
+    # Zone model: documents are scored against one set of edges. A changed
+    # model (ATHLETE_RESTING_HR set or re-pinned) rescores everything and sends
+    # every Garmin distilled copy back through _distill_pass; the first
+    # sighting only stamps. Shelf rows keep their distilled copy, and have its
+    # `intervals` patched below instead. `rescore` forces the same path.
+    prev_bounds = activity_archive.get_meta(conn, "interval_zone_bounds")
+    invalidated = 0
+    if rescore or (prev_bounds not in (None, "") and prev_bounds != json.dumps(bounds)):
+        moved = True
+        warn(f"zone edges {prev_bounds or 'unstamped'} -> {bounds}: rescoring every "
+             "stored document and re-deriving distilled copies")
+        invalidated = activity_archive.invalidate_distilled(conn)
+    activity_archive.set_meta(conn, "interval_zone_bounds", json.dumps(bounds))
+
     pending = runs if moved else activity_archive.runs_missing_intervals(
         conn, interval_lens.INTERVAL_VERSION)
 
@@ -1375,8 +1420,10 @@ def derive_intervals(conn) -> dict:
             "work_dur_s": (doc.get("quality") or {}).get("workDurS"),
             "doc_json": json.dumps(doc, ensure_ascii=False),
         })
+        if activity_archive.is_shelf_summary(summary):
+            activity_archive.patch_distilled_intervals(conn, aid, interval_lens.compact(doc))
         scored += 1
-    return {"scored": scored, "floor": floor}
+    return {"scored": scored, "floor": floor, "invalidated": invalidated}
 
 
 def intervals_step() -> None:
@@ -2042,6 +2089,10 @@ def main() -> None:
                    help="fetch the workout definition behind every archived "
                         "run that references one (one-time catch-up for a "
                         "pre-v12 archive; throttled, resumable)")
+    p.add_argument("--rescore-intervals", action="store_true",
+                   help="treat the zone edges as changed: rescore every interval "
+                        "document and re-derive distilled copies, then exit "
+                        "(offline - no Garmin login)")
     p.add_argument("--verify-archive", action="store_true",
                    help="report archive coverage and exit non-zero on regression "
                         "(offline — no Garmin login)")
@@ -2049,6 +2100,15 @@ def main() -> None:
 
     if args.verify_archive:
         raise SystemExit(verify_archive())
+    if args.rescore_intervals:
+        conn = activity_archive.open_archive(DATA_DIR)
+        try:
+            stats = derive_intervals(conn, rescore=True)
+        finally:
+            conn.close()
+        log(f"✓ rescore-intervals: {stats['scored']} documents rescored, "
+            f"{stats['invalidated']} distilled copies invalidated")
+        raise SystemExit(0)
     if args.backfill_maps:      # OSM only — no Garmin connect() needed
         run_maps_backfill()
         return

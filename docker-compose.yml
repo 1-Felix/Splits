@@ -30,6 +30,7 @@ services:
       # ATHLETE_NAME: "Felix"
       # ATHLETE_AGE: "31"
       # ATHLETE_MAX_HR: "197"
+      # ATHLETE_RESTING_HR: "57"   # switches zones to heart-rate reserve (Karvonen); change it together with the watch's zones
     volumes:
       - splits-data:/data     # garmin-data.js, plan-data.js, token + raw cache
 

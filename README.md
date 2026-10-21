@@ -254,6 +254,7 @@ compose file.
 | `SYNC_AT` | `04:00` | Daily auto-sync time (local). `off` to disable. |
 | `SYNC_ON_BOOT` | `on` | Sync once at startup if telemetry is missing/stale. `off` to disable. |
 | `ATHLETE_NAME` / `ATHLETE_AGE` / `ATHLETE_MAX_HR` | — | Profile overrides Garmin doesn't always expose. |
+| `ATHLETE_RESTING_HR` | — | Pinned resting HR. Set: zones use heart-rate reserve (Karvonen), and stored interval documents are rescored when it changes; unset: zones are plain %max. Change it together with the watch's zones. |
 | `SPLITS_PLAN_TOKEN` | — | Secret that enables `PUT /api/plan` (plan push). Unset ⇒ no write endpoint. See below. |
 | `SPLITS_ARCHIVE_DIR` | `SPLITS_DATA_DIR` | Where the archive API reads `activity-archive.db`. Set it in dev when the data dir is a network mount — SQLite over SMB is unsupported. |
 

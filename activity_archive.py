@@ -567,6 +567,16 @@ def is_shelf_summary(summary: dict | None) -> bool:
     return bool(summary) and summary.get("sessionUid") is not None
 
 
+def earliest_garmin_activity_date(conn: sqlite3.Connection) -> str | None:
+    """YYYY-MM-DD of the earliest activity Garmin issued (the shelf excluded),
+    or None when there is none. The wellness window starts here: the shelf
+    predates the watch, so Garmin has no nights for it."""
+    first = conn.execute(
+        f"SELECT MIN(start_time_local) FROM activities WHERE NOT ({shelf_clause(None)})"
+    ).fetchone()[0]
+    return first[:10] if first else None
+
+
 def missing_detail_ids(conn: sqlite3.Connection, limit: int | None = None,
                        newest_first: bool = True) -> list:
     order = "DESC" if newest_first else "ASC"
@@ -1631,19 +1641,20 @@ def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
 
 
 def wellness_coverage(conn: sqlite3.Connection, today: str) -> dict:
-    """Wellness coverage over the archive's own span (earliest activity → today).
+    """Wellness coverage over the archive's Garmin span (earliest Garmin
+    activity → today; shelf rows predate the watch and have no nights).
 
     A date is COVERED once it has been asked about (`fetched_at`), whether or not
     the watch recorded anything. A date the sync never requested is a GAP. Those
     are different facts, and a chart that cannot tell them apart draws a lie —
     which is the whole reason `fetched_at` exists.
     """
-    earliest = conn.execute("SELECT MIN(start_time_local) FROM activities").fetchone()[0]
+    earliest = earliest_garmin_activity_date(conn)
     if not earliest:
         return {"expected": 0, "rows": 0, "fetched": 0, "with_data": 0,
                 "gaps": [], "earliest": None, "today": today}
 
-    start = dt.date.fromisoformat(earliest[:10])
+    start = dt.date.fromisoformat(earliest)
     end = dt.date.fromisoformat(today)
     expected = []
     while start <= end:

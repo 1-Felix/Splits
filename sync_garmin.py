@@ -836,6 +836,10 @@ def fetch_wellness_day(client, date: str):
 def backfill_wellness(conn, client, earliest: str, today: str,
                       since: str | None = None, delay: float = BACKFILL_DELAY_S) -> dict:
     """Bank every night's raw sleep + HRV payload from `earliest` to `today`.
+    `earliest` is the archive's first Garmin day
+    (`activity_archive.earliest_garmin_activity_date`), the same window
+    `wellness_coverage` checks, so the completion marker below means what the
+    verify gate assumes.
 
     Resumable by construction: the archive is the cursor. A date already carrying
     `fetched_at` is skipped, so an interrupted run resumes where it stopped and a
@@ -1588,11 +1592,12 @@ def run_wellness_backfill(client, since: str | None = None) -> None:
     archive is the cursor, so interrupting never repeats completed work."""
     conn = activity_archive.open_archive(DATA_DIR)
     try:
-        cov = activity_archive.coverage(conn)
-        if not cov["earliest"]:
-            log("! archive holds no activities — run --backfill first")
+        # The span starts at the first Garmin activity: the shelf predates the
+        # watch, and every night before it would cost three empty calls.
+        earliest = activity_archive.earliest_garmin_activity_date(conn)
+        if not earliest:
+            log("! archive holds no Garmin activities — run --backfill first")
             return
-        earliest = cov["earliest"][:10]
         today = TODAY.isoformat()
         log(f"… wellness backfill: {earliest} → {today}"
             + (f" (bounded by --since {since})" if since else ""))

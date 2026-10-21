@@ -840,3 +840,111 @@ def test_samples_from_streams_parity(heal):
     streams = arch.streams_payload(c, S1)
     assert ib_under_test._metric_samples(streams) == im.samples_from_streams(streams)
     assert len(im.samples_from_streams(streams)) == len(streams["t"])
+
+
+# ── Final review A1: the wellness window starts at the watch ─────────────────
+# The shelf predates the Garmin account, so Garmin has no nights for it: asking
+# costs calls from a rate-limited IP, and demanding them keeps the gate unarmed.
+def _sleep_doc(date):
+    return {"dailySleepDTO": {"calendarDate": date, "sleepTimeSeconds": 27000},
+            "restingHeartRate": 57}
+
+
+def _wellness_client():
+    return FakeClient({"get_sleep_data": _sleep_doc, "get_hrv_data": lambda d: {}})
+
+
+def _wellness_dates(client):
+    return sorted({args[0] for name, args in client.calls
+                   if name in ("get_sleep_data", "get_hrv_data", "get_rhr_day")})
+
+
+@pytest.fixture
+def mixed(sg_env, monkeypatch):
+    """Max at cutover: shelf from 2026-06-10, Garmin from 2026-10-19."""
+    sg, data_dir = sg_env
+    monkeypatch.setattr(sg.time, "sleep", lambda s: None)
+    c = arch.open_archive(data_dir)
+    shelf_row(c, S1, "uid-1", "2026-06-10T18:47:45", 1800, 5000.0)
+    shelf_row(c, S2, "uid-2", "2026-09-03T07:00:00", 1800, 5000.0)
+    garmin_row(c, G1, "2026-10-19 19:10:00", 900, 1360.0)
+    c.close()
+    yield sg, data_dir
+
+
+def test_earliest_garmin_activity_date_skips_the_shelf(tmp_path):
+    c = arch.open_archive(tmp_path)
+    try:
+        assert arch.earliest_garmin_activity_date(c) is None          # empty archive
+        shelf_row(c, S1, "uid-1", "2026-06-10T18:47:45", 1800, 5000.0)
+        assert arch.earliest_garmin_activity_date(c) is None          # shelf only
+        garmin_row(c, G1, "2026-10-19 19:10:00", 900, 1360.0)
+        assert arch.earliest_garmin_activity_date(c) == "2026-10-19"
+    finally:
+        c.close()
+
+
+def test_wellness_backfill_asks_garmin_only_from_the_first_garmin_run(mixed):
+    sg, data_dir = mixed
+    client = _wellness_client()
+    sg.run_wellness_backfill(client)
+    assert _wellness_dates(client) == ["2026-10-19", "2026-10-20", "2026-10-21"]
+    c = arch.open_archive(data_dir)
+    try:
+        assert arch.get_meta(c, "wellness_backfill_completed_at") is not None
+        cov = arch.wellness_coverage(c, "2026-10-21")
+        assert (cov["earliest"], cov["expected"], cov["gaps"]) == ("2026-10-19", 3, [])
+    finally:
+        c.close()
+    assert sg.verify_archive() == 0
+
+
+def test_wellness_backfill_since_the_first_garmin_day_completes(mixed):
+    sg, data_dir = mixed
+    client = _wellness_client()
+    sg.run_wellness_backfill(client, since="2026-10-19")      # the plan's runbook flag
+    assert _wellness_dates(client) == ["2026-10-19", "2026-10-20", "2026-10-21"]
+    c = arch.open_archive(data_dir)
+    try:
+        assert arch.get_meta(c, "wellness_backfill_completed_at") is not None
+    finally:
+        c.close()
+
+
+def test_the_armed_gate_catches_a_gap_inside_the_garmin_window(mixed):
+    sg, data_dir = mixed
+    sg.run_wellness_backfill(_wellness_client())
+    assert sg.verify_archive() == 0                       # shelf months are not gaps
+    c = arch.open_archive(data_dir)
+    c.execute("UPDATE daily_wellness SET fetched_at = NULL WHERE date = '2026-10-20'")
+    c.commit()
+    c.close()
+    assert sg.verify_archive() == 1
+
+
+def test_a_shelf_only_archive_has_no_wellness_window(sg_env, monkeypatch):
+    sg, data_dir = sg_env
+    c = arch.open_archive(data_dir)
+    shelf_row(c, S1, "uid-1", "2026-06-10T18:47:45", 1800, 5000.0)
+    cov = arch.wellness_coverage(c, "2026-10-21")
+    assert (cov["expected"], cov["gaps"], cov["earliest"]) == (0, [], None)
+    arch.set_meta(c, "wellness_backfill_completed_at", "2026-10-21T08:00:00+02:00")
+    c.close()
+    client = _wellness_client()
+    sg.run_wellness_backfill(client)
+    assert client.calls == []
+    assert sg.verify_archive() == 0
+
+
+def test_a_felix_shaped_archive_keeps_its_window(sg_env, monkeypatch):
+    sg, data_dir = sg_env
+    monkeypatch.setattr(sg.time, "sleep", lambda s: None)
+    c = arch.open_archive(data_dir)
+    garmin_row(c, G1, "2026-10-15 07:00:00", 1800, 5000.0)
+    garmin_row(c, G2, "2026-10-18 07:00:00", 1800, 5000.0)
+    first = c.execute("SELECT MIN(start_time_local) FROM activities").fetchone()[0][:10]
+    assert arch.wellness_coverage(c, "2026-10-21")["earliest"] == first == "2026-10-15"
+    c.close()
+    client = _wellness_client()
+    sg.run_wellness_backfill(client)
+    assert _wellness_dates(client) == [f"2026-10-{d}" for d in range(15, 22)]

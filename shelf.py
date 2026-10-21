@@ -55,3 +55,49 @@ def resolve_seam(conn) -> list[int]:
             activity_archive.prune_activity(conn, aid)
             pruned.append(aid)
     return pruned
+
+
+def shelf_activities(conn) -> list[dict]:
+    """A Garmin-shaped projection of every shelf row, newest first, so the
+    cockpit's history aggregates can count Health Connect runs (spec D4). Built
+    from the archive alone; the splits* keys mark an entry as shelf-sourced so
+    the recent-runs and zones fetchers never ask Garmin about it. Never fed to
+    the archive's upserts."""
+    import ingest_builder  # local: keeps this module's import graph light
+
+    out = []
+    rows = conn.execute(
+        "SELECT a.activity_id, a.start_time_local, a.type_key, a.distance_m, "
+        "a.duration_s, a.avg_hr, a.max_hr, a.summary_json, a.detail_distilled_json "
+        f"FROM activities a WHERE {activity_archive.shelf_clause()} "
+        "ORDER BY a.start_time_local DESC, a.activity_id DESC").fetchall()
+    for aid, start, type_key, dist_m, dur_s, avg_hr, max_hr, summary_json, distilled in rows:
+        try:
+            run = json.loads(summary_json) or {}
+        except (TypeError, ValueError):
+            run = {}
+        dist = run.get("distanceM", dist_m) or 0
+        dur = run.get("durationS", dur_s) or 0
+        pace = 0
+        try:
+            t, km = ingest_builder._effort({**run, "distanceM": dist, "durationS": dur})
+            pace = round(t / km) if km > 0 else 0
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            if dist > 0:
+                pace = round(dur / (dist / 1000.0))
+        try:
+            detail = json.loads(distilled) if distilled else None
+        except (TypeError, ValueError):
+            detail = None
+        out.append({
+            "activityId": aid,
+            "startTimeLocal": run.get("startTimeLocal") or start,
+            "activityType": {"typeKey": type_key},
+            "distance": dist, "duration": dur,
+            "averageHR": run.get("avgHr", avg_hr), "maxHR": run.get("maxHr", max_hr),
+            "splitsShelf": True,
+            "splitsPaceSecPerKm": pace,
+            "splitsType": ingest_builder._type_label(run.get("sportType") or "running"),
+            "splitsDetail": detail,
+        })
+    return out

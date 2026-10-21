@@ -226,6 +226,8 @@ def act_dur(a: dict) -> float:
 
 
 def act_pace(a: dict) -> int:
+    if "splitsPaceSecPerKm" in a:   # shelf projection: the ingest path's pace
+        return a["splitsPaceSecPerKm"]
     km, dur = act_km(a), act_dur(a)
     return int(round(dur / km)) if km > 0 else 0
 
@@ -353,6 +355,23 @@ def fetch_recent_runs(client, acts: list[dict], n: int = RECENT_RUNS,
     try:
         out = []
         for a in runs[:n]:
+            if a.get("splitsShelf"):
+                # Health Connect shelf run: shown exactly as the ingest path
+                # showed it, from the archive alone — no Garmin call.
+                row = {
+                    "date": act_date(a),
+                    "type": a.get("splitsType") or classify(a),
+                    "km": round(act_km(a), 2),
+                    "time": fmt_hms(act_dur(a)),
+                    "pace": act_pace(a),
+                    "hr": act_hr(a),
+                    "cad": None,
+                    "vo2": None,
+                }
+                if a.get("splitsDetail"):
+                    row["detail"] = a["splitsDetail"]
+                out.append(row)
+                continue
             out.append({
                 "date": act_date(a),
                 "type": classify(a),
@@ -958,6 +977,8 @@ def fetch_hr_zones_this_week(client, acts: list[dict], max_hr: int) -> list[dict
     monday = TODAY - dt.timedelta(days=TODAY.weekday())
     secs = [0.0] * 5
     for a in acts:
+        if a.get("splitsShelf"):
+            continue            # no zone seconds on the shelf, and no Garmin id to ask
         if not is_run(a) or not act_date(a):
             continue
         if dt.date.fromisoformat(act_date(a)) < monday:
@@ -1031,7 +1052,11 @@ def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
 # 4. ASSEMBLE + WRITE
 # ──────────────────────────────────────────────────────────────────────────────
 def build_data(client, acts: list[dict], pred_doc: dict | None = None,
-               sleep_raw_out: list | None = None) -> dict:
+               sleep_raw_out: list | None = None,
+               shelf_acts: list[dict] | None = None) -> dict:
+    # `shelf_acts` (spec D4): the Health Connect shelf's Garmin-shaped
+    # projection. Every history aggregate counts it; None/[] changes nothing.
+    acts = acts + (shelf_acts or [])
     # `sleep_raw_out`, when supplied, collects the raw sleep payloads fetch_sleep
     # pulls anyway, so wellness_step can bank them without a second round-trip.
     max_hr = int(os.getenv("ATHLETE_MAX_HR", "197"))
@@ -1080,6 +1105,16 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     # non-derived key, exactly as the old per-helper wrappers guaranteed.
     safe(lambda: attach_blocks_step(data), None, "coach block assembly")
     return data
+
+
+def _load_shelf_acts() -> list[dict]:
+    """The shelf projection from the archive at DATA_DIR. Read-only: it feeds
+    build_data and never reaches archive_step."""
+    conn = activity_archive.open_archive(DATA_DIR)
+    try:
+        return shelf.shelf_activities(conn)
+    finally:
+        conn.close()
 
 
 def attach_blocks_step(data: dict) -> None:
@@ -2007,7 +2042,9 @@ def main() -> None:
     safe(compliance_step, None, "compliance step")
     safe(lambda: course_lens_step(client), None, "course lens step")
     sleep_raw: list = []
-    data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw)
+    shelf_acts = safe(_load_shelf_acts, [], "shelf projection")
+    data = build_data(client, acts, pred_doc, sleep_raw_out=sleep_raw,
+                      shelf_acts=shelf_acts)
     validate(data)
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")

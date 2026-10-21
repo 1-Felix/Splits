@@ -46,6 +46,7 @@ import course_lens
 import insight_metrics
 import interval_lens
 import plan_compliance
+import shelf
 
 # Windows consoles default to cp1252, which can't encode the ✓/… glyphs below.
 for _stream in (sys.stdout, sys.stderr):
@@ -1145,6 +1146,14 @@ INTERVAL_FLOOR_DRIFT_GATE = 0.02   # add-interval-lens D6/Task 7b: a banked
                                    # document stale, version bump or not
 
 
+def _resolve_seam(conn) -> None:
+    """Garmin wins any overlap with a Health Connect shelf row (spec D2) —
+    before anything counts or ratchets the archive's rows."""
+    pruned = shelf.resolve_seam(conn)
+    if pruned:
+        log(f"– pruned {len(pruned)} shelf rows Garmin now owns")
+
+
 def archive_step(client, acts: list[dict]) -> None:
     """Bank this sync's activity fetches into the durable archive. Runs BEFORE
     build_data (the insights must include today's run — design D8) and only
@@ -1152,6 +1161,7 @@ def archive_step(client, acts: list[dict]) -> None:
     conn = activity_archive.open_archive(DATA_DIR)
     try:
         added = activity_archive.upsert_activities(conn, acts)
+        _resolve_seam(conn)
         topped = _archive_detail_topup(client, conn, DETAIL_TOPUP_PER_SYNC)
         # fix-distill-parity D3: the distill pass no longer runs here — it
         # moved to distill_step in main(), AFTER _laps_pass (below) and
@@ -1725,6 +1735,7 @@ def run_backfill(client) -> None:
                 log(f"  {year}: none")
                 empty += 1
             year -= 1
+        _resolve_seam(conn)
 
         missing = activity_archive.missing_detail_ids(conn, newest_first=True)
         log(f"… backfill: fetching detail for {len(missing)} activities (throttled)")

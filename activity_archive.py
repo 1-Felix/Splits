@@ -554,6 +554,15 @@ def shelf_clause(alias: str | None = "a") -> str:
     return f"json_extract({col}, '$.sessionUid') IS NOT NULL"
 
 
+def prune_activity(conn: sqlite3.Connection, activity_id: int) -> None:
+    """Delete an activity and everything keyed on its id. plan_compliance is
+    deliberately left alone: its rows are per-week verdicts that merely
+    reference a run, and the weekly re-score rewrites them."""
+    for table in ("run_metrics", "run_intervals", "activity_maps", "activities"):
+        conn.execute(f"DELETE FROM {table} WHERE activity_id = ?", (activity_id,))
+    conn.commit()
+
+
 def is_shelf_summary(summary: dict | None) -> bool:
     return bool(summary) and summary.get("sessionUid") is not None
 

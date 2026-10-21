@@ -868,10 +868,7 @@ def build_archive(data_dir: Path, runs: list[dict], profile: dict,
             aid = _find_archive_row(conn, uid)
             if aid is None:
                 continue
-            conn.execute("DELETE FROM run_metrics WHERE activity_id = ?", (aid,))
-            conn.execute("DELETE FROM run_intervals WHERE activity_id = ?", (aid,))
-            conn.execute("DELETE FROM activities WHERE activity_id = ?", (aid,))
-            conn.commit()
+            activity_archive.prune_activity(conn, aid)
             print(f"  – pruned archived duplicate {aid} ({uid})", flush=True)
         stale = (activity_archive.get_meta(conn, _DISTILL_MARKER)
                  != str(INGEST_DISTILL_VERSION))

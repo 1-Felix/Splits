@@ -686,7 +686,7 @@ class Component extends DCLogic {
 
   // a headline stat: value + label, or the explicit insufficient-data mark —
   // never a zero or a dash presented as a value (null-metric honesty)
-  blockStat(h, label, value, color, reason) {
+  blockStat(h, label, value, color, reason, note) {
     return h('div', { key: label, style: { minWidth: '84px' } },
       value != null
         ? h('div', { style: { fontFamily: "'JetBrains Mono',monospace", fontWeight: 800, fontSize: 'var(--fs-lg)', color: color || 'var(--ink)' } }, value)
@@ -694,7 +694,8 @@ class Component extends DCLogic {
             'aria-label': 'insufficient data for ' + label + '. Why?',
             onClick: () => this.openReason(label, this.BLOCK_REASON[reason] || reason || 'not enough evidence in this block'),
           }, 'insufficient data'),
-      h('div', { style: { fontSize: 'var(--fs-2xs)', fontWeight: 700, letterSpacing: '.08em', color: 'var(--sub)', marginTop: '2px' } }, label));
+      h('div', { style: { fontSize: 'var(--fs-2xs)', fontWeight: 700, letterSpacing: '.08em', color: 'var(--sub)', marginTop: '2px' } }, label),
+      note ? h('div', { style: { fontSize: 'var(--fs-2xs)', color: 'var(--sub)', marginTop: '2px' } }, note) : null);
   }
 
   renderBlockWeekDrill(w) {
@@ -757,7 +758,8 @@ class Component extends DCLogic {
       this.blockStat(h, 'PACE @ REF HR', ef.deltaSPerKm != null ? (ef.deltaSPerKm > 0 ? '+' : ef.deltaSPerKm < 0 ? '−' : '±') + Math.abs(ef.deltaSPerKm) + ' s/km' : null,
         ef.deltaSPerKm < 0 ? 'var(--good)' : ef.deltaSPerKm > 0 ? 'var(--warn)' : 'var(--sub)', ef.reason),
       this.blockStat(h, 'GOAL GAP', gap.deltaS != null ? this.fmtGap(gap.deltaS) : null,
-        gap.deltaS < 0 ? 'var(--good)' : gap.deltaS > 0 ? 'var(--warn)' : 'var(--sub)', gap.reason),
+        gap.deltaS < 0 ? 'var(--good)' : gap.deltaS > 0 ? 'var(--warn)' : 'var(--sub)', gap.reason,
+        gap.baseline === 'source-change' && gap.deltaS != null ? 'since ' + gap.startDate + ' · Garmin predictor' : null),
       this.blockStat(h, 'RECORDS', String(records.length), records.length ? 'var(--accent)' : 'var(--sub)'),
     ];
     if (q.of) stats.splice(3, 0, this.blockStat(h, 'QUALITY', q.hit + '/' + q.of, q.hit === q.of ? 'var(--good)' : 'var(--warn)'));

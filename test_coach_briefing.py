@@ -437,3 +437,20 @@ if __name__ == "__main__":
             _fn()
             print("ok", _name)
     print("ALL PASS")
+
+
+
+def test_briefing_names_the_restart():
+    import copy
+    doc = copy.deepcopy(BLOCK_LENS_CURRENT)
+    doc["adaptation"]["goalGap"] = {
+        "goalS": 7199, "startDate": "2026-10-21", "startHalfS": 7300,
+        "nowDate": "2026-10-28", "nowHalfS": 7250, "gapStartS": 101,
+        "gapNowS": 51, "deltaS": -50, "baseline": "source-change"}
+    lines = cb.block_report_lines(doc)
+    line = next(l for l in lines if l.startswith("- goal gap"))
+    assert line == ("- goal gap (1:59:59) since 2026-10-21 (Garmin predictor): "
+                    "+1:41 → +0:51 vs goal — closing")
+    plain = next(l for l in cb.block_report_lines(BLOCK_LENS_CURRENT)
+                 if l.startswith("- goal gap"))
+    assert "since" not in plain

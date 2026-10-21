@@ -443,9 +443,8 @@ def weekly_trajectory(conn, today: dt.date) -> list[dict]:
            ORDER BY start_time_local""", (METRICS_VERSION,))]
     if not efforts:
         return []
-    preds = [(dt.date.fromisoformat(d), h) for d, h in conn.execute(
-        "SELECT date, half_s FROM race_predictions WHERE half_s IS NOT NULL "
-        "ORDER BY date")]
+    preds = [(dt.date.fromisoformat(d), h)
+             for d, h in activity_archive.half_predictions(conn)]
 
     out = []
     wk = _week_end(efforts[0][0])

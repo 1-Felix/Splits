@@ -21,6 +21,7 @@ const PORT = 8191;                     // two-block fixture
 const B = "http://localhost:" + PORT;
 const Bnone = "http://localhost:" + (PORT + 1);  // no blockLens at all
 const Bone = "http://localhost:" + (PORT + 2);   // a single (current) block
+const Brestart = "http://localhost:" + (PORT + 3); // goal gap restarted at a source change
 
 // ── shared telemetry base (history the page always needs) ────────────────────
 const BASE = {
@@ -162,6 +163,7 @@ async function waitReady(base, errRef) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-blocksec-"));
 const noneDir = await mkdtemp(join(tmpdir(), "splits-blocksec-none-"));
 const oneDir = await mkdtemp(join(tmpdir(), "splits-blocksec-one-"));
+const restartDir = await mkdtemp(join(tmpdir(), "splits-blocksec-restart-"));
 // the stray {} mirrors the producer's `doc.get("summary") or {}` fallback —
 // the page must skip it, never crash on it
 await writeFile(join(dataDir, "garmin-data.js"),
@@ -169,7 +171,13 @@ await writeFile(join(dataDir, "garmin-data.js"),
 await writeFile(join(noneDir, "garmin-data.js"), lensData(null));
 await writeFile(join(oneDir, "garmin-data.js"),
   lensData({ lensVersion: 1, current: CURRENT_DOC, past: [] }));
-for (const d of [dataDir, noneDir, oneDir]) {
+const RESTART_DOC = structuredClone(CURRENT_DOC);
+RESTART_DOC.adaptation.goalGap = { goalS: 7199, startDate: "2026-10-21", startHalfS: 7300,
+  nowDate: "2026-10-28", nowHalfS: 7250, gapStartS: 101, gapNowS: 51, deltaS: -50,
+  baseline: "source-change" };
+await writeFile(join(restartDir, "garmin-data.js"),
+  lensData({ lensVersion: 1, current: RESTART_DOC, past: [] }));
+for (const d of [dataDir, noneDir, oneDir, restartDir]) {
   await writeFile(join(d, "plan-data.js"), "export const planData = {};\n");
 }
 makeArchive(dataDir);
@@ -177,6 +185,7 @@ makeArchive(dataDir);
 const server = startServer(PORT, dataDir);
 const serverNone = startServer(PORT + 1, noneDir);
 const serverOne = startServer(PORT + 2, oneDir);
+const serverRestart = startServer(PORT + 3, restartDir);
 
 let browser;
 let failed = false;
@@ -185,6 +194,7 @@ try {
   await waitReady(B, server.errRef);
   await waitReady(Bnone, serverNone.errRef);
   await waitReady(Bone, serverOne.errRef);
+  await waitReady(Brestart, serverRestart.errRef);
   browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1200, height: 1800 } });
   const pageErrors = [];
@@ -206,6 +216,7 @@ try {
   assert.ok(/Wk 1/.test(text) && /Wk 3/.test(text), "every week row renders");
   assert.ok(text.includes("TO RACE DAY"), "forward tilt renders on the live card");
   assert.strictEqual(archiveRequests.length, 0, "no archive request before any past-block drill");
+  assert.ok(!text.includes("Garmin predictor"), "a normal goal gap carries no source-change note");
 
   // ── null-metric honesty: the EF delta is a mark, not a number ──────────────
   step = "null-metric honesty";
@@ -279,6 +290,17 @@ try {
     "below two blocks there is no comparison control");
   await pageOne.close();
 
+  // ── a goal gap restarted at a prediction-source change says so in words ────
+  step = "source-change note";
+  const pageRestart = await browser.newPage({ viewport: { width: 1200, height: 1800 } });
+  pageRestart.on("pageerror", (e) => pageErrors.push(String(e)));
+  await pageRestart.goto(Brestart + "/progress", { waitUntil: "domcontentloaded" });
+  await pageRestart.waitForFunction(() => !!document.getElementById("block-section"), null, { timeout: 15000 });
+  const restartText = await pageRestart.evaluate(() => document.getElementById("block-section").innerText);
+  assert.ok(restartText.includes("since 2026-10-21 · Garmin predictor"),
+    "the restarted goal gap names its baseline: " + restartText);
+  await pageRestart.close();
+
   // ── absence: no blockLens → no section, rest of /progress unaffected ───────
   step = "absence";
   const pageNone = await browser.newPage({ viewport: { width: 1200, height: 1800 } });
@@ -337,8 +359,10 @@ try {
   server.kill();
   serverNone.kill();
   serverOne.kill();
+  serverRestart.kill();
   await rm(dataDir, { recursive: true, force: true }).catch(() => {});
   await rm(noneDir, { recursive: true, force: true }).catch(() => {});
   await rm(oneDir, { recursive: true, force: true }).catch(() => {});
+  await rm(restartDir, { recursive: true, force: true }).catch(() => {});
 }
 process.exit(failed ? 1 : 0);

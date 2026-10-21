@@ -573,6 +573,7 @@ Every NUC command runs as `ssh felix@192.168.0.37 "cd ~/dev/docker-compose-files
 - [ ] **Step 1: Full local suite.** `./.venv/Scripts/python.exe -m pytest -q` and `pnpm test`. Expected: all green, apart from failures that are already red on `main`. Check those by running the same command on `main` first.
 - [ ] **Step 2: Merge and publish.** `git checkout main && git merge --no-ff max-garmin-sync && git push`. Then `gh run list --branch main --limit 1` until the docker-publish run is `completed success`.
 - [ ] **Step 3: Pre-flip backups on the NUC.**
+  - Before anything pulls, tag the running image so a rollback is a retag: `docker tag ghcr.io/1-felix/splits:latest ghcr.io/1-felix/splits:rollback-2026-10-21`.
   - Back up `cp docker-compose.yml docker-compose.yml.bak-2026-10-21`.
   - Back up Felix's live file: `cp volumes/splits-data/garmin-data.js volumes/splits-data/garmin-data.js.bak-2026-10-21`.
   - For Max, inside `splits-max`:
@@ -581,8 +582,19 @@ Every NUC command runs as `ssh felix@192.168.0.37 "cd ~/dev/docker-compose-files
     - `chmod 644` on all of them
 
   Verify with `ls -la volumes/splits-max-data`.
+  - Read-only checks on BOTH archives. The shelf predicate is a `json_extract`, which raises on invalid JSON, and the seam compares naive local start times. Run this in an ssh session on the NUC; its quotes don't survive the `ssh "…"` wrapper:
+
+```bash
+for svc in splits splits-max; do
+  docker compose exec -T $svc python3 -c "import sqlite3; c=sqlite3.connect('file:/data/activity-archive.db?mode=ro', uri=True); q=lambda s: c.execute(s).fetchone()[0]; print(q('SELECT count(*) FROM activities WHERE json_valid(summary_json)=0'), q(\"SELECT count(*) FROM activities WHERE start_time_local LIKE '%Z' OR start_time_local LIKE '%+%'\"))"
+done
+```
+
+  Expected: `0 0` for each archive (no invalid `summary_json`, no `start_time_local` with a timezone suffix). Anything else: stop and report.
 - [ ] **Step 4: Pull the image.** Run `docker compose pull && docker compose up -d`. Both containers now run the new image, and Max is still ingest-fed. Then:
+  - Run Felix's sync once by hand, BEFORE his verify: `docker compose exec -T splits python3 sync_garmin.py`. `BLOCK_LENS_VERSION` 3 makes his stored v2 block rows stale until a sync recomputes them, and the boot sync is skipped while telemetry is fresh, so verify would fail on them until the 08:00 nightly.
   - `docker compose exec -T splits python3 sync_garmin.py --verify-archive` → exit 0.
+  - Now do Step 9 (R10): Felix's parity check runs right after this manual sync.
   - `docker logs splits-max --tail 20` → a clean boot build.
 - [ ] **Step 5: Read Max's resting HR from Garmin.**
 
@@ -612,11 +624,21 @@ docker compose exec -T splits-max python3 -c "import datetime,sync_garmin as s; 
       traefik.enable: true
 ```
 
-  Fill the zone-edge table in `docs/onboarding/max-garmin.md` from `docker compose exec -T splits-max python3 -c "import interval_lens; print(interval_lens.zone_bounds(199, RHR))"`, then commit `docs(onboarding): Max's zone edges at cutover` and push.
-- [ ] **Step 7: First Garmin sync.**
+  `ATHLETE_RESTING_HR` must be an integer (quoted in YAML, e.g. `"57"`).
+
+  Recreate the container so it carries the new env, then check the real env. `exec` reads the running container's env, so this check only means something after the `up -d`:
 
 ```bash
 docker compose up -d splits-max
+docker compose exec -T splits-max python3 -c "import sync_garmin as s; print(s.athlete_zone_bounds())"
+```
+
+  It must print the Karvonen edges for the chosen RHR (for 57: `[128, 142, 156, 171, 185, 199]`). The %max edges `[100, 119, 139, 159, 179, 199]`, or a `! ATHLETE_RESTING_HR=… is not a resting HR` warning, mean the value didn't land: fix the compose and `up -d` again before Step 7.
+
+  Fill the zone-edge table in `docs/onboarding/max-garmin.md` from `docker compose exec -T splits-max python3 -c "import interval_lens; print(interval_lens.zone_bounds(199, RHR))"`, then commit `docs(onboarding): Max's zone edges at cutover` and push.
+- [ ] **Step 7: First Garmin sync.** The container is up since Step 6's `docker compose up -d splits-max`. Before the first `exec` below, read `docker logs splits-max` until the boot sync reports `boot sync skipped (telemetry is fresh)`, `boot sync ok` or `boot sync failed`, so there's no concurrent archive writer and no second Garmin session.
+
+```bash
 docker compose exec -T splits-max python3 sync_garmin.py --backfill
 docker compose exec -T splits-max python3 sync_garmin.py --rescore-intervals
 docker compose exec -T splits-max python3 sync_garmin.py
@@ -628,7 +650,8 @@ docker compose exec -T splits-max python3 sync_garmin.py --verify-archive
   Expected:
   - the backfill lists 2+ Garmin activities
   - the plain sync logs `– pruned 1 shelf rows Garmin now owns` and `✓ wrote garmin-data.js`
-  - verify exits 0
+  - `--backfill-wellness` starts at the first Garmin activity on its own (`… wellness backfill: 2026-10-19 → …`), so it costs about 3 days × 3 calls at most, and none when the plain sync before it already banked those nights
+  - verify exits 0, with the wellness gate armed (`coverage complete` from the wellness backfill)
 
   If Garmin answers 429, stop and wait. Never loop logins.
 - [ ] **Step 8: Verify Max's instance.** Collect the evidence in the hand-off:
@@ -645,13 +668,18 @@ docker compose exec -T splits-max python3 sync_garmin.py --verify-archive
     - `halfGoal` 2:29:59
     - no `51.3`, `81`, `Top 5%`
     - the Block card's goal gap says `since 2026-10-21 · Garmin predictor`
-- [ ] **Step 9: Verify Felix didn't move** (Review Focus 1). After his next 08:00 sync, compare `volumes/splits-data/garmin-data.js` with the `.bak-2026-10-21`:
+- [ ] **Step 9: Verify Felix didn't move** (Review Focus 1). Runs right after Step 4's manual sync (R10), not after the 08:00 nightly. Compare `volumes/splits-data/garmin-data.js` with the `.bak-2026-10-21`:
   - same top-level and `history` key sets
   - same array lengths
   - every history array equal except its last element
   - `hrZones` differs only in `lo`/`hi`
+  - the only other expected deltas:
+    - `blockLens.lensVersion` 2 → 3 (frozen past blocks are recomputed once)
+    - `predictions.halfGoal` now comes from his plan (value unchanged, `"1:59:59"`)
+    - a readiness or profile key is omitted only if Garmin returned nothing for it
+  - on the pages (copy, not data): the VO₂ tile's sub-label reads "Garmin estimate", the VO₂ delta uses a true minus, and the all-time pace and cadence deltas on /progress carry their real sign
 
-  Also run `--verify-archive` → exit 0. Report the zone edges to Felix so he can confirm they match his watch.
+  `--verify-archive` already exited 0 in Step 4. Report the zone edges to Felix so he can confirm they match his watch.
 - [ ] **Step 10: Hand-off.**
   - Send Felix the checklist link for Max.
   - Update memory `max-garmin-switch.md` (status → shipped, commits, NUC facts, the RHR value used, follow-ups) and the MEMORY.md line.

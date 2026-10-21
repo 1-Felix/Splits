@@ -8,13 +8,22 @@ from pathlib import Path
 
 import pytest
 
-from garmin_fixtures import FakeClient, felix_like_acts, load_sync_garmin
+from garmin_fixtures import VO2_GAP_MONTHS, FakeClient, felix_like_acts, load_sync_garmin
 
 REPO = Path(__file__).resolve().parent
 GOLDEN = REPO / "fixtures" / "garmin-path" / "felix-golden.json"
 
+def _max_metrics(cdate):
+    """Distinct value per month-end; nothing for the last gap month, so the
+    interior ffill path is pinned too."""
+    if cdate[:7] == VO2_GAP_MONTHS[-1]:
+        return None
+    return [{"generic": {"vo2MaxPreciseValue": round(
+        44.0 + (int(cdate[:4]) - 2024) * 2 + int(cdate[5:7]) / 10, 1)}}]
+
+
 RESPONSES = {  # canned Garmin answers, fixed values
-    "get_max_metrics": [{"generic": {"vo2MaxPreciseValue": 51.0}}],
+    "get_max_metrics": _max_metrics,
     "get_user_summary": {"restingHeartRate": 48, "weight": 80500},
     "get_rhr_day": {"restingHeartRate": 48},
     "get_training_readiness": [{"score": 71, "level": "READY"}],
@@ -36,7 +45,7 @@ def _restore_env():
 
 
 def _outputs(sg, client, acts):
-    return {
+    out = {
         "heatmap": sg.fetch_heatmap(acts), "weekly": sg.fetch_weekly(acts),
         "ctl_atl": sg.compute_fitness_fatigue(acts, 197),
         "monthly": sg.fetch_monthly(client, acts),
@@ -46,6 +55,9 @@ def _outputs(sg, client, acts):
         "recent": [{k: v for k, v in r.items() if k != "detail"}
                    for r in sg.fetch_recent_runs(client, acts)],
     }
+    out["calls_get_max_metrics"] = sorted(
+        c[1][0] for c in client.calls if c[0] == "get_max_metrics")
+    return out
 
 
 def test_felix_garmin_path_matches_golden():

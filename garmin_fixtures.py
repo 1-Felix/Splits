@@ -13,6 +13,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 
+# Interior months whose activities carry no vO2MaxValue, so fetch_monthly must
+# back-fill them from get_max_metrics (the first month keeps its values).
+VO2_GAP_MONTHS = ("2024-12", "2025-01", "2025-08")
+
 _FELIX_ENV = {"ATHLETE_NAME": "Felix", "ATHLETE_AGE": "28", "ATHLETE_MAX_HR": "197"}
 
 
@@ -68,7 +72,7 @@ def felix_like_acts(today: dt.date) -> list[dict]:
                 "maxHR": 165 + (i % 5) * 4,
                 "averageRunningCadenceInStepsPerMinute": 168.0 + (i % 5),
             }
-            if i % 3 == 0:
+            if i % 3 == 0 and day.isoformat()[:7] not in VO2_GAP_MONTHS:
                 a["vO2MaxValue"] = round(48.0 + (i // 60) * 0.5 + (i % 4) * 0.5, 1)
             if day >= monday:
                 for z, share in enumerate((0.10, 0.45, 0.30, 0.12, 0.03), start=1):

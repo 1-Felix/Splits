@@ -8,6 +8,11 @@ import activity_archive
 
 GARMIN_CONNECT_SOURCE = "com.garmin.android.apps.connectmobile"
 
+# A shelf cadence is kept only inside a plausible running band (spm, inclusive).
+# Google Fit rows carry sparse speed samples, so steps ÷ moving minutes can
+# read 391 or 1466; the monthly forward-fill would then paint it over months.
+SHELF_CADENCE_SPM = (120, 230)
+
 _RUN_TYPE = "(a.type_key LIKE '%run%' AND a.type_key NOT LIKE '%cycling%')"
 
 
@@ -105,7 +110,7 @@ def shelf_activities(conn) -> list[dict]:
             "splitsType": ingest_builder._type_label(run.get("sportType") or "running"),
             "splitsDetail": detail,
         }
-        if cadence:
+        if cadence and SHELF_CADENCE_SPM[0] <= cadence <= SHELF_CADENCE_SPM[1]:
             entry["averageRunningCadenceInStepsPerMinute"] = cadence
         out.append(entry)
     return out

@@ -948,3 +948,27 @@ def test_a_felix_shaped_archive_keeps_its_window(sg_env, monkeypatch):
     client = _wellness_client()
     sg.run_wellness_backfill(client)
     assert _wellness_dates(client) == [f"2026-10-{d}" for d in range(15, 22)]
+
+
+# ── Final review A2: a shelf cadence must look like running ──────────────────
+# Google Fit rows carry sparse speed samples, so steps ÷ moving minutes reads
+# 391 or 1466 spm; the monthly forward-fill then paints that over months.
+def test_shelf_cadence_band_constant():
+    assert shelf.SHELF_CADENCE_SPM == (120, 230)
+
+
+@pytest.mark.parametrize("spm, kept", [(1466, False), (100, False), (165, True),
+                                       (120, True), (230, True), (119, False), (231, False)])
+def test_shelf_cadence_outside_the_running_band_is_dropped(t3, spm, kept):
+    sg, c, _ = t3
+    t, _ = ingest_builder._effort(json.loads(summary_json_of(c, T3_S1)))
+    run = _set_steps(c, T3_S1, round(spm * t / 60.0))
+    assert ingest_builder._cadence(run) == spm          # the ingest formula reads spm
+    acts = shelf.shelf_activities(c)
+    entry = by_id(acts, T3_S1)
+    cad = next(r for r in sg.fetch_recent_runs(FakeClient({}), acts)
+               if r["date"] == "2026-10-20")["cad"]
+    if kept:
+        assert entry["averageRunningCadenceInStepsPerMinute"] == spm and cad == spm
+    else:
+        assert "averageRunningCadenceInStepsPerMinute" not in entry and cad is None

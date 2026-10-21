@@ -972,3 +972,51 @@ def test_shelf_cadence_outside_the_running_band_is_dropped(t3, spm, kept):
         assert entry["averageRunningCadenceInStepsPerMinute"] == spm and cad == spm
     else:
         assert "averageRunningCadenceInStepsPerMinute" not in entry and cad is None
+
+
+# ── Final review A5: ATHLETE_RESTING_HR is parsed once, forgivingly ──────────
+PCT_MAX_199 = [100, 119, 139, 159, 179, 199]
+
+
+@pytest.mark.parametrize("raw, want", [("57", 57), ("57.4", 57), ("56.5", 57), (" 58 ", 58),
+                                       ("", None), (None, None)])
+def test_athlete_resting_hr_reads_integers_and_decimals(sg_env, monkeypatch, capsys, raw, want):
+    sg, _ = sg_env
+    if raw is None:
+        monkeypatch.delenv("ATHLETE_RESTING_HR", raising=False)
+    else:
+        monkeypatch.setenv("ATHLETE_RESTING_HR", raw)
+    assert sg.athlete_resting_hr() == want
+    assert "ATHLETE_RESTING_HR" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("raw", ["RHR", "abc"])
+def test_a_garbled_resting_hr_warns_once_and_reads_as_unset(sg_env, monkeypatch, capsys, raw):
+    sg, _ = sg_env
+    monkeypatch.setenv("ATHLETE_MAX_HR", "199")
+    monkeypatch.setenv("ATHLETE_RESTING_HR", raw)
+    assert sg.athlete_resting_hr() is None
+    assert sg.athlete_zone_bounds() == PCT_MAX_199
+    assert sg.athlete_zone_bounds() == PCT_MAX_199
+    err = capsys.readouterr().err
+    assert err.count("ATHLETE_RESTING_HR") == 1 and repr(raw) in err
+
+
+def _tiny_detail(n=240, hr=150.0, mps=3.0):
+    keys = ["sumDuration", "sumDistance", "directHeartRate", "directSpeed", "directTimestamp"]
+    return {"metricDescriptors": [{"key": k, "metricsIndex": i} for i, k in enumerate(keys)],
+            "activityDetailMetrics": [{"metrics": [i * 5.0, i * 5.0 * mps, hr + (i % 7),
+                                                   mps, 1.7e12 + i * 5000.0]}
+                                      for i in range(n + 1)]}
+
+
+def test_every_zone_reader_survives_a_garbled_resting_hr(zn, monkeypatch):
+    sg, c = zn
+    monkeypatch.setenv("ATHLETE_RESTING_HR", "RHR")
+    sg.derive_intervals(c)                                    # was: ValueError, run skipped
+    assert json.loads(arch.get_meta(c, "interval_zone_bounds")) == PCT_MAX_199
+    zones = sg.fetch_hr_zones_this_week(FakeClient({}), [_week_run()], 199)
+    assert [z["lo"] for z in zones] == PCT_MAX_199[:5]        # was: build_data crashed
+    act = {"activityId": G1, "startTimeLocal": "2026-10-01 07:00:00", "duration": 1200.0,
+           "distance": 3600.0, "activityType": {"typeKey": "running"}}
+    assert sg.distill_run_detail(_tiny_detail(), act) is not None   # was: _distill_pass crashed

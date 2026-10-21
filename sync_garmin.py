@@ -30,8 +30,10 @@ import datetime as dt
 import json
 import math
 import os
+import re
 import sys
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from statistics import mean
 
@@ -473,14 +475,34 @@ def fetch_run_detail(client, activity, work_floor: float | None = None,
                               work_floor=work_floor)
 
 
+_RESTING_HR_RE = re.compile(r"\d+(?:\.\d+)?")
+_resting_hr_warned: set[str] = set()
+
+
+def athlete_resting_hr() -> int | None:
+    """ATHLETE_RESTING_HR in whole bpm: an integer or a decimal string (rounded
+    half up). Empty or unset is None, the %max model. Anything else warns once
+    and reads as unset, so a typo costs the Karvonen zones, not the readers."""
+    raw = (os.getenv("ATHLETE_RESTING_HR") or "").strip()
+    if not raw:
+        return None
+    if _RESTING_HR_RE.fullmatch(raw):
+        return int(Decimal(raw).to_integral_value(rounding=ROUND_HALF_UP))
+    if raw not in _resting_hr_warned:
+        _resting_hr_warned.add(raw)
+        warn(f"ATHLETE_RESTING_HR={raw!r} is not a resting HR in bpm; "
+             "ignoring it, so zones fall back to %max")
+    return None
+
+
 def athlete_zone_bounds(max_hr: int | None = None) -> list[int]:
     """This athlete's six HR-zone edges: Karvonen (heart-rate reserve) when
     ATHLETE_RESTING_HR is pinned, plain %max otherwise (Felix, unchanged).
-    `max_hr` overrides ATHLETE_MAX_HR for callers that were handed one."""
+    `max_hr` overrides ATHLETE_MAX_HR for callers that were handed one. Every
+    zone reader (distiller, intervals, zone card) comes through here."""
     if max_hr is None:
         max_hr = int(os.getenv("ATHLETE_MAX_HR") or "197")
-    rhr = os.getenv("ATHLETE_RESTING_HR")
-    return interval_lens.zone_bounds(int(max_hr), int(rhr) if rhr else None)
+    return interval_lens.zone_bounds(int(max_hr), athlete_resting_hr())
 
 
 def distill_run_detail(det: dict | None, activity: dict,

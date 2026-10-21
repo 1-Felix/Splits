@@ -129,7 +129,7 @@
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">VO₂ max</div><div class="card-sub">Aerobic engine · {{ vo2.sub }}</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ vo2.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ vo2.delta }}</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl);color:var(--accent)">{{ vo2.last }}</div><div style="font-size:var(--fs-xs);color:{{ vo2.deltaColor }};font-weight:700">{{ vo2.delta }}</div></div>
       </div>
       <div class="scope-row"><sc-for list="{{ vo2.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
       {{ vo2.chart }}
@@ -140,7 +140,7 @@
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">Avg run pace</div><div class="card-sub">Goal {{ race.goalPace }}/km dashed · {{ pace.sub }}</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ pace.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ pace.delta }}</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ pace.last }}</div><div style="font-size:var(--fs-xs);color:{{ pace.deltaColor }};font-weight:700">{{ pace.delta }}</div></div>
       </div>
       <div class="scope-row"><sc-for list="{{ pace.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
       {{ pace.chart }}
@@ -159,7 +159,7 @@
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">Cadence</div><div class="card-sub">Steps / min · {{ cad.sub }}</div></div>
-        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cad.last }}</div><div style="font-size:var(--fs-xs);color:var(--good);font-weight:700">{{ cad.delta }}</div></div>
+        <div style="text-align:right"><div class="metric" style="font-size:var(--fs-2xl)">{{ cad.last }}</div><div style="font-size:var(--fs-xs);color:{{ cad.deltaColor }};font-weight:700">{{ cad.delta }}</div></div>
       </div>
       <div class="scope-row"><sc-for list="{{ cad.scopes }}" as="s" hint-placeholder-count="0"><button class="scope-chip" aria-pressed="{{ s.on }}" onClick="{{ s.pick }}">{{ s.label }}</button></sc-for></div>
       {{ cad.chart }}
@@ -1146,8 +1146,7 @@ class Component extends DCLogic {
     const hasVo2 = vo2S.vals.length > 0;
     const vo2Now = hasVo2 ? vo2S.vals[vo2S.vals.length-1] : null;
     // delta over 3 months when there is that much history, else since the first value; none from a single value
-    const vo2Ref = vo2S.vals.length >= 4 ? vo2S.vals[vo2S.vals.length-4] : (vo2S.vals.length >= 2 ? vo2S.vals[0] : null);
-    const vo2Prev = vo2Ref;
+    const vo2Prev = vo2S.vals.length >= 4 ? vo2S.vals[vo2S.vals.length-4] : (vo2S.vals.length >= 2 ? vo2S.vals[0] : null);
     const kmNow = H.weeklyKm[H.weeklyKm.length-1];
     const form = +(H.ctl[H.ctl.length-1]-H.atl[H.atl.length-1]).toFixed(0);
     const goalP = D.race.goalPaceSecPerKm;
@@ -1214,6 +1213,7 @@ class Component extends DCLogic {
     vo2 = {
       last: vo2Now.toFixed(1),
       delta: vo2Prev == null ? '' : (vo2Now - vo2Prev >= 0 ? '+' : '−') + Math.abs(vo2Now - vo2Prev).toFixed(1) + (vo2S.vals.length >= 4 ? ' / 3mo' : ' since start'),
+      deltaColor: vo2Prev != null && vo2Now < vo2Prev ? 'var(--warn)' : 'var(--good)',
       sub: spanOf(vo2Dates, 'mo') + ' · 12-mo median band',
       scopes: vo2Cut.scopes,
       chart: this.engineChart('vo2', {
@@ -1242,9 +1242,11 @@ class Component extends DCLogic {
     const pace = {
       last: paceVals.length ? this.fmtPace(paceVals[paceVals.length - 1]) : '—',
       delta: paceS.vals.length > 1
-        ? (paceS.vals[paceS.vals.length - 1] > paceS.vals[0] ? '+' : '−')
+        ? (paceS.vals[paceS.vals.length - 1] > paceS.vals[0] ? '+' : paceS.vals[paceS.vals.length - 1] < paceS.vals[0] ? '−' : '±')
           + this.fmtPace(Math.abs(paceS.vals[0] - paceS.vals[paceS.vals.length - 1])) + ' /km all-time'
         : '',
+      // slower (a larger s/km) is the warning direction
+      deltaColor: paceS.vals.length > 1 && paceS.vals[paceS.vals.length - 1] > paceS.vals[0] ? 'var(--warn)' : 'var(--good)',
       sub: spanOf(paceDates, 'mo'),
       scopes: paceCut.scopes,
       chart: this.engineChart('pace', {
@@ -1304,6 +1306,7 @@ class Component extends DCLogic {
         ? (cadS.vals[cadS.vals.length - 1] >= cadS.vals[0] ? '+' : '−')
           + Math.abs(cadS.vals[cadS.vals.length - 1] - cadS.vals[0]) + ' spm all-time'
         : '',
+      deltaColor: cadS.vals.length > 1 && cadS.vals[cadS.vals.length - 1] < cadS.vals[0] ? 'var(--warn)' : 'var(--good)',
       sub: spanOf(cadDates, 'mo') + ' · 12-mo median band',
       scopes: cadCut.scopes,
       chart: this.engineChart('cad', {

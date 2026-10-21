@@ -476,3 +476,81 @@ def test_no_vo2_anywhere_omits_vo2maxCurrent_and_still_validates(sg_env):
     assert "vo2maxCurrent" not in data["profile"]
     assert data["history"]["vo2max"] == [None]
     sg.validate(data)
+
+
+# ── Task 5: no Felix numbers as Garmin-path fallbacks ────────────────────────
+def _plan_with_goal(data_dir, goal):
+    (data_dir / "plan-data.js").write_text(
+        "export const planData = { race: { name: 'Half', date: '2026-10-18', "
+        f"goalTime: '{goal}' }}, block: [] }};\n", encoding="utf-8")
+
+
+def test_half_goal_comes_from_the_plan(sg_env):
+    sg, data_dir = sg_env
+    _plan_with_goal(data_dir, "2:29:59")
+    assert sg._plan_goal_time() == "2:29:59"
+    assert sg.build_data(FakeClient(RESPONSES), [])["predictions"]["halfGoal"] == "2:29:59"
+
+
+def test_half_goal_is_omitted_when_the_plan_has_none(sg_env):
+    sg, data_dir = sg_env                               # no plan-data.js at all
+    assert sg._plan_goal_time() is None
+    assert "halfGoal" not in sg.build_data(FakeClient(RESPONSES), [])["predictions"]
+    assert "halfGoal" not in sg.fetch_predictions({}, None)
+    assert sg.fetch_predictions({}, "1:59:59")["halfGoal"] == "1:59:59"
+
+
+def test_profile_omits_what_garmin_did_not_say(sg_env):
+    sg, _ = sg_env
+    os.environ.pop("ATHLETE_NAME", None)
+    p = sg.fetch_profile(FakeClient({}), None)
+    for k in ("restingHR", "weightKg", "vo2maxCurrent"):
+        assert k not in p
+    assert p["name"] == "Athlete"
+
+
+def test_profile_name_comes_from_the_client_when_env_is_unset(sg_env):
+    sg, _ = sg_env
+    os.environ.pop("ATHLETE_NAME", None)
+    c = FakeClient({})
+    c.full_name = "Max Keller"
+    assert sg.fetch_profile(c, None)["name"] == "Max"
+
+
+def test_profile_keeps_what_garmin_said(sg_env):
+    sg, _ = sg_env
+    p = sg.fetch_profile(FakeClient(RESPONSES), 44.04)
+    assert (p["restingHR"], p["weightKg"], p["vo2maxCurrent"]) == (48, 80.5, 44.0)
+
+
+def test_readiness_omitted_without_evidence(sg_env):          # Review Focus 5
+    sg, _ = sg_env
+    empty = [{"hours": 0.0, "hrv": 0, "deepPct": 0}] * 14
+    assert sg.fetch_readiness(FakeClient({}), empty, 199) is None
+
+
+def test_readiness_without_rhr_omits_the_key_and_load_label_is_honest(sg_env):
+    sg, _ = sg_env
+    night = [{"hours": 7.0, "hrv": 55, "deepPct": 18}]
+    r = sg.fetch_readiness(
+        FakeClient({"get_training_readiness": [{"score": 64, "level": "READY"}]}), night, 199)
+    assert "restingHR" not in r and r["loadStatus"] == "" and r["score"] == 64
+
+
+def test_build_data_omits_readiness_for_an_account_with_no_evidence(sg_env):
+    sg, _ = sg_env
+    data = sg.build_data(FakeClient({}), [])
+    assert "readiness" not in data
+    for k in ("restingHR", "weightKg", "vo2maxCurrent"):
+        assert k not in data["profile"]
+    sg.validate(data)
+
+
+def test_wellness_step_takes_an_empty_readiness(sg_env):
+    sg, data_dir = sg_env
+    sg.wellness_step(FakeClient({}), {}, [])            # the fetch_sleep-failed branch
+    c = arch.open_archive(data_dir)
+    try:
+        assert c.execute("SELECT COUNT(*) FROM daily_wellness").fetchone()[0] == 1
+    finally:
+        c.close()

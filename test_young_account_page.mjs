@@ -15,7 +15,7 @@ const PORT = 18431;
 const B = "http://localhost:" + PORT;
 const heatmapKm = Array.from({ length: 365 }, () => 0);
 
-const GARMIN_DATA = `export const garminData = ${JSON.stringify({
+const fixture = () => ({
   today: "2026-10-21",
   profile: { name: "Testa", maxHR: 190, restingHR: 47, vo2maxCurrent: 44 },
   race: { name: "Half Marathon", location: "Sonthofen", date: "2026-08-09",
@@ -60,7 +60,19 @@ const GARMIN_DATA = `export const garminData = ${JSON.stringify({
     },
     yoy: {},
   },
-}, null, 1)};\n`;
+});
+const garminJs = (o) => `export const garminData = ${JSON.stringify(o, null, 1)};\n`;
+const GARMIN_DATA = garminJs(fixture());
+
+// A Garmin account that has told us nothing yet (Task 5): no readiness card,
+// no resting HR / weight / VO2max on the profile, no half goal.
+const BARE = fixture();
+delete BARE.readiness;
+delete BARE.profile.restingHR;
+delete BARE.profile.weightKg;
+delete BARE.profile.vo2maxCurrent;
+delete BARE.predictions.halfGoal;
+const BARE_DATA = garminJs(BARE);
 
 const PLAN_DATA = "export const planData = {};\n";
 
@@ -97,7 +109,7 @@ async function waitReady(child) {
 const dataDir = await mkdtemp(join(tmpdir(), "splits-young-"));
 await writeFile(join(dataDir, "garmin-data.js"), GARMIN_DATA);
 await writeFile(join(dataDir, "plan-data.js"), PLAN_DATA);
-const server = startServer(dataDir);
+let server = startServer(dataDir);
 
 let browser;
 let failed = false;
@@ -139,6 +151,22 @@ try {
   assert.ok(cock.text.includes("44.0"), "the VO2 tile shows 44.0");
   assert.ok(!cock.text.includes("Top 5% for age"), "no Felix-specific claim");
   assert.ok(cock.text.includes("Garmin estimate"), "neutral sub-label");
+
+  step = "readiness-less variant";
+  server.kill();
+  await new Promise((r) => server.once("exit", r));
+  await writeFile(join(dataDir, "garmin-data.js"), BARE_DATA);
+  server = startServer(dataDir);
+  await waitReady(server);
+  for (const [path, ready] of [
+    ["/", () => document.querySelectorAll('rect[data-hb="heat"]').length > 300],
+    ["/progress", () => document.body.innerText.includes("Avg run pace")],
+  ]) {
+    const r = await render(path, ready);
+    assert.deepStrictEqual(r.errors, [], "no pageerror on " + path + " without readiness");
+    assert.ok(!/NaN|null|undefined/.test(r.text), "no NaN/null/undefined on " + path + ": " +
+      (r.text.match(/.{0,30}(NaN|null|undefined).{0,30}/) || [""])[0]);
+  }
   console.log("PASS test_young_account_page");
 } catch (e) {
   failed = true;

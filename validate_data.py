@@ -231,7 +231,7 @@ def validate(d: dict) -> list[str]:
 
     # vo2 consistency
     vo2 = h.get("vo2max", [])
-    if vo2:
+    if vo2 and "vo2maxCurrent" in d["profile"] and vo2[-1] is not None:
         check(abs(d["profile"]["vo2maxCurrent"] - vo2[-1]) < 0.05,
               "profile.vo2maxCurrent must equal history.vo2max[-1]", e)
 

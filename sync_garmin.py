@@ -909,16 +909,20 @@ def fetch_profile(client, vo2_current: float | None) -> dict:
     today = TODAY.isoformat()
     summary = safe(lambda: client.get_user_summary(today), {}, "get_user_summary") or {}
     rhr_doc = safe(lambda: client.get_rhr_day(today), {}, "get_rhr_day") or {}
-    rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate") or 47
+    rhr = _parse_rhr(rhr_doc) or summary.get("restingHeartRate")
     weight_g = summary.get("weight") or _latest_weight_g(client) or 0
     prof = {
-        "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Felix"),
+        "name": os.getenv("ATHLETE_NAME", client.full_name.split(" ")[0] if client.full_name else "Athlete"),
         "age": int(os.getenv("ATHLETE_AGE", "31")),
-        "restingHR": int(rhr),
         "maxHR": int(os.getenv("ATHLETE_MAX_HR", "197")),
-        "weightKg": round(weight_g / 1000.0, 1) if weight_g else 81.0,
     }
-    if vo2_current:                      # unknown means the key is omitted
+    # Unknown means the key is omitted (the ingest path's convention) — never
+    # another athlete's number.
+    if rhr:
+        prof["restingHR"] = int(rhr)
+    if weight_g:
+        prof["weightKg"] = round(weight_g / 1000.0, 1)
+    if vo2_current:
         prof["vo2maxCurrent"] = round(vo2_current, 1)
     return prof
 
@@ -932,7 +936,7 @@ def _parse_rhr(doc: dict):
     return doc.get("restingHeartRate")
 
 
-def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
+def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict | None:
     today = TODAY.isoformat()
     tr_list = safe(lambda: client.get_training_readiness(today), [], "get_training_readiness") or []
     tr = tr_list[0] if isinstance(tr_list, list) and tr_list else (tr_list if isinstance(tr_list, dict) else {})
@@ -943,24 +947,30 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict:
     last = next((s for s in reversed(sleep) if s.get("hours")), {})
     hrv = last.get("hrv") or 0
     sleep_h = last.get("hours") or 0.0
-    rhr = safe(lambda: _parse_rhr(client.get_rhr_day(today)), None, "rhr(readiness)") or 46
+    rhr = safe(lambda: _parse_rhr(client.get_rhr_day(today)), None, "rhr(readiness)") or None
 
     status_doc = safe(lambda: client.get_training_status(today), {}, "get_training_status") or {}
     load = _parse_acute_load(status_doc)
 
     score = tr.get("score")
+    if not score and not last:
+        # No Garmin score and no night with sleep or HRV: a computed "readiness"
+        # would be the neutral 0.6 blend of nothing. Omit the card instead.
+        return None
     if not score:
         score = _compute_readiness(hrv, rhr, sleep_h)
     status = tr.get("level") or _readiness_label(score)
-    return {
+    out = {
         "score": int(round(score)),
         "status": str(status).title()[:16],
         "hrv": int(hrv),
-        "restingHR": int(rhr),
         "sleepHours": round(sleep_h, 1),
         "trainingLoad": int(load) if load else 0,
         "loadStatus": _load_label(status_doc),
     }
+    if rhr:
+        out["restingHR"] = int(rhr)
+    return out
 
 
 def _parse_acute_load(doc: dict):
@@ -983,7 +993,7 @@ def _load_label(doc: dict) -> str:
                 return str(fb).split("_")[0].title()
     except Exception:  # noqa: BLE001
         pass
-    return "Optimal"
+    return ""
 
 
 def _compute_readiness(hrv, rhr, sleep_h) -> float:
@@ -1063,14 +1073,26 @@ def fetch_raw_predictions(client) -> dict:
     return doc
 
 
-def fetch_predictions(pred_doc: dict, planned_goal: str = "1:59:59") -> dict:
-    return {
+def _plan_goal_time() -> str | None:
+    """The plan's `race.goalTime` (as `ingest_builder` reads it), or None when
+    the plan is absent, unreadable or names no goal."""
+    loaded = safe(lambda: plan_compliance.load_plan(DATA_DIR / "plan-data.js"),
+                  None, "plan goal")
+    plan = loaded[1] if loaded else None
+    goal = ((plan or {}).get("race") or {}).get("goalTime")
+    return goal if isinstance(goal, str) and goal else None
+
+
+def fetch_predictions(pred_doc: dict, planned_goal: str | None) -> dict:
+    out = {
         "fiveK": fmt_hms(pred_doc.get("time5K")),
         "tenK": fmt_hms(pred_doc.get("time10K")),
         "halfNow": fmt_hms(pred_doc.get("timeHalfMarathon")),
-        "halfGoal": planned_goal,
         "trend": "",  # filled from the insights trajectory when available
     }
+    if planned_goal:                      # unknown means the key is omitted
+        out["halfGoal"] = planned_goal
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1099,12 +1121,14 @@ def build_data(client, acts: list[dict], pred_doc: dict | None = None,
     sleep = fetch_sleep(client, raw_out=sleep_raw_out)
     vo2_current = next((v for v in reversed(monthly["vo2max"]) if v is not None), None)
 
-    predictions = fetch_predictions(pred_doc or {})
+    predictions = fetch_predictions(pred_doc or {}, _plan_goal_time())
+    readiness = fetch_readiness(client, sleep, max_hr)
 
     data = {
         "profile": fetch_profile(client, vo2_current),
         "today": TODAY.isoformat(),
-        "readiness": fetch_readiness(client, sleep, max_hr),
+        # no evidence → no card (ingest convention); spread keeps Felix's key order
+        **({"readiness": readiness} if readiness is not None else {}),
         "hrZones": fetch_hr_zones_this_week(client, acts, max_hr),
         "predictions": predictions,
         "personalBests": fetch_personal_bests(client),
@@ -2081,7 +2105,7 @@ def main() -> None:
     OUTPUT_PATH.write_text(build_garmin_data_js(data), encoding="utf-8")
     log(f"✓ wrote {OUTPUT_PATH.name} — reload the dashboard to see it.")
     safe(lambda: briefing_step(data), None, "coach briefing")
-    safe(lambda: wellness_step(client, data["readiness"], sleep_raw), None, "wellness banking")
+    safe(lambda: wellness_step(client, data.get("readiness") or {}, sleep_raw), None, "wellness banking")
 
 
 if __name__ == "__main__":

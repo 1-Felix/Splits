@@ -588,6 +588,18 @@ def test_mixed_instance_drops_riegel_everywhere():
     assert traj[-1]["garminSec"] == 7800
 
 
+def test_empty_garmin_prediction_keeps_riegel():
+    # a new Garmin account's predictor answers with no times yet: that row is
+    # no prediction, so the Riegel line must not vanish behind it
+    riegel = [r for r in MAX_ROWS if r[2] == "riegel"]
+    conn = _preds(riegel + [("2026-10-21", None, "sync")])
+    assert arch.prediction_sources_mixed(conn) is False
+    assert arch.half_predictions(conn) == [(d, h) for d, h, _ in riegel]
+    gap = bl._goal_gap(conn, {"goalTime": "2:29:59"}, dt.date(2026, 7, 20),
+                       dt.date(2026, 11, 7))
+    assert "reason" not in gap and gap["nowHalfS"] == 7990
+
+
 def test_goal_gap_restarts_at_the_switch():
     conn = _preds(MAX_ROWS)
     gap = bl._goal_gap(conn, {"goalTime": "2:29:59"}, dt.date(2026, 7, 20),

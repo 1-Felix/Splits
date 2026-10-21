@@ -974,26 +974,31 @@ def upsert_race_prediction(conn: sqlite3.Connection, date: str, values: dict,
 
 
 def prediction_sources_mixed(conn: sqlite3.Connection) -> bool:
-    """Both our own Riegel estimates and another source's rows are banked."""
+    """Both our own Riegel estimates and another source's half predictions are
+    banked. A row without a half time (a new account's empty predictor
+    document) is no prediction and never counts."""
     return conn.execute(
-        """SELECT EXISTS(SELECT 1 FROM race_predictions WHERE source = 'riegel')
+        """SELECT EXISTS(SELECT 1 FROM race_predictions
+                         WHERE source = 'riegel' AND half_s IS NOT NULL)
               AND EXISTS(SELECT 1 FROM race_predictions
-                         WHERE source IS NOT 'riegel')""").fetchone()[0] == 1
+                         WHERE source IS NOT 'riegel' AND half_s IS NOT NULL)"""
+    ).fetchone()[0] == 1
 
 
 def half_predictions(conn: sqlite3.Connection,
                      until: str | None = None) -> list[tuple[str, float]]:
     """(date, half_s) by date, one model only. Riegel rows (SPLITS' own
-    estimate, banked by the ingest path) are dropped whenever any other row
-    exists, so the two models never join into one line; a riegel-only
-    instance keeps them."""
+    estimate, banked by the ingest path) are dropped whenever another
+    source's half prediction exists, so the two models never join into one
+    line; a riegel-only instance keeps them."""
     where = "half_s IS NOT NULL"
     args: list = []
     if until is not None:
         where += " AND date <= ?"
         args.append(until)
     if conn.execute("SELECT 1 FROM race_predictions "
-                    "WHERE source IS NOT 'riegel' LIMIT 1").fetchone():
+                    "WHERE source IS NOT 'riegel' AND half_s IS NOT NULL "
+                    "LIMIT 1").fetchone():
         where += " AND source IS NOT 'riegel'"
     return [(d, h) for d, h in conn.execute(
         f"SELECT date, half_s FROM race_predictions WHERE {where} ORDER BY date",

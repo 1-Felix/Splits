@@ -983,7 +983,11 @@ def fetch_readiness(client, sleep: list[dict], max_hr: int) -> dict | None:
         return None
     if not score:
         score = _compute_readiness(hrv, rhr, sleep_h)
-    status = tr.get("level") or _readiness_label(score)
+    level = tr.get("level")
+    # a calibrating watch sends the string "NONE": no level, not a label
+    if not isinstance(level, str) or level.upper() == "NONE":
+        level = None
+    status = level or _readiness_label(score)
     return {
         "score": int(round(score)),
         "status": str(status).title()[:16],

@@ -118,21 +118,10 @@ def fmt_hms(seconds: float | int | None) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def ffill(series: list) -> list:
-    """Forward/back-fill Nones so the charts never see a gap. Empty → 0s."""
-    out = list(series)
-    last = next((v for v in out if v is not None), 0)
-    for i, v in enumerate(out):
-        if v is None:
-            out[i] = last
-        else:
-            last = out[i]
-    return out
-
-
 def lead_null_ffill(series: list) -> list:
-    """Forward-fill interior gaps like `ffill`, but never invent history: values
-    before the first real one stay None (a young account's series)."""
+    """Forward-fill interior gaps so the charts never see one, but never invent
+    history: values before the first real one stay None (a young account's
+    series)."""
     out = list(series)
     last = None
     for i, v in enumerate(out):
